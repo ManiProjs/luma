@@ -5,6 +5,7 @@ mod event;
 mod model;
 mod planner;
 mod tools;
+mod ui;
 mod workspace;
 
 use std::io::Write;
@@ -14,6 +15,7 @@ use clap::Parser;
 use agent::Agent;
 use event::AgentEvent;
 use model::OpenAICompatibleModel;
+use ui::Renderer;
 
 use tools::{
     ToolRegistry,
@@ -32,6 +34,13 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
+
+    println!(
+        r#"
+✨ Luma
+A lightweight local AI coding agent
+"#
+    );
 
     let input = args.prompt.join(" ");
 
@@ -61,34 +70,12 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    let mut renderer = Renderer::new();
+
     while let Some(event) = rx.recv().await {
-        match event {
-            AgentEvent::Thinking => {
-                println!("✨ Luma is thinking...");
-            }
+        renderer.handle(event);
 
-            AgentEvent::TextDelta(text) => {
-                print!("{}", text);
-
-                std::io::stdout().flush().unwrap();
-            }
-
-            AgentEvent::ToolStarted { name } => {
-                println!("\n🔧 Luma is using tool: {}", name);
-            }
-
-            AgentEvent::ToolFinished { name, result } => {
-                println!("\n✓ Tool {} finished:\n{}", name, result);
-            }
-
-            AgentEvent::Finished => {
-                println!();
-            }
-
-            AgentEvent::Error(error) => {
-                eprintln!("\n❌ Luma error: {}", error);
-            }
-        }
+        std::io::stdout().flush().unwrap();
     }
 
     Ok(())

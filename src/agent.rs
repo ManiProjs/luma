@@ -44,28 +44,60 @@ where
         }
     }
 
+    fn needs_workspace(&self, input: &str) -> bool {
+        let input = input.to_lowercase();
+
+        let keywords = [
+            "project",
+            "repository",
+            "repo",
+            "code",
+            "file",
+            "folder",
+            "bug",
+            "error",
+            "compile",
+            "cargo",
+            "rust",
+            "function",
+            "struct",
+            "architecture",
+            "feature",
+            "explain",
+            "how does",
+            "what does",
+            "read",
+            "analyze",
+            "debug",
+            "implement",
+            "change",
+            "modify",
+        ];
+
+        keywords.iter().any(|keyword| input.contains(keyword))
+    }
+
     async fn answer(&self, tx: &tokio::sync::mpsc::Sender<AgentEvent>) -> Result<String> {
         let mut messages = vec![Message {
             role: MessageRole::System,
             content: r#"
 You are Luma.
 
-You summarize a codebase using ONLY workspace observations.
+You are an AI coding assistant.
+
+For normal conversation:
+- answer normally.
+
+For workspace questions:
+- use ONLY workspace observations.
 
 Rules:
 
 - Never guess.
-- Never invent features.
 - Never invent technologies.
-- Never infer a project type from filenames.
-- Every claim must come from workspace observations.
-
-Explain:
-
-1. Project purpose
-2. Technologies
-3. Structure
-4. Features
+- Never invent features.
+- Never invent architecture.
+- Every workspace claim must come from observations.
 
 If information is missing:
 say:
@@ -77,18 +109,6 @@ Return plain text only.
         }];
 
         messages.extend(self.context.messages().iter().cloned());
-
-        messages.push(Message {
-            role: MessageRole::User,
-            content: r#"
-Using the workspace observations above, answer the original user question.
-
-Do not ask for files.
-Do not say you cannot access the project.
-Do not invent information.
-"#
-            .to_string(),
-        });
 
         let mut stream = self.model.stream(CompletionRequest { messages }).await?;
 
@@ -110,11 +130,24 @@ Do not invent information.
         input: String,
         tx: tokio::sync::mpsc::Sender<AgentEvent>,
     ) -> Result<()> {
+        let workspace_request = self.needs_workspace(&input);
+
         self.context.add(MessageRole::User, input);
 
-        let mut steps = 0;
+        // Normal chat bypasses planner/tools
+        if !workspace_request {
+            let response = self.answer(&tx).await?;
+
+            self.context.add(MessageRole::Assistant, response);
+
+            tx.send(AgentEvent::Finished).await?;
+
+            return Ok(());
+        }
 
         tx.send(AgentEvent::Thinking).await?;
+
+        let mut steps = 0;
 
         loop {
             steps += 1;
@@ -133,23 +166,18 @@ Do not invent information.
                     r#"
 You are Luma's planner.
 
-Current inspection state:
+Inspection state:
 
 Directory listed: {}
-Project config read: {}
+Config read: {}
 README read: {}
-Source code read: {}
+Source read: {}
 
-Rules:
-
-- If config is missing, inspect configuration.
-- If source is missing, inspect source.
-- Do not answer until:
-  - configuration exists
-  - at least one source file was inspected
-
-Current inspected files:
+Inspected files:
 {:?}
+
+Use tools if information is missing.
+Do not answer without evidence.
 "#,
                     self.inspection.listed,
                     self.inspection.config,
@@ -177,9 +205,6 @@ Current inspected files:
                 }
 
                 PlanAction::Answer { .. } => {
-                    // Safety gate.
-                    // Do not trust the planner.
-
                     if !self.inspection.config {
                         self.execute_tool("read_file", "Cargo.toml", &tx).await?;
 
@@ -209,6 +234,7 @@ Current inspected files:
     fn update_inspection(&mut self, name: &str, input: &str) {
         if name == "list_directory" {
             self.inspection.listed = true;
+
             return;
         }
 
@@ -250,16 +276,11 @@ Current inspected files:
         input: &str,
         tx: &tokio::sync::mpsc::Sender<AgentEvent>,
     ) -> Result<()> {
-        let key = format!("{}:{}", name, input);
-
-        if self.inspected_files.contains(&key) {
-            return Ok(());
-        }
-
-        self.inspected_files.push(key);
+        let start = std::time::Instant::now();
 
         tx.send(AgentEvent::ToolStarted {
             name: name.to_string(),
+            input: input.to_string(),
         })
         .await?;
 
@@ -269,26 +290,13 @@ Current inspected files:
 
         tx.send(AgentEvent::ToolFinished {
             name: name.to_string(),
-            result: result.clone(),
+            duration_ms: start.elapsed().as_millis(),
         })
         .await?;
 
         self.context.add(
-            MessageRole::User,
-            format!(
-                r#"
-WORKSPACE OBSERVATION
-
-Tool:
-{}
-
-Result:
-{}
-
-This is verified workspace information.
-"#,
-                name, result
-            ),
+            MessageRole::Observation,
+            format!("Observation from `{}`:\n{}", name, result),
         );
 
         Ok(())

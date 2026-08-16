@@ -213,6 +213,44 @@ Only when inspection is complete:
 }}
 
 Return JSON only.
+
+====================
+CONVERSATION RULES
+====================
+
+Not every message requires workspace inspection.
+
+For normal conversation:
+
+Examples:
+- hello
+- hi
+- hey
+- thanks
+- how are you
+- what can you do
+
+Return:
+
+{{
+"type":"answer",
+"content":"ready"
+}}
+
+Do NOT use tools.
+
+Only use tools when the user requests workspace/code information.
+
+Examples that require tools:
+
+- What does this project do?
+- Explain this repository.
+- Read this file.
+- Find the bug.
+- How does this code work?
+- Analyze this project.
+
+====================
 "#,
             self.tools.join("\n")
         )
