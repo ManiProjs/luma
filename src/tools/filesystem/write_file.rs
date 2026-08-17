@@ -1,5 +1,4 @@
-use anyhow::Result;
-use std::fs;
+use anyhow::{Result, anyhow};
 
 use crate::tools::Tool;
 
@@ -11,35 +10,26 @@ impl Tool for WriteFile {
     }
 
     fn description(&self) -> &str {
-        "Writes content to a file. Input MUST be:
-    
-    <file path>
-    <complete file content>
-
-    Example:
-    src/main.rs
-    fn main() {
-        println!(\"Hello\");
-    }"
+        "Write a complete file. First line is the path, remaining lines are the file contents."
     }
 
     fn execute(&self, input: &str) -> Result<String> {
-        let mut parts = input.splitn(2, '\n');
+        let mut lines = input.lines();
 
-        let path = parts.next().unwrap_or("").trim();
+        let path = lines.next().ok_or_else(|| anyhow!("Missing file path"))?;
 
-        let content = parts.next().unwrap_or("");
+        let content: String = lines.collect::<Vec<_>>().join("\n");
 
-        if path.is_empty() {
-            anyhow::bail!("Missing file path");
+        if content.trim().is_empty() {
+            return Err(anyhow!(
+                "Missing file content. write_file requires:\n\
+                     <path>\n\
+                     <complete file contents>"
+            ));
         }
 
-        if content.is_empty() {
-            anyhow::bail!("Missing file content for {}", path);
-        }
+        std::fs::write(path, content)?;
 
-        fs::write(path, content)?;
-
-        Ok(format!("Wrote {}", path))
+        Ok(format!("Successfully wrote {}", path))
     }
 }

@@ -415,17 +415,29 @@ Input:
 file path
 
 write_file:
+- Create or overwrite a file.
 
-Use this tool to create or overwrite a file.
+Input MUST be ONLY valid JSON.
+Do not add Markdown.
+Do not add explanations.
+Do not add code fences.
 
-The input MUST be valid JSON.
-
-Format:
+Schema:
 
 {{
-  "path": "path/to/file",
+  "path": "relative/or/absolute/file/path",
   "content": "complete file contents"
 }}
+
+Requirements:
+- "path" is required.
+- "content" is required.
+- "content" must contain the entire file.
+- "content" must not be empty.
+- Never send only a path.
+- Never send a summary.
+- Never send a diff.
+- Never send partial content.
 
 Example:
 
@@ -434,13 +446,10 @@ Example:
   "content": "fn main() {{\n    println!(\"Hello\");\n}}"
 }}
 
-Rules:
-- Always include both "path" and "content".
-- "content" must contain the entire file.
-- Never send an empty content field.
-- Never use Markdown code fences.
-- Never send only a path.
-- If you do not know the complete file, use read_file first.
+Before calling write_file verify:
+1. You know the exact destination path.
+2. You have the complete file content.
+3. The content field is not empty.
 
 
 search_files:
