@@ -70,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
 
     if !config::exists() && !matches!(args.command, Some(Commands::Setup)) {
         if confirm_setup()? {
-            config::setup::run()?;
+            config::setup::run().await?;
 
             return Ok(());
         } else {
@@ -82,7 +82,7 @@ async fn main() -> anyhow::Result<()> {
 
     match args.command {
         Some(Commands::Setup) => {
-            config::setup::run()?;
+            config::setup::run().await?;
 
             return Ok(());
         }
