@@ -1,3 +1,4 @@
+use crate::history::{History, HistoryMessage};
 use anyhow::Result;
 use futures_util::StreamExt;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -30,6 +31,8 @@ pub struct Agent<M, P> {
     inspected_files: Vec<String>,
 
     inspection: InspectionState,
+
+    history: History,
 }
 
 impl<M, P> Agent<M, P>
@@ -37,7 +40,7 @@ where
     M: Model,
     P: PlannerTrait,
 {
-    pub fn new(model: M, planner: P, tools: ToolRegistry) -> Self {
+    pub fn new(model: M, planner: P, tools: ToolRegistry, history: History) -> Self {
         Self {
             model,
 
@@ -50,6 +53,8 @@ where
             inspected_files: Vec::new(),
 
             inspection: InspectionState::default(),
+
+            history,
         }
     }
 
@@ -198,12 +203,26 @@ You are Luma.
 
             self.context.add(MessageRole::User, input.clone());
 
+            self.history.messages.push(HistoryMessage {
+                role: "user".into(),
+                content: input.clone(),
+            });
+
+            self.history.save()?;
+
             let workspace_request = self.needs_workspace(&input);
 
             if !workspace_request {
                 let response = self.answer(&tx, &cancel).await?;
 
-                self.context.add(MessageRole::Assistant, response);
+                self.context.add(MessageRole::Assistant, response.clone());
+
+                self.history.messages.push(HistoryMessage {
+                    role: "assistant".into(),
+                    content: response,
+                });
+
+                self.history.save()?;
 
                 tx.send(AgentEvent::Finished).await?;
 
@@ -226,36 +245,49 @@ You are Luma.
                 if steps > 12 {
                     let response = self.answer(&tx, &cancel).await?;
 
-                    self.context.add(MessageRole::Assistant, response);
+                    self.context.add(MessageRole::Assistant, response.clone());
+
+                    self.history.messages.push(HistoryMessage {
+                        role: "assistant".into(),
+                        content: response,
+                    });
+
+                    self.history.save()?;
 
                     break;
                 }
 
                 let mut messages = vec![Message {
                     role: MessageRole::System,
-
                     content: format!(
                         r#"
 You are Luma's planner.
 
 Available tools:
 
+list_directory:
+- List files and folders.
+
 read_file:
-- Reads a file.
-- Input: file path.
+- Read a file.
 
 write_file:
-- Writes a complete file.
-- Input format:
-  First line: file path
-  Remaining lines: complete file contents.
+- Write a complete file.
+- First line is the path.
+- Remaining lines are the content.
+
+search_files:
+- Search files.
+
+run_command:
+- Run commands.
 
 Rules:
-- Always use read_file before write_file.
-- Never call write_file without complete content.
-- Never send only a file path to write_file.
+- Read before writing.
+- Never invent workspace information.
+- Never call write_file without content.
 
-Inspection state:
+Inspection:
 
 Directory listed: {}
 Config read: {}
@@ -291,23 +323,16 @@ Inspected files:
                     }
 
                     PlanAction::Answer { .. } => {
-                        if !self.inspection.config {
-                            self.execute_tool("read_file", "Cargo.toml", &tx, &cancel)
-                                .await?;
-
-                            continue;
-                        }
-
-                        if !self.inspection.source {
-                            self.execute_tool("read_file", "src/main.rs", &tx, &cancel)
-                                .await?;
-
-                            continue;
-                        }
-
                         let response = self.answer(&tx, &cancel).await?;
 
-                        self.context.add(MessageRole::Assistant, response);
+                        self.context.add(MessageRole::Assistant, response.clone());
+
+                        self.history.messages.push(HistoryMessage {
+                            role: "assistant".into(),
+                            content: response,
+                        });
+
+                        self.history.save()?;
 
                         break;
                     }

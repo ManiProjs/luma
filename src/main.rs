@@ -2,6 +2,7 @@ mod agent;
 mod config;
 mod context;
 mod event;
+mod history;
 mod model;
 mod planner;
 mod theme;
@@ -20,6 +21,8 @@ use tools::{
     filesystem::{list_directory::ListDirectory, read_file::ReadFile, search_files::SearchFiles},
     shell::RunCommand,
 };
+
+use history::History;
 
 use std::io::{self, Write};
 
@@ -112,7 +115,9 @@ async fn main() -> anyhow::Result<()> {
 
     let planner = planner::Planner::new(planner_model, &tools);
 
-    let mut agent = Agent::new(model, planner, tools);
+    let history = History::load();
+
+    let mut agent = Agent::new(model, planner, tools, history);
 
     let (event_tx, event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(100);
 
