@@ -1,4 +1,5 @@
 mod agent;
+mod commands;
 mod config;
 mod context;
 mod event;
@@ -14,7 +15,6 @@ use clap::{Parser, Subcommand};
 
 use agent::Agent;
 use event::AgentEvent;
-use model::OpenAICompatibleModel;
 
 use tools::{
     ToolRegistry,
@@ -28,11 +28,7 @@ use std::io::{self, Write};
 
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    model::create_model,
-    tools::{Tool, filesystem::write_file::WriteFile},
-    tui::info::LumaInfo,
-};
+use crate::{model::create_model, tools::filesystem::write_file::WriteFile, tui::info::LumaInfo};
 
 #[derive(Parser, Debug)]
 #[command(name = "luma", version, about = "A lightweight AI coding agent")]

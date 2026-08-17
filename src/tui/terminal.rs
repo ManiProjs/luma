@@ -20,6 +20,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    commands::Command,
     event::AgentEvent,
     theme::LumaTheme,
     tui::{
@@ -136,17 +137,80 @@ pub async fn run(
                     match key.code {
                         KeyCode::Char(c) => {
                             app.input.insert(c);
+
+                            app.update_suggestions();
                         }
 
                         KeyCode::Backspace => {
                             app.input.backspace();
+
+                            app.update_suggestions();
+                        }
+
+                        KeyCode::Tab => {
+                            app.accept_suggestion();
+                        }
+
+                        KeyCode::Up => {
+                            if !app.suggestions.is_empty() {
+                                app.suggestion_up();
+                            } else {
+                                app.history_up();
+                            }
+                        }
+
+                        KeyCode::Down => {
+                            if !app.suggestions.is_empty() {
+                                app.suggestion_down();
+                            } else {
+                                app.history_down();
+                            }
                         }
 
                         KeyCode::Enter => {
+                            if !app.suggestions.is_empty() {
+                                app.accept_suggestion();
+                                continue;
+                            }
+
                             if key.modifiers.contains(KeyModifiers::SHIFT) {
                                 app.input.newline();
-                            } else if let Some(message) = app.submit_input() {
-                                input_tx.send(message).await?;
+                                app.update_suggestions();
+                                continue;
+                            }
+
+                            if let Some(message) = app.submit_input() {
+                                if let Some(command) = Command::parse(&message) {
+                                    match command {
+                                        Command::Help => {
+                                            app.messages.push(MessageLine {
+                                                role: MessageRole::System,
+
+                                                content: "Commands:\n\n/help\n/clear\n/quit".into(),
+                                            });
+                                        }
+
+                                        Command::Clear => {
+                                            app.messages.clear();
+
+                                            app.welcome_visible = true;
+                                        }
+
+                                        Command::Quit => {
+                                            break;
+                                        }
+
+                                        Command::Unknown(name) => {
+                                            app.messages.push(MessageLine {
+                                                role: MessageRole::System,
+
+                                                content: format!("Unknown command: /{}", name),
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    input_tx.send(message).await?;
+                                }
                             }
                         }
 
@@ -162,14 +226,6 @@ pub async fn run(
                             if app.input.cursor_x < len {
                                 app.input.cursor_x += 1;
                             }
-                        }
-
-                        KeyCode::Up => {
-                            app.history_up();
-                        }
-
-                        KeyCode::Down => {
-                            app.history_down();
                         }
 
                         _ => {}

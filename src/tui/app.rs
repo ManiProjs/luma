@@ -24,6 +24,11 @@ pub struct App {
     pub input_history: Vec<String>,
 
     pub history_index: Option<usize>,
+
+    // Slash command autocomplete
+    pub suggestions: Vec<String>,
+
+    pub selected_suggestion: usize,
 }
 
 #[derive(Debug)]
@@ -158,7 +163,50 @@ impl App {
             input_history: Vec::new(),
 
             history_index: None,
+
+            suggestions: Vec::new(),
+
+            selected_suggestion: 0,
         }
+    }
+
+    pub fn update_suggestions(&mut self) {
+        let current = self
+            .input
+            .lines
+            .get(self.input.cursor_y)
+            .cloned()
+            .unwrap_or_default();
+
+        self.suggestions = crate::commands::suggestions(&current);
+
+        self.selected_suggestion = 0;
+    }
+
+    pub fn accept_suggestion(&mut self) {
+        if let Some(command) = self.suggestions.get(self.selected_suggestion).cloned() {
+            self.input.set_content(command);
+        }
+
+        self.suggestions.clear();
+    }
+
+    pub fn suggestion_up(&mut self) {
+        if self.suggestions.is_empty() {
+            return;
+        }
+
+        if self.selected_suggestion > 0 {
+            self.selected_suggestion -= 1;
+        }
+    }
+
+    pub fn suggestion_down(&mut self) {
+        if self.suggestions.is_empty() {
+            return;
+        }
+
+        self.selected_suggestion = (self.selected_suggestion + 1) % self.suggestions.len();
     }
 
     pub fn add_history(&mut self, message: String) {
@@ -166,7 +214,6 @@ impl App {
             return;
         }
 
-        // Avoid duplicate consecutive entries
         if self.input_history.last() != Some(&message) {
             self.input_history.push(message);
         }
@@ -228,6 +275,8 @@ impl App {
         self.add_history(text.clone());
 
         self.input.clear();
+
+        self.suggestions.clear();
 
         self.welcome_visible = false;
 
@@ -298,16 +347,16 @@ impl App {
         }
     }
 
-    pub fn scroll_down(&mut self) {
-        self.auto_scroll = false;
-
-        self.scroll = self.scroll.saturating_add(3);
-    }
-
     pub fn scroll_up(&mut self) {
         self.auto_scroll = false;
 
         self.scroll = self.scroll.saturating_sub(3);
+    }
+
+    pub fn scroll_down(&mut self) {
+        self.auto_scroll = false;
+
+        self.scroll = self.scroll.saturating_add(3);
     }
 
     pub fn scroll_to_bottom(&mut self) {
@@ -316,5 +365,7 @@ impl App {
         } else {
             self.scroll = 0;
         }
+
+        self.auto_scroll = true;
     }
 }
