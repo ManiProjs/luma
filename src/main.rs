@@ -9,7 +9,7 @@ mod tools;
 mod tui;
 mod workspace;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 use agent::Agent;
 use event::AgentEvent;
@@ -21,19 +21,71 @@ use tools::{
     shell::RunCommand,
 };
 
+use std::io::{self, Write};
+
 #[derive(Parser, Debug)]
 #[command(name = "luma", version, about = "A lightweight AI coding agent")]
 struct Args {
-    /// Optional initial prompt
-    #[arg()]
+    #[command(subcommand)]
+    command: Option<Commands>,
+
+    /// Normal prompt
+    #[arg(trailing_var_arg = true)]
     prompt: Vec<String>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Configure Luma
+    Setup,
+}
+
+fn confirm_setup() -> anyhow::Result<bool> {
+    print!("\nLuma is not configured yet.\n\nRun setup? [Y/n] ");
+
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+
+    io::stdin().read_line(&mut input)?;
+
+    let answer = input.trim().to_lowercase();
+
+    Ok(answer.is_empty() || answer == "y" || answer == "yes")
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let config = config::Config::load()?;
+    if !config::exists() && !matches!(args.command, Some(Commands::Setup)) {
+        if confirm_setup()? {
+            config::setup::run()?;
+
+            return Ok(());
+        } else {
+            println!("Luma cannot start without configuration.");
+
+            return Ok(());
+        }
+    }
+
+    match args.command {
+        Some(Commands::Setup) => {
+            config::setup::run()?;
+            return Ok(());
+        }
+
+        None => {}
+    }
+
+    let input = if args.prompt.is_empty() {
+        None
+    } else {
+        Some(args.prompt.join(" "))
+    };
+
+    let config = config::load()?;
 
     let model =
         OpenAICompatibleModel::new(config.model.endpoint.clone(), config.model.name.clone());
