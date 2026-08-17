@@ -36,6 +36,18 @@ impl ToolRegistry {
         tool.execute(input)
     }
 
+    pub fn names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.tools.keys().cloned().collect();
+
+        names.sort();
+
+        names
+    }
+
+    pub fn count(&self) -> usize {
+        self.tools.len()
+    }
+
     pub fn descriptions(&self) -> Vec<String> {
         self.tools
             .values()

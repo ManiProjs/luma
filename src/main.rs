@@ -28,7 +28,10 @@ use std::io::{self, Write};
 
 use tokio_util::sync::CancellationToken;
 
-use crate::tools::filesystem::write_file::WriteFile;
+use crate::{
+    tools::{Tool, filesystem::write_file::WriteFile},
+    tui::info::ModelInfo,
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "luma", version, about = "A lightweight AI coding agent")]
@@ -110,6 +113,8 @@ async fn main() -> anyhow::Result<()> {
 
     tools.register(WriteFile);
 
+    let tool_names = tools.names();
+
     let planner_model =
         OpenAICompatibleModel::new(config.planner.endpoint.clone(), config.planner.name.clone());
 
@@ -125,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
 
     let cancel: CancellationToken = CancellationToken::new();
 
-    let agent_cancel = cancel.clone();
+    let agent_cancel: CancellationToken = cancel.clone();
 
     tokio::spawn(async move {
         if let Err(error) = agent.run(input_rx, event_tx.clone(), cancel.clone()).await {
@@ -138,7 +143,17 @@ async fn main() -> anyhow::Result<()> {
         input_tx.send(prompt).await?;
     }
 
-    tui::terminal::run(event_rx, input_tx, agent_cancel).await?;
+    tui::terminal::run(
+        event_rx,
+        input_tx,
+        agent_cancel,
+        ModelInfo {
+            provider: config.model.provider.clone(),
+            model: config.model.name.clone(),
+        },
+        tool_names,
+    )
+    .await?;
 
     Ok(())
 }

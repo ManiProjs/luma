@@ -13,6 +13,8 @@ pub struct Config {
 
 #[derive(Debug, Deserialize)]
 pub struct ModelConfig {
+    pub provider: String,
+
     pub endpoint: String,
 
     pub name: String,

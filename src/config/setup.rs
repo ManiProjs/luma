@@ -1,6 +1,6 @@
 use anyhow::Result;
 use dialoguer::{Input, Select, theme::ColorfulTheme};
-use std::{fs, path::PathBuf};
+use std::fs;
 
 pub fn run() -> Result<()> {
     println!();
@@ -20,17 +20,19 @@ pub fn run() -> Result<()> {
 
     let theme = ColorfulTheme::default();
 
-    println!("Let's configure your local AI agent.\n");
+    println!("Let's configure your local AI coding agent.\n");
 
     let providers = vec!["Ollama", "LM Studio", "Custom OpenAI-compatible API"];
 
-    let provider = Select::with_theme(&theme)
+    let provider_index = Select::with_theme(&theme)
         .with_prompt("Choose your model provider")
         .items(&providers)
         .default(0)
         .interact()?;
 
-    let endpoint = match provider {
+    let provider = providers[provider_index].to_string();
+
+    let endpoint = match provider_index {
         0 => "http://localhost:11434/v1/chat/completions".to_string(),
 
         1 => "http://localhost:1234/v1/chat/completions".to_string(),
@@ -50,7 +52,9 @@ pub fn run() -> Result<()> {
         .default(model.clone())
         .interact_text()?;
 
-    let config_dir = dirs::config_dir().unwrap().join("luma");
+    let config_dir = dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("luma");
 
     fs::create_dir_all(&config_dir)?;
 
@@ -59,22 +63,30 @@ pub fn run() -> Result<()> {
     let content = format!(
         r#"
 [model]
+provider = "{provider}"
 endpoint = "{endpoint}"
 name = "{model}"
 
 [planner]
+provider = "{provider}"
 endpoint = "{endpoint}"
 name = "{planner_model}"
 "#
     );
 
-    fs::write(&config_file, content)?;
+    fs::write(&config_file, content.trim_start())?;
 
     println!();
 
     println!("✓ Configuration saved:");
 
     println!("  {}", config_file.display());
+
+    println!();
+
+    println!("Configured model:");
+
+    println!("  {} ({})", provider, model);
 
     println!();
 

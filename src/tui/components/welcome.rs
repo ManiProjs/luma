@@ -20,12 +20,21 @@ const LOGO: &[&str] = &[
 pub struct WelcomeScreen<'a> {
     pub theme: &'a LumaTheme,
 
+    pub provider: String,
+
+    pub model: String,
+
     pub tools: Vec<String>,
 }
 
 impl<'a> WelcomeScreen<'a> {
-    pub fn new(theme: &'a LumaTheme, tools: Vec<String>) -> Self {
-        Self { theme, tools }
+    pub fn new(theme: &'a LumaTheme, provider: String, model: String, tools: Vec<String>) -> Self {
+        Self {
+            theme,
+            provider,
+            model,
+            tools,
+        }
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
@@ -64,6 +73,13 @@ impl<'a> WelcomeScreen<'a> {
         lines.push(Line::from(Span::styled(
             "Local-first AI Coding Agent",
             Style::default().fg(self.theme.glow),
+        )));
+
+        lines.push(Line::from(""));
+
+        lines.push(Line::from(Span::styled(
+            format!("{} ({})", self.provider, self.model),
+            Style::default().fg(self.theme.accent),
         )));
 
         lines.push(Line::from(""));

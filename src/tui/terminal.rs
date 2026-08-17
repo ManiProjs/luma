@@ -23,7 +23,8 @@ use crate::{
     theme::LumaTheme,
     tui::{
         app::{App, MessageLine, MessageRole},
-        components::{chat::ChatView, input::InputBox, status::StatusBar, welcome::WelcomeScreen},
+        info::ModelInfo,
+        ui,
     },
 };
 
@@ -31,6 +32,8 @@ pub async fn run(
     mut rx: Receiver<AgentEvent>,
     input_tx: Sender<String>,
     cancel: CancellationToken,
+    model_info: ModelInfo,
+    tools: Vec<String>,
 ) -> Result<()> {
     enable_raw_mode()?;
 
@@ -52,46 +55,11 @@ pub async fn run(
 
     loop {
         terminal.draw(|frame| {
-            let size = frame.area();
-
-            let chunks = ratatui::layout::Layout::default()
-                .direction(ratatui::layout::Direction::Vertical)
-                .constraints([
-                    ratatui::layout::Constraint::Min(5),
-                    ratatui::layout::Constraint::Length(6),
-                    ratatui::layout::Constraint::Length(1),
-                ])
-                .split(size);
-
-            if app.welcome_visible {
-                let welcome = WelcomeScreen::new(
-                    &theme,
-                    vec![
-                        "list_directory".into(),
-                        "read_file".into(),
-                        "search_files".into(),
-                        "run_command".into(),
-                    ],
-                );
-
-                welcome.render(frame, chunks[0]);
-            } else {
-                let chat = ChatView::new(&theme, &app);
-
-                chat.render(frame, chunks[0]);
-            }
-
-            let input = InputBox::new(&theme, &app.input);
-
-            input.render(frame, chunks[1]);
-
-            let status = StatusBar::new(&theme, "local-model".into(), 3, confirm_exit);
-
-            status.render(frame, chunks[2]);
+            ui::draw(frame, &app, &theme, &model_info, &tools, confirm_exit);
         })?;
 
-        while let Ok(event) = rx.try_recv() {
-            app.handle_event(event);
+        while let Ok(agent_event) = rx.try_recv() {
+            app.handle_event(agent_event);
 
             if app.auto_scroll {
                 app.scroll_to_bottom();
@@ -125,7 +93,6 @@ pub async fn run(
 
                             app.messages.push(MessageLine {
                                 role: MessageRole::System,
-
                                 content: "Generation interrupted.".into(),
                             });
 
@@ -157,8 +124,8 @@ pub async fn run(
                         KeyCode::Enter => {
                             if key.modifiers.contains(KeyModifiers::SHIFT) {
                                 app.input.newline();
-                            } else if let Some(msg) = app.submit_input() {
-                                input_tx.send(msg).await?;
+                            } else if let Some(message) = app.submit_input() {
+                                input_tx.send(message).await?;
                             }
                         }
 

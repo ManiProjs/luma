@@ -8,10 +8,18 @@ use crate::{
     tui::{
         app::App,
         components::{chat::ChatView, input::InputBox, status::StatusBar, welcome::WelcomeScreen},
+        info::ModelInfo,
     },
 };
 
-pub fn draw(frame: &mut Frame, app: &App, theme: &LumaTheme) {
+pub fn draw(
+    frame: &mut Frame,
+    app: &App,
+    theme: &LumaTheme,
+    model_info: &ModelInfo,
+    tools: &[String],
+    confirm_exit: bool,
+) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -28,11 +36,9 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &LumaTheme) {
     if app.welcome_visible {
         let welcome = WelcomeScreen::new(
             theme,
-            vec![
-                "list_directory".to_string(),
-                "read_file".to_string(),
-                "run_command".to_string(),
-            ],
+            model_info.provider.clone(),
+            model_info.model.clone(),
+            tools.to_vec(),
         );
 
         welcome.render(frame, layout[0]);
@@ -43,7 +49,7 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &LumaTheme) {
     }
 
     /*
-        Input area
+        Input
     */
 
     let input = InputBox::new(theme, &app.input);
@@ -51,10 +57,17 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &LumaTheme) {
     input.render(frame, layout[1]);
 
     /*
-        Bottom status
+        Status
     */
 
-    let status = StatusBar::new(theme, "local-model".to_string(), 3, false);
+    let status = StatusBar::new(
+        theme,
+        model_info.provider.clone(),
+        model_info.model.clone(),
+        tools.len(),
+        confirm_exit,
+        app.thinking,
+    );
 
     status.render(frame, layout[2]);
 }
