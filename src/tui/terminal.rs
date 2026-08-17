@@ -177,15 +177,11 @@ pub async fn run(
                         }
 
                         KeyCode::Up => {
-                            if app.input.cursor_y > 0 {
-                                app.input.cursor_y -= 1;
-                            }
+                            app.history_up();
                         }
 
                         KeyCode::Down => {
-                            if app.input.cursor_y + 1 < app.input.lines.len() {
-                                app.input.cursor_y += 1;
-                            }
+                            app.history_down();
                         }
 
                         _ => {}

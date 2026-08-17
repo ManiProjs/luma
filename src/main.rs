@@ -123,23 +123,22 @@ async fn main() -> anyhow::Result<()> {
 
     let (input_tx, input_rx) = tokio::sync::mpsc::channel::<String>(100);
 
-    let cancel = CancellationToken::new();
+    let cancel: CancellationToken = CancellationToken::new();
 
     let agent_cancel = cancel.clone();
 
     tokio::spawn(async move {
-        if let Err(error) = agent.run(input_rx, event_tx.clone(), agent_cancel).await {
+        if let Err(error) = agent.run(input_rx, event_tx.clone(), cancel.clone()).await {
             let _ = event_tx.send(AgentEvent::Error(error.to_string())).await;
         }
     });
-
     // Send CLI prompt as first message
 
     if let Some(prompt) = cli_prompt {
         input_tx.send(prompt).await?;
     }
 
-    tui::terminal::run(event_rx, input_tx, cancel).await?;
+    tui::terminal::run(event_rx, input_tx, agent_cancel).await?;
 
     Ok(())
 }

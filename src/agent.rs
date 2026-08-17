@@ -1,4 +1,4 @@
-use crate::history::{History, HistoryMessage};
+use crate::workspace::language::{self, ProgrammingLanguage};
 use anyhow::Result;
 use futures_util::StreamExt;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -7,6 +7,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     context::{Context, Message, MessageRole},
     event::AgentEvent,
+    history::{History, HistoryMessage},
     model::{CompletionRequest, Model},
     planner::{PlanAction, Planner},
     tools::ToolRegistry,
@@ -33,6 +34,8 @@ pub struct Agent<M, P> {
     inspection: InspectionState,
 
     history: History,
+
+    language: ProgrammingLanguage,
 }
 
 impl<M, P> Agent<M, P>
@@ -55,6 +58,8 @@ where
             inspection: InspectionState::default(),
 
             history,
+
+            language: ProgrammingLanguage::Unknown,
         }
     }
 
@@ -62,6 +67,7 @@ where
         let input = input.to_lowercase();
 
         let keywords = [
+            // General
             "project",
             "repository",
             "repo",
@@ -71,21 +77,63 @@ where
             "bug",
             "error",
             "compile",
-            "cargo",
-            "rust",
-            "function",
-            "struct",
-            "architecture",
-            "feature",
-            "explain",
-            "how does",
-            "what does",
-            "read",
-            "analyze",
+            "build",
+            "run",
+            "test",
             "debug",
             "implement",
             "change",
             "modify",
+            "refactor",
+            "architecture",
+            "feature",
+            // Rust
+            "rust",
+            "cargo",
+            "crate",
+            "rustc",
+            // C / C++
+            "c++",
+            "cpp",
+            "cmake",
+            "makefile",
+            "clang",
+            "gcc",
+            // Python
+            "python",
+            "pip",
+            "django",
+            "flask",
+            "fastapi",
+            // JavaScript / TypeScript
+            "javascript",
+            "typescript",
+            "node",
+            "npm",
+            "pnpm",
+            "yarn",
+            "react",
+            "vue",
+            "svelte",
+            // Java / Kotlin
+            "java",
+            "kotlin",
+            "gradle",
+            "maven",
+            // Go
+            "go",
+            "golang",
+            "go.mod",
+            // Swift
+            "swift",
+            "xcode",
+            // Dart
+            "dart",
+            "flutter",
+            // .NET
+            "c#",
+            "csharp",
+            "dotnet",
         ];
 
         keywords.iter().any(|word| input.contains(word))
@@ -112,23 +160,74 @@ Personality:
 - Explain debugging reasoning.
 - Ask questions only when necessary.
 
-Coding behavior:
-- Help users understand, debug, and improve software.
-- Prefer safe changes.
-- Explain changes.
-- Never pretend you modified files.
+Programming abilities:
+
+You are a multi-language programming assistant.
+
+You understand:
+
+Systems:
+- Rust
+- C
+- C++
+- Zig
+- Go
+
+Web:
+- JavaScript
+- TypeScript
+- HTML
+- CSS
+- React
+- Vue
+- Svelte
+
+Backend:
+- Python
+- Java
+- Kotlin
+- C#
+- Ruby
+- PHP
+
+Mobile:
+- Swift
+- SwiftUI
+- Kotlin Android
+- Dart / Flutter
+
+Data:
+- SQL
+- R
+- Julia
+
+Rules:
+- Detect the programming language from the workspace.
+- Never assume Rust.
+- Use the project's existing conventions.
+- Use the correct package manager/build system.
+- Do not invent dependencies.
+- Do not invent APIs.
 
 Workspace rules:
-- Workspace information comes only from observations.
+- Workspace information comes only from tool observations.
 - Never invent files, technologies, dependencies, or architecture.
-- Never guess without evidence.
+- Never guess what code does without reading it.
 
 If information is missing:
 "Not enough workspace information."
 
+Tool rules:
+- Inspect before modifying.
+- Read files before writing.
+- Never call write_file without complete content.
+- Always include the target file path.
+- Verify changes when possible.
+
 Response style:
 - Use Markdown when useful.
 - Use code blocks for code.
+- Explain important tradeoffs.
 - Keep conversation natural.
 
 You are Luma.
@@ -145,26 +244,21 @@ You are Luma.
         loop {
             tokio::select! {
 
-
                 _ = cancel.cancelled() => {
 
                     tx.send(
                         AgentEvent::Error(
-                            "Generation interrupted."
-                                .into()
+                            "Generation interrupted.".into()
                         )
                     )
                     .await?;
 
 
                     break;
-
                 }
 
 
-
                 chunk = stream.next() => {
-
 
                     let Some(chunk) = chunk else {
                         break;
@@ -181,9 +275,7 @@ You are Luma.
                         AgentEvent::TextDelta(chunk)
                     )
                     .await?;
-
                 }
-
             }
         }
 
@@ -200,6 +292,10 @@ You are Luma.
             if cancel.is_cancelled() {
                 continue;
             }
+
+            // Reset workspace inspection for each request
+            self.inspection = InspectionState::default();
+            self.inspected_files.clear();
 
             self.context.add(MessageRole::User, input.clone());
 
@@ -259,33 +355,109 @@ You are Luma.
 
                 let mut messages = vec![Message {
                     role: MessageRole::System,
+
                     content: format!(
                         r#"
 You are Luma's planner.
 
+You are working with an unknown programming project.
+
+Supported ecosystems:
+
+Rust:
+- Cargo.toml
+- *.rs
+
+Python:
+- pyproject.toml
+- requirements.txt
+- *.py
+
+JavaScript / TypeScript:
+- package.json
+- tsconfig.json
+- *.js
+- *.ts
+
+C/C++:
+- CMakeLists.txt
+- Makefile
+- *.c
+- *.cpp
+
+Go:
+- go.mod
+- *.go
+
+Java/Kotlin:
+- pom.xml
+- build.gradle
+- *.java
+- *.kt
+
+Swift:
+- Package.swift
+- *.swift
+
+Flutter:
+- pubspec.yaml
+- *.dart
+
+
 Available tools:
 
 list_directory:
-- List files and folders.
+List files and folders.
 
 read_file:
-- Read a file.
+Read a file.
+Input:
+file path
 
 write_file:
-- Write a complete file.
-- First line is the path.
-- Remaining lines are the content.
 
-search_files:
-- Search files.
+Use this tool to create or overwrite a file.
 
-run_command:
-- Run commands.
+The input MUST be valid JSON.
+
+Format:
+
+{{
+  "path": "path/to/file",
+  "content": "complete file contents"
+}}
+
+Example:
+
+{{
+  "path": "src/main.rs",
+  "content": "fn main() {{\n    println!(\"Hello\");\n}}"
+}}
 
 Rules:
-- Read before writing.
-- Never invent workspace information.
-- Never call write_file without content.
+- Always include both "path" and "content".
+- "content" must contain the entire file.
+- Never send an empty content field.
+- Never use Markdown code fences.
+- Never send only a path.
+- If you do not know the complete file, use read_file first.
+
+
+search_files:
+Search inside files.
+
+run_command:
+Run commands.
+
+
+Rules:
+- Never assume the language.
+- Inspect the project first.
+- Read files before writing.
+- Never call write_file without complete content.
+- Never invent dependencies or APIs.
+
+Detected programming language: {}
 
 Inspection:
 
@@ -297,6 +469,7 @@ Source read: {}
 Inspected files:
 {:?}
 "#,
+                        self.language.name(),
                         self.inspection.listed,
                         self.inspection.config,
                         self.inspection.readme,
@@ -360,6 +533,12 @@ Inspected files:
 
         if !self.inspected_files.contains(&input.to_string()) {
             self.inspected_files.push(input.to_string());
+
+            let detected = language::detect_from_file(input);
+
+            if detected != ProgrammingLanguage::Unknown {
+                self.language = detected;
+            }
         }
 
         if file.ends_with("cargo.toml")
@@ -384,6 +563,220 @@ Inspected files:
         }
     }
 
+    fn planner_system_prompt(
+        language: &ProgrammingLanguage,
+        inspection: &InspectionState,
+        inspected_files: &[String],
+    ) -> String {
+        format!(
+            r##"
+You are Luma's planner.
+
+Your job is to decide whether to:
+- use a tool
+- use multiple tools
+- answer the user
+
+You are a coding agent planner, not a general chatbot.
+
+## Identity
+
+You are planning actions for Luma, a local-first AI coding agent.
+
+Never pretend a change happened unless a tool successfully performed it.
+
+## Project understanding
+
+You are working with an unknown programming project.
+
+Supported ecosystems:
+
+Rust:
+- Cargo.toml
+- *.rs
+
+Python:
+- pyproject.toml
+- requirements.txt
+- *.py
+
+JavaScript / TypeScript:
+- package.json
+- tsconfig.json
+- *.js
+- *.ts
+- *.tsx
+
+C/C++:
+- CMakeLists.txt
+- Makefile
+- *.c
+- *.cpp
+- *.h
+- *.hpp
+
+Go:
+- go.mod
+- *.go
+
+Java/Kotlin:
+- pom.xml
+- build.gradle
+- *.java
+- *.kt
+
+Swift:
+- Package.swift
+- *.swift
+
+Flutter:
+- pubspec.yaml
+- *.dart
+
+Detected programming language:
+{}
+
+---
+
+## Available tools
+
+list_directory:
+- List files and folders.
+
+read_file:
+- Read a file.
+- Input:
+  file path
+
+write_file:
+- Create or overwrite a file.
+- Input MUST be valid JSON.
+
+Format:
+
+{{
+  "path": "path/to/file",
+  "content": "complete file contents"
+}}
+
+Rules:
+- Always include both path and content.
+- Never send only a path.
+- Never leave content empty.
+- Never summarize the file.
+- Never use Markdown fences.
+- Never write partial content.
+
+Example:
+
+{{
+  "path": "AGENTS.md",
+  "content": "# AGENTS.md\n\nProject instructions"
+}}
+
+search_files:
+- Search inside files.
+
+run_command:
+- Run shell commands.
+
+---
+
+## File modification rules
+
+When the user asks to:
+- write a file
+- create a file
+- generate a file
+- update a file
+- edit a file
+- modify a file
+
+You MUST use write_file.
+
+Do not:
+- explain what the file should contain
+- output the file as chat
+- describe what you would do
+
+Example:
+
+User:
+"Write an AGENTS.md based on this project"
+
+Correct:
+- Inspect project if needed.
+- Call write_file.
+
+Incorrect:
+"Here are the agents:
+- Agent Alpha
+- Agent Beta"
+
+AGENTS.md is a filename.
+It is not a request to create a list of agents.
+
+---
+
+## Editing rules
+
+Before modifying an existing file:
+
+1. Read the file.
+2. Understand its contents.
+3. Preserve project style.
+4. Make the smallest change.
+
+Never invent:
+- files
+- dependencies
+- APIs
+- project structure
+
+---
+
+## Planning rules
+
+Preferred workflow:
+
+1. Inspect
+2. Read
+3. Modify
+4. Verify
+
+Use Answer only for:
+- questions
+- explanations
+- discussions
+
+Use tools when:
+- a real file or system action is required.
+
+---
+
+Inspection:
+
+Directory listed: {}
+
+Config read: {}
+
+README read: {}
+
+Source read: {}
+
+Inspected files:
+
+{:?}
+"##,
+            language.name(),
+            inspection.listed,
+            inspection.config,
+            inspection.readme,
+            inspection.source,
+            inspected_files,
+        )
+    }
+
     async fn execute_tool(
         &mut self,
         name: &str,
@@ -397,10 +790,24 @@ Inspected files:
 
         let start = std::time::Instant::now();
 
-        let display_input = if name == "read_file" || name == "write_file" {
-            format!("{} → {}", name, input)
-        } else {
-            format!("{} {}", name, input)
+        let display_input = match name {
+            "read_file" => {
+                format!("read_file → {}", input)
+            }
+
+            "write_file" => match serde_json::from_str::<serde_json::Value>(input) {
+                Ok(json) => {
+                    let path = json.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+
+                    format!("write_file → {}", path)
+                }
+
+                Err(_) => "write_file → invalid JSON".into(),
+            },
+
+            _ => {
+                format!("{} {}", name, input)
+            }
         };
 
         tx.send(AgentEvent::ToolStarted {
@@ -409,9 +816,32 @@ Inspected files:
         })
         .await?;
 
-        let result = self.tools.execute(name, input)?;
+        if cancel.is_cancelled() {
+            return Ok(());
+        }
 
-        self.update_inspection(name, input);
+        let tool_input = if name == "write_file" {
+            input.trim().to_string()
+        } else {
+            input.to_string()
+        };
+
+        let result = match self.tools.execute(name, &tool_input) {
+            Ok(result) => result,
+
+            Err(error) => {
+                tx.send(AgentEvent::Error(format!("{} failed: {}", name, error)))
+                    .await?;
+
+                return Ok(());
+            }
+        };
+
+        if cancel.is_cancelled() {
+            return Ok(());
+        }
+
+        self.update_inspection(name, &tool_input);
 
         tx.send(AgentEvent::ToolFinished {
             name: name.to_string(),

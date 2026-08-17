@@ -3,6 +3,8 @@ use std::path::Path;
 
 use crate::tools::ToolRegistry;
 
+pub mod language;
+
 pub async fn gather_project_context(tools: &ToolRegistry) -> Result<String> {
     let mut context = String::new();
 

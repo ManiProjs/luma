@@ -19,25 +19,35 @@ pub struct App {
     pub running: bool,
 
     pub logo_frame: usize,
+
+    // Input history
+    pub input_history: Vec<String>,
+
+    pub history_index: Option<usize>,
 }
 
 #[derive(Debug)]
 pub struct ToolState {
     pub name: String,
+
     pub input: String,
 }
 
 #[derive(Debug)]
 pub struct MessageLine {
     pub role: MessageRole,
+
     pub content: String,
 }
 
 #[derive(Debug)]
 pub enum MessageRole {
     User,
+
     Assistant,
+
     Tool,
+
     System,
 }
 
@@ -110,6 +120,18 @@ impl TextBuffer {
 
         self.cursor_y = 0;
     }
+
+    pub fn set_content(&mut self, text: String) {
+        self.lines = text.lines().map(|line| line.to_string()).collect();
+
+        if self.lines.is_empty() {
+            self.lines.push(String::new());
+        }
+
+        self.cursor_y = self.lines.len() - 1;
+
+        self.cursor_x = self.lines[self.cursor_y].len();
+    }
 }
 
 impl App {
@@ -129,10 +151,65 @@ impl App {
 
             auto_scroll: true,
 
+            running: true,
+
             logo_frame: 0,
 
-            running: true,
+            input_history: Vec::new(),
+
+            history_index: None,
         }
+    }
+
+    pub fn add_history(&mut self, message: String) {
+        if message.trim().is_empty() {
+            return;
+        }
+
+        // Avoid duplicate consecutive entries
+        if self.input_history.last() != Some(&message) {
+            self.input_history.push(message);
+        }
+
+        self.history_index = None;
+    }
+
+    pub fn history_up(&mut self) {
+        if self.input_history.is_empty() {
+            return;
+        }
+
+        let index = match self.history_index {
+            Some(index) if index > 0 => index - 1,
+
+            Some(_) => 0,
+
+            None => self.input_history.len() - 1,
+        };
+
+        self.history_index = Some(index);
+
+        self.input.set_content(self.input_history[index].clone());
+    }
+
+    pub fn history_down(&mut self) {
+        let Some(index) = self.history_index else {
+            return;
+        };
+
+        if index + 1 >= self.input_history.len() {
+            self.history_index = None;
+
+            self.input.clear();
+
+            return;
+        }
+
+        let index = index + 1;
+
+        self.history_index = Some(index);
+
+        self.input.set_content(self.input_history[index].clone());
     }
 
     pub fn submit_input(&mut self) -> Option<String> {
@@ -147,6 +224,8 @@ impl App {
 
             content: text.clone(),
         });
+
+        self.add_history(text.clone());
 
         self.input.clear();
 
@@ -180,13 +259,15 @@ impl App {
             }
 
             AgentEvent::TextDelta(text) => {
-                self.auto_scroll = true;
-
                 self.thinking = false;
 
                 if let Some(last) = self.messages.last_mut() {
                     if matches!(last.role, MessageRole::Assistant) {
                         last.content.push_str(&text);
+
+                        if self.auto_scroll {
+                            self.scroll = usize::MAX;
+                        }
 
                         return;
                     }
@@ -199,7 +280,7 @@ impl App {
                 });
 
                 if self.auto_scroll {
-                    self.scroll_to_bottom();
+                    self.scroll = usize::MAX;
                 }
             }
 
