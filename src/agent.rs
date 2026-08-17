@@ -1,6 +1,7 @@
 use anyhow::Result;
 use futures_util::StreamExt;
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     context::{Context, Message, MessageRole},
@@ -21,10 +22,13 @@ struct InspectionState {
 pub struct Agent<M, P> {
     model: M,
     planner: P,
+
     context: Context,
+
     tools: ToolRegistry,
 
     inspected_files: Vec<String>,
+
     inspection: InspectionState,
 }
 
@@ -36,11 +40,15 @@ where
     pub fn new(model: M, planner: P, tools: ToolRegistry) -> Self {
         Self {
             model,
+
             planner,
+
             context: Context::new(),
+
             tools,
 
             inspected_files: Vec::new(),
+
             inspection: InspectionState::default(),
         }
     }
@@ -75,12 +83,13 @@ where
             "modify",
         ];
 
-        keywords.iter().any(|x| input.contains(x))
+        keywords.iter().any(|word| input.contains(word))
     }
 
-    async fn answer(&self, tx: &Sender<AgentEvent>) -> Result<String> {
+    async fn answer(&self, tx: &Sender<AgentEvent>, cancel: &CancellationToken) -> Result<String> {
         let mut messages = vec![Message {
             role: MessageRole::System,
+
             content: r#"
 You are Luma.
 
@@ -91,37 +100,31 @@ Identity:
 - Never claim to be ChatGPT.
 - Never mention OpenAI.
 - Never mention training data or knowledge cutoffs.
-- Do not describe yourself as a generic AI assistant.
 
 Personality:
 - Be concise, technical, and helpful.
-- Prefer practical solutions over long explanations.
-- Explain your reasoning when debugging.
+- Prefer practical solutions.
+- Explain debugging reasoning.
 - Ask questions only when necessary.
 
 Coding behavior:
 - Help users understand, debug, and improve software.
 - Prefer safe changes.
-- Explain what you changed.
-- Mention important tradeoffs.
-- Never pretend you modified files unless a tool actually did it.
+- Explain changes.
+- Never pretend you modified files.
 
 Workspace rules:
-- Workspace information comes only from tool observations.
+- Workspace information comes only from observations.
 - Never invent files, technologies, dependencies, or architecture.
-- Never guess what code does without seeing it.
-- If information is missing, say:
-  "Not enough workspace information."
+- Never guess without evidence.
 
-When using tools:
-- Inspect before changing.
-- Read relevant files before editing.
-- Verify changes when possible.
+If information is missing:
+"Not enough workspace information."
 
 Response style:
 - Use Markdown when useful.
 - Use code blocks for code.
-- Keep normal conversation natural.
+- Keep conversation natural.
 
 You are Luma.
 "#
@@ -134,25 +137,71 @@ You are Luma.
 
         let mut response = String::new();
 
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
+        loop {
+            tokio::select! {
 
-            response.push_str(&chunk);
 
-            tx.send(AgentEvent::TextDelta(chunk)).await?;
+                _ = cancel.cancelled() => {
+
+                    tx.send(
+                        AgentEvent::Error(
+                            "Generation interrupted."
+                                .into()
+                        )
+                    )
+                    .await?;
+
+
+                    break;
+
+                }
+
+
+
+                chunk = stream.next() => {
+
+
+                    let Some(chunk) = chunk else {
+                        break;
+                    };
+
+
+                    let chunk = chunk?;
+
+
+                    response.push_str(&chunk);
+
+
+                    tx.send(
+                        AgentEvent::TextDelta(chunk)
+                    )
+                    .await?;
+
+                }
+
+            }
         }
 
         Ok(response)
     }
 
-    pub async fn run(&mut self, mut rx: Receiver<String>, tx: Sender<AgentEvent>) -> Result<()> {
+    pub async fn run(
+        &mut self,
+        mut rx: Receiver<String>,
+        tx: Sender<AgentEvent>,
+        cancel: CancellationToken,
+    ) -> Result<()> {
         while let Some(input) = rx.recv().await {
+            if cancel.is_cancelled() {
+                continue;
+            }
+
             self.context.add(MessageRole::User, input.clone());
 
             let workspace_request = self.needs_workspace(&input);
 
             if !workspace_request {
-                let response = self.answer(&tx).await?;
+                let response = self.answer(&tx, &cancel).await?;
 
                 self.context.add(MessageRole::Assistant, response);
 
@@ -166,10 +215,16 @@ You are Luma.
             let mut steps = 0;
 
             loop {
+                if cancel.is_cancelled() {
+                    tx.send(AgentEvent::Error("Interrupted.".into())).await?;
+
+                    break;
+                }
+
                 steps += 1;
 
                 if steps > 12 {
-                    let response = self.answer(&tx).await?;
+                    let response = self.answer(&tx, &cancel).await?;
 
                     self.context.add(MessageRole::Assistant, response);
 
@@ -183,6 +238,23 @@ You are Luma.
                         r#"
 You are Luma's planner.
 
+Available tools:
+
+read_file:
+- Reads a file.
+- Input: file path.
+
+write_file:
+- Writes a complete file.
+- Input format:
+  First line: file path
+  Remaining lines: complete file contents.
+
+Rules:
+- Always use read_file before write_file.
+- Never call write_file without complete content.
+- Never send only a file path to write_file.
+
 Inspection state:
 
 Directory listed: {}
@@ -192,9 +264,6 @@ Source read: {}
 
 Inspected files:
 {:?}
-
-Use tools if information is missing.
-Do not answer without evidence.
 "#,
                         self.inspection.listed,
                         self.inspection.config,
@@ -210,31 +279,33 @@ Do not answer without evidence.
 
                 match plan {
                     PlanAction::Tool { name, input } => {
-                        self.execute_tool(&name, &input, &tx).await?;
+                        self.execute_tool(&name, &input, &tx, &cancel).await?;
                     }
 
                     PlanAction::Multi { actions } => {
                         for action in actions {
                             if let PlanAction::Tool { name, input } = action {
-                                self.execute_tool(&name, &input, &tx).await?;
+                                self.execute_tool(&name, &input, &tx, &cancel).await?;
                             }
                         }
                     }
 
                     PlanAction::Answer { .. } => {
                         if !self.inspection.config {
-                            self.execute_tool("read_file", "Cargo.toml", &tx).await?;
+                            self.execute_tool("read_file", "Cargo.toml", &tx, &cancel)
+                                .await?;
 
                             continue;
                         }
 
                         if !self.inspection.source {
-                            self.execute_tool("read_file", "src/main.rs", &tx).await?;
+                            self.execute_tool("read_file", "src/main.rs", &tx, &cancel)
+                                .await?;
 
                             continue;
                         }
 
-                        let response = self.answer(&tx).await?;
+                        let response = self.answer(&tx, &cancel).await?;
 
                         self.context.add(MessageRole::Assistant, response);
 
@@ -293,12 +364,23 @@ Do not answer without evidence.
         name: &str,
         input: &str,
         tx: &Sender<AgentEvent>,
+        cancel: &CancellationToken,
     ) -> Result<()> {
+        if cancel.is_cancelled() {
+            return Ok(());
+        }
+
         let start = std::time::Instant::now();
+
+        let display_input = if name == "read_file" || name == "write_file" {
+            format!("{} → {}", name, input)
+        } else {
+            format!("{} {}", name, input)
+        };
 
         tx.send(AgentEvent::ToolStarted {
             name: name.to_string(),
-            input: input.to_string(),
+            input: display_input,
         })
         .await?;
 
@@ -308,6 +390,7 @@ Do not answer without evidence.
 
         tx.send(AgentEvent::ToolFinished {
             name: name.to_string(),
+
             duration_ms: start.elapsed().as_millis(),
         })
         .await?;

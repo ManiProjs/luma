@@ -16,17 +16,22 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     event::AgentEvent,
     theme::LumaTheme,
     tui::{
-        app::App,
+        app::{App, MessageLine, MessageRole},
         components::{chat::ChatView, input::InputBox, status::StatusBar, welcome::WelcomeScreen},
     },
 };
 
-pub async fn run(mut rx: Receiver<AgentEvent>, input_tx: Sender<String>) -> Result<()> {
+pub async fn run(
+    mut rx: Receiver<AgentEvent>,
+    input_tx: Sender<String>,
+    cancel: CancellationToken,
+) -> Result<()> {
     enable_raw_mode()?;
 
     let mut stdout = io::stdout();
@@ -64,6 +69,7 @@ pub async fn run(mut rx: Receiver<AgentEvent>, input_tx: Sender<String>) -> Resu
                     vec![
                         "list_directory".into(),
                         "read_file".into(),
+                        "search_files".into(),
                         "run_command".into(),
                     ],
                 );
@@ -86,6 +92,10 @@ pub async fn run(mut rx: Receiver<AgentEvent>, input_tx: Sender<String>) -> Resu
 
         while let Ok(event) = rx.try_recv() {
             app.handle_event(event);
+
+            if app.auto_scroll {
+                app.scroll_to_bottom();
+            }
         }
 
         if confirm_exit && last_ctrl_c.elapsed() > Duration::from_secs(3) {
@@ -97,7 +107,6 @@ pub async fn run(mut rx: Receiver<AgentEvent>, input_tx: Sender<String>) -> Resu
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollUp => {
                         app.scroll_up();
-                        app.auto_scroll = false;
                     }
 
                     MouseEventKind::ScrollDown => {
@@ -111,6 +120,20 @@ pub async fn run(mut rx: Receiver<AgentEvent>, input_tx: Sender<String>) -> Resu
                     if key.modifiers.contains(KeyModifiers::CONTROL)
                         && key.code == KeyCode::Char('c')
                     {
+                        if app.thinking {
+                            cancel.cancel();
+
+                            app.messages.push(MessageLine {
+                                role: MessageRole::System,
+
+                                content: "Generation interrupted.".into(),
+                            });
+
+                            app.thinking = false;
+
+                            continue;
+                        }
+
                         if confirm_exit {
                             break;
                         }
@@ -179,7 +202,7 @@ pub async fn run(mut rx: Receiver<AgentEvent>, input_tx: Sender<String>) -> Resu
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
     )?;
 
     Ok(())

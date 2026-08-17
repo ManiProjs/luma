@@ -23,6 +23,10 @@ use tools::{
 
 use std::io::{self, Write};
 
+use tokio_util::sync::CancellationToken;
+
+use crate::tools::filesystem::write_file::WriteFile;
+
 #[derive(Parser, Debug)]
 #[command(name = "luma", version, about = "A lightweight AI coding agent")]
 struct Args {
@@ -73,13 +77,14 @@ async fn main() -> anyhow::Result<()> {
     match args.command {
         Some(Commands::Setup) => {
             config::setup::run()?;
+
             return Ok(());
         }
 
         None => {}
     }
 
-    let input = if args.prompt.is_empty() {
+    let cli_prompt = if args.prompt.is_empty() {
         None
     } else {
         Some(args.prompt.join(" "))
@@ -93,9 +98,14 @@ async fn main() -> anyhow::Result<()> {
     let mut tools = ToolRegistry::new();
 
     tools.register(ReadFile);
+
     tools.register(ListDirectory);
+
     tools.register(RunCommand);
+
     tools.register(SearchFiles);
+
+    tools.register(WriteFile);
 
     let planner_model =
         OpenAICompatibleModel::new(config.planner.endpoint.clone(), config.planner.name.clone());
@@ -108,18 +118,23 @@ async fn main() -> anyhow::Result<()> {
 
     let (input_tx, input_rx) = tokio::sync::mpsc::channel::<String>(100);
 
+    let cancel = CancellationToken::new();
+
+    let agent_cancel = cancel.clone();
+
     tokio::spawn(async move {
-        if let Err(error) = agent.run(input_rx, event_tx.clone()).await {
+        if let Err(error) = agent.run(input_rx, event_tx.clone(), agent_cancel).await {
             let _ = event_tx.send(AgentEvent::Error(error.to_string())).await;
         }
     });
 
-    // Send CLI argument as first message
-    if !args.prompt.is_empty() {
-        input_tx.send(args.prompt.join(" ")).await?;
+    // Send CLI prompt as first message
+
+    if let Some(prompt) = cli_prompt {
+        input_tx.send(prompt).await?;
     }
 
-    tui::terminal::run(event_rx, input_tx).await?;
+    tui::terminal::run(event_rx, input_tx, cancel).await?;
 
     Ok(())
 }
