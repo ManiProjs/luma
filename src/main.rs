@@ -31,7 +31,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     model::create_model,
     tools::{Tool, filesystem::write_file::WriteFile},
-    tui::info::ModelInfo,
+    tui::info::LumaInfo,
 };
 
 #[derive(Parser, Debug)]
@@ -142,17 +142,15 @@ async fn main() -> anyhow::Result<()> {
         input_tx.send(prompt).await?;
     }
 
-    tui::terminal::run(
-        event_rx,
-        input_tx,
-        agent_cancel,
-        ModelInfo {
-            provider: config.model.provider.clone(),
-            model: config.model.name.clone(),
-        },
+    let mut info = LumaInfo::new(
+        config.model.provider.clone(),
+        config.model.name.clone(),
         tool_names,
-    )
-    .await?;
+    );
+
+    info.workspace = Some(std::env::current_dir()?.display().to_string());
+
+    tui::terminal::run(event_rx, input_tx, agent_cancel, info).await?;
 
     Ok(())
 }

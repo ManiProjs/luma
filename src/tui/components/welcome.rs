@@ -1,12 +1,12 @@
 use ratatui::{
     Frame,
-    layout::{Alignment, Rect},
-    style::{Color, Style},
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Block, Borders, Paragraph},
 };
 
-use crate::theme::LumaTheme;
+use crate::{theme::LumaTheme, tui::info::LumaInfo};
 
 const LOGO: &[&str] = &[
     "██╗     ██╗   ██╗███╗   ███╗ █████╗ ",
@@ -18,99 +18,146 @@ const LOGO: &[&str] = &[
 ];
 
 pub struct WelcomeScreen<'a> {
-    pub theme: &'a LumaTheme,
+    theme: &'a LumaTheme,
 
-    pub provider: String,
-
-    pub model: String,
-
-    pub tools: Vec<String>,
+    info: &'a LumaInfo,
 }
 
 impl<'a> WelcomeScreen<'a> {
-    pub fn new(theme: &'a LumaTheme, provider: String, model: String, tools: Vec<String>) -> Self {
-        Self {
-            theme,
-            provider,
-            model,
-            tools,
-        }
+    pub fn new(theme: &'a LumaTheme, info: &'a LumaInfo) -> Self {
+        Self { theme, info }
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
+        let layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(10),
+                Constraint::Length(3),
+            ])
+            .split(area);
+
+        let header = Paragraph::new(Line::from(vec![
+            Span::styled(
+                " LUMA ",
+                Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" | "),
+            Span::raw(format!("{} ({})", self.info.provider, self.info.model)),
+            Span::raw(" | "),
+            Span::styled(
+                self.info.status.clone(),
+                Style::default().fg(self.theme.glow),
+            ),
+        ]));
+
+        frame.render_widget(header, layout[0]);
+
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .split(layout[1]);
+
+        self.render_logo(frame, columns[0]);
+
+        self.render_dashboard(frame, columns[1]);
+
+        let footer = Paragraph::new("Type a message to begin • ↑ ↓ history • Ctrl+C interrupt")
+            .block(Block::default().borders(Borders::ALL));
+
+        frame.render_widget(footer, layout[2]);
+    }
+
+    fn render_logo(&self, frame: &mut Frame, area: Rect) {
         let mut lines = Vec::new();
 
-        // Top border
-        lines.push(Line::from(Span::styled(
-            "─".repeat(area.width as usize),
-            Style::default().fg(self.theme.accent),
-        )));
-
-        lines.push(Line::from(""));
-
-        // Logo
-        for (i, row) in LOGO.iter().enumerate() {
-            let color = match i {
-                0 => self.theme.star,
-
-                1 => self.theme.glow,
-
-                2 => Color::Yellow,
-
-                3 => self.theme.accent,
-
-                _ => self.theme.space,
-            };
-
+        for row in LOGO {
             lines.push(Line::from(Span::styled(
-                row.to_string(),
-                Style::default().fg(color),
+                *row,
+                Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
             )));
         }
 
         lines.push(Line::from(""));
 
-        lines.push(Line::from(Span::styled(
-            "Local-first AI Coding Agent",
-            Style::default().fg(self.theme.glow),
-        )));
+        lines.push(Line::from("Local-first AI Coding Agent"));
 
-        lines.push(Line::from(""));
+        frame.render_widget(
+            Paragraph::new(lines).block(Block::default().title(" Luma ").borders(Borders::ALL)),
+            area,
+        );
+    }
 
-        lines.push(Line::from(Span::styled(
-            format!("{} ({})", self.provider, self.model),
-            Style::default().fg(self.theme.accent),
-        )));
+    fn render_dashboard(&self, frame: &mut Frame, area: Rect) {
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(7),
+                Constraint::Length(7),
+                Constraint::Min(5),
+            ])
+            .split(area);
 
-        lines.push(Line::from(""));
+        let model = vec![
+            Line::from("AI Model"),
+            Line::from(""),
+            Line::from(format!("Provider: {}", self.info.provider)),
+            Line::from(format!("Model: {}", self.info.model)),
+        ];
 
-        lines.push(Line::from(Span::styled(
-            "Available tools:",
-            Style::default().fg(self.theme.accent),
-        )));
+        frame.render_widget(
+            Paragraph::new(model).block(Block::default().title(" Model ").borders(Borders::ALL)),
+            sections[0],
+        );
 
-        if self.tools.is_empty() {
-            lines.push(Line::from("  No tools loaded"));
-        } else {
-            for tool in &self.tools {
-                lines.push(Line::from(vec![
-                    Span::styled("  • ", Style::default().fg(self.theme.star)),
-                    Span::raw(tool.clone()),
-                ]));
-            }
+        let workspace = vec![
+            Line::from("Workspace"),
+            Line::from(""),
+            Line::from(format!(
+                "Path: {}",
+                self.info
+                    .workspace
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".into())
+            )),
+            Line::from(format!(
+                "Language: {}",
+                self.info
+                    .language
+                    .clone()
+                    .unwrap_or_else(|| "Unknown".into())
+            )),
+            Line::from(format!("Files: {}", self.info.files_scanned)),
+        ];
+
+        frame.render_widget(
+            Paragraph::new(workspace)
+                .block(Block::default().title(" Workspace ").borders(Borders::ALL)),
+            sections[1],
+        );
+
+        let mut tips = vec![Line::from("Capabilities"), Line::from("")];
+
+        for tool in &self.info.tools {
+            tips.push(Line::from(format!("✓ {}", tool)));
         }
 
-        lines.push(Line::from(""));
+        tips.push(Line::from(""));
 
-        lines.push(Line::from("Type a message to begin..."));
+        tips.push(Line::from("Tips"));
 
-        lines.push(Line::from(""));
+        for tip in &self.info.tips {
+            tips.push(Line::from(format!("• {}", tip)));
+        }
 
-        lines.push(Line::from(Span::styled(
-            "─".repeat(area.width as usize),
-            Style::default().fg(self.theme.accent),
-        )));
-
-        frame.render_widget(Paragraph::new(lines).alignment(Alignment::Center), area);
+        frame.render_widget(
+            Paragraph::new(tips).block(Block::default().title(" Dashboard ").borders(Borders::ALL)),
+            sections[2],
+        );
     }
 }

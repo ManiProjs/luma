@@ -16,6 +16,7 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use tokio::sync::mpsc::{Receiver, Sender};
+
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -23,7 +24,7 @@ use crate::{
     theme::LumaTheme,
     tui::{
         app::{App, MessageLine, MessageRole},
-        info::ModelInfo,
+        info::LumaInfo,
         ui,
     },
 };
@@ -32,8 +33,7 @@ pub async fn run(
     mut rx: Receiver<AgentEvent>,
     input_tx: Sender<String>,
     cancel: CancellationToken,
-    model_info: ModelInfo,
-    tools: Vec<String>,
+    mut info: LumaInfo,
 ) -> Result<()> {
     enable_raw_mode()?;
 
@@ -55,10 +55,30 @@ pub async fn run(
 
     loop {
         terminal.draw(|frame| {
-            ui::draw(frame, &app, &theme, &model_info, &tools, confirm_exit);
+            ui::draw(frame, &app, &theme, &info, confirm_exit);
         })?;
 
         while let Ok(agent_event) = rx.try_recv() {
+            match &agent_event {
+                AgentEvent::Thinking => {
+                    info.set_status("Thinking");
+                }
+
+                AgentEvent::ToolStarted { name, .. } => {
+                    info.set_status(format!("Running {}", name));
+                }
+
+                AgentEvent::Finished => {
+                    info.set_status("Ready");
+                }
+
+                AgentEvent::Error(_) => {
+                    info.set_status("Error");
+                }
+
+                _ => {}
+            }
+
             app.handle_event(agent_event);
 
             if app.auto_scroll {
@@ -93,6 +113,7 @@ pub async fn run(
 
                             app.messages.push(MessageLine {
                                 role: MessageRole::System,
+
                                 content: "Generation interrupted.".into(),
                             });
 

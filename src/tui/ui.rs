@@ -8,38 +8,22 @@ use crate::{
     tui::{
         app::App,
         components::{chat::ChatView, input::InputBox, status::StatusBar, welcome::WelcomeScreen},
-        info::ModelInfo,
+        info::LumaInfo,
     },
 };
 
-pub fn draw(
-    frame: &mut Frame,
-    app: &App,
-    theme: &LumaTheme,
-    model_info: &ModelInfo,
-    tools: &[String],
-    confirm_exit: bool,
-) {
+pub fn draw(frame: &mut Frame, app: &App, theme: &LumaTheme, info: &LumaInfo, confirm_exit: bool) {
     let layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(5),
-            Constraint::Length(6),
+            Constraint::Min(10),
+            Constraint::Length(3),
             Constraint::Length(1),
         ])
         .split(frame.area());
 
-    /*
-        Main content
-    */
-
     if app.welcome_visible {
-        let welcome = WelcomeScreen::new(
-            theme,
-            model_info.provider.clone(),
-            model_info.model.clone(),
-            tools.to_vec(),
-        );
+        let welcome = WelcomeScreen::new(theme, info);
 
         welcome.render(frame, layout[0]);
     } else {
@@ -48,23 +32,15 @@ pub fn draw(
         chat.render(frame, layout[0]);
     }
 
-    /*
-        Input
-    */
-
     let input = InputBox::new(theme, &app.input);
 
     input.render(frame, layout[1]);
 
-    /*
-        Status
-    */
-
     let status = StatusBar::new(
         theme,
-        model_info.provider.clone(),
-        model_info.model.clone(),
-        tools.len(),
+        info.provider.clone(),
+        info.model.clone(),
+        info.tools.len(),
         confirm_exit,
         app.thinking,
     );
