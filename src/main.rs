@@ -17,7 +17,7 @@ use model::OpenAICompatibleModel;
 
 use tools::{
     ToolRegistry,
-    filesystem::{ListDirectory, ReadFile},
+    filesystem::{list_directory::ListDirectory, read_file::ReadFile, search_files::SearchFiles},
     shell::RunCommand,
 };
 
@@ -95,6 +95,7 @@ async fn main() -> anyhow::Result<()> {
     tools.register(ReadFile);
     tools.register(ListDirectory);
     tools.register(RunCommand);
+    tools.register(SearchFiles);
 
     let planner_model =
         OpenAICompatibleModel::new(config.planner.endpoint.clone(), config.planner.name.clone());

@@ -14,6 +14,8 @@ pub struct App {
 
     pub scroll: usize,
 
+    pub auto_scroll: bool,
+
     pub running: bool,
 
     pub logo_frame: usize,
@@ -125,6 +127,8 @@ impl App {
 
             scroll: 0,
 
+            auto_scroll: true,
+
             logo_frame: 0,
 
             running: true,
@@ -176,6 +180,8 @@ impl App {
             }
 
             AgentEvent::TextDelta(text) => {
+                self.auto_scroll = true;
+
                 self.thinking = false;
 
                 if let Some(last) = self.messages.last_mut() {
@@ -191,6 +197,10 @@ impl App {
 
                     content: text,
                 });
+
+                if self.auto_scroll {
+                    self.scroll_to_bottom();
+                }
             }
 
             AgentEvent::Finished => {
@@ -204,6 +214,26 @@ impl App {
                     content: error,
                 });
             }
+        }
+    }
+
+    pub fn scroll_down(&mut self) {
+        self.auto_scroll = false;
+
+        self.scroll = self.scroll.saturating_add(3);
+    }
+
+    pub fn scroll_up(&mut self) {
+        self.auto_scroll = false;
+
+        self.scroll = self.scroll.saturating_sub(3);
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        if self.messages.len() > 10 {
+            self.scroll = self.messages.len() - 10;
+        } else {
+            self.scroll = 0;
         }
     }
 }

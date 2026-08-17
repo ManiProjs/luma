@@ -6,7 +6,9 @@ use std::{
 use anyhow::Result;
 
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEventKind,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -29,7 +31,7 @@ pub async fn run(mut rx: Receiver<AgentEvent>, input_tx: Sender<String>) -> Resu
 
     let mut stdout = io::stdout();
 
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
 
     let backend = CrosstermBackend::new(stdout);
 
@@ -91,71 +93,94 @@ pub async fn run(mut rx: Receiver<AgentEvent>, input_tx: Sender<String>) -> Resu
         }
 
         if event::poll(Duration::from_millis(30))? {
-            if let Event::Key(key) = event::read()? {
-                if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-                    if confirm_exit {
-                        break;
+            match event::read()? {
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollUp => {
+                        app.scroll_up();
+                        app.auto_scroll = false;
                     }
 
-                    confirm_exit = true;
-
-                    last_ctrl_c = Instant::now();
-
-                    continue;
-                }
-
-                match key.code {
-                    KeyCode::Char(c) => {
-                        app.input.insert(c);
-                    }
-
-                    KeyCode::Backspace => {
-                        app.input.backspace();
-                    }
-
-                    KeyCode::Enter => {
-                        if key.modifiers.contains(KeyModifiers::SHIFT) {
-                            app.input.newline();
-                        } else if let Some(msg) = app.submit_input() {
-                            input_tx.send(msg).await?;
-                        }
-                    }
-
-                    KeyCode::Left => {
-                        if app.input.cursor_x > 0 {
-                            app.input.cursor_x -= 1;
-                        }
-                    }
-
-                    KeyCode::Right => {
-                        let len = app.input.lines[app.input.cursor_y].len();
-
-                        if app.input.cursor_x < len {
-                            app.input.cursor_x += 1;
-                        }
-                    }
-
-                    KeyCode::Up => {
-                        if app.input.cursor_y > 0 {
-                            app.input.cursor_y -= 1;
-                        }
-                    }
-
-                    KeyCode::Down => {
-                        if app.input.cursor_y + 1 < app.input.lines.len() {
-                            app.input.cursor_y += 1;
-                        }
+                    MouseEventKind::ScrollDown => {
+                        app.scroll_down();
                     }
 
                     _ => {}
+                },
+
+                Event::Key(key) => {
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && key.code == KeyCode::Char('c')
+                    {
+                        if confirm_exit {
+                            break;
+                        }
+
+                        confirm_exit = true;
+
+                        last_ctrl_c = Instant::now();
+
+                        continue;
+                    }
+
+                    match key.code {
+                        KeyCode::Char(c) => {
+                            app.input.insert(c);
+                        }
+
+                        KeyCode::Backspace => {
+                            app.input.backspace();
+                        }
+
+                        KeyCode::Enter => {
+                            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                                app.input.newline();
+                            } else if let Some(msg) = app.submit_input() {
+                                input_tx.send(msg).await?;
+                            }
+                        }
+
+                        KeyCode::Left => {
+                            if app.input.cursor_x > 0 {
+                                app.input.cursor_x -= 1;
+                            }
+                        }
+
+                        KeyCode::Right => {
+                            let len = app.input.lines[app.input.cursor_y].len();
+
+                            if app.input.cursor_x < len {
+                                app.input.cursor_x += 1;
+                            }
+                        }
+
+                        KeyCode::Up => {
+                            if app.input.cursor_y > 0 {
+                                app.input.cursor_y -= 1;
+                            }
+                        }
+
+                        KeyCode::Down => {
+                            if app.input.cursor_y + 1 < app.input.lines.len() {
+                                app.input.cursor_y += 1;
+                            }
+                        }
+
+                        _ => {}
+                    }
                 }
+
+                _ => {}
             }
         }
     }
 
     disable_raw_mode()?;
 
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
 
     Ok(())
 }

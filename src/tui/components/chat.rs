@@ -66,7 +66,9 @@ impl<'a> ChatView<'a> {
             )));
         }
 
-        let chat = Paragraph::new(lines).wrap(Wrap { trim: false });
+        let chat = Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((self.app.scroll as u16, 0));
 
         frame.render_widget(chat, area);
     }
