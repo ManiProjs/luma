@@ -29,6 +29,7 @@ use std::io::{self, Write};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    model::create_model,
     tools::{Tool, filesystem::write_file::WriteFile},
     tui::info::ModelInfo,
 };
@@ -98,8 +99,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config = config::load()?;
 
-    let model =
-        OpenAICompatibleModel::new(config.model.endpoint.clone(), config.model.name.clone());
+    let model = create_model(&config.model);
 
     let mut tools = ToolRegistry::new();
 
@@ -115,8 +115,7 @@ async fn main() -> anyhow::Result<()> {
 
     let tool_names = tools.names();
 
-    let planner_model =
-        OpenAICompatibleModel::new(config.planner.endpoint.clone(), config.planner.name.clone());
+    let planner_model = create_model(&config.planner);
 
     let planner = planner::Planner::new(planner_model, &tools);
 

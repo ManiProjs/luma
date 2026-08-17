@@ -1,25 +1,14 @@
-use std::pin::Pin;
-
 use anyhow::Result;
 use async_trait::async_trait;
-use futures_util::{Stream, StreamExt};
+use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
-use crate::context::MessageRole;
-
-pub type ModelStream = Pin<Box<dyn Stream<Item = Result<String>> + Send>>;
-
-#[async_trait]
-pub trait Model: Send + Sync {
-    async fn stream(&self, request: CompletionRequest) -> Result<ModelStream>;
-}
-
-#[derive(Debug)]
-pub struct CompletionRequest {
-    pub messages: Vec<crate::context::Message>,
-}
+use crate::{
+    context::MessageRole,
+    model::{CompletionRequest, Model, ModelStream},
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
@@ -113,21 +102,22 @@ fn parse_stream_chunk(chunk: &str) -> Vec<String> {
         }
 
         let json: Value = match serde_json::from_str(data) {
-            Ok(v) => v,
+            Ok(value) => value,
+
             Err(_) => continue,
         };
 
-        // Ollama
+        // Ollama OpenAI-compatible endpoint
         if let Some(text) = json["message"]["content"].as_str() {
             output.push(text.to_string());
 
             continue;
         }
 
-        // OpenAI compatible
+        // OpenAI compatible SSE
         if let Some(text) = json["choices"]
             .get(0)
-            .and_then(|x| x["delta"]["content"].as_str())
+            .and_then(|choice| choice["delta"]["content"].as_str())
         {
             output.push(text.to_string());
         }
@@ -152,9 +142,8 @@ impl Model for OpenAICompatibleModel {
 
                     MessageRole::Tool => "user",
 
-                    // Important:
-                    // Local models like Qwen/Llama understand workspace
-                    // observations better as user messages.
+                    // Workspace observations are sent as user messages
+                    // because local models understand them better.
                     MessageRole::Observation => "user",
                 }
                 .to_string(),
@@ -192,7 +181,7 @@ impl Model for OpenAICompatibleModel {
                         }
                     }
 
-                    Err(err) => Some(Err(err)),
+                    Err(error) => Some(Err(error)),
                 }
             });
 

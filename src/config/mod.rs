@@ -11,13 +11,15 @@ pub struct Config {
     pub planner: ModelConfig,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct ModelConfig {
     pub provider: String,
 
     pub endpoint: String,
 
     pub name: String,
+
+    pub api_key: Option<String>,
 }
 
 pub fn config_path() -> PathBuf {
