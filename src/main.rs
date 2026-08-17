@@ -4,18 +4,16 @@ mod context;
 mod event;
 mod model;
 mod planner;
+mod theme;
 mod tools;
-mod ui;
+mod tui;
 mod workspace;
-
-use std::io::Write;
 
 use clap::Parser;
 
 use agent::Agent;
 use event::AgentEvent;
 use model::OpenAICompatibleModel;
-use ui::Renderer;
 
 use tools::{
     ToolRegistry,
@@ -26,23 +24,14 @@ use tools::{
 #[derive(Parser, Debug)]
 #[command(name = "luma", version, about = "A lightweight AI coding agent")]
 struct Args {
-    /// Prompt for Luma
-    #[arg(required = true)]
+    /// Optional initial prompt
+    #[arg()]
     prompt: Vec<String>,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-
-    println!(
-        r#"
-✨ Luma
-A lightweight local AI coding agent
-"#
-    );
-
-    let input = args.prompt.join(" ");
 
     let config = config::Config::load()?;
 
@@ -62,21 +51,22 @@ A lightweight local AI coding agent
 
     let mut agent = Agent::new(model, planner, tools);
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+    let (event_tx, event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(100);
+
+    let (input_tx, input_rx) = tokio::sync::mpsc::channel::<String>(100);
 
     tokio::spawn(async move {
-        if let Err(error) = agent.run(input, tx.clone()).await {
-            let _ = tx.send(AgentEvent::Error(error.to_string())).await;
+        if let Err(error) = agent.run(input_rx, event_tx.clone()).await {
+            let _ = event_tx.send(AgentEvent::Error(error.to_string())).await;
         }
     });
 
-    let mut renderer = Renderer::new();
-
-    while let Some(event) = rx.recv().await {
-        renderer.handle(event);
-
-        std::io::stdout().flush().unwrap();
+    // Send CLI argument as first message
+    if !args.prompt.is_empty() {
+        input_tx.send(args.prompt.join(" ")).await?;
     }
+
+    tui::terminal::run(event_rx, input_tx).await?;
 
     Ok(())
 }

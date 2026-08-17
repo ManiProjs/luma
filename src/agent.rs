@@ -1,5 +1,6 @@
 use anyhow::Result;
 use futures_util::StreamExt;
+use tokio::sync::mpsc::{Receiver, Sender};
 
 use crate::{
     context::{Context, Message, MessageRole},
@@ -74,10 +75,10 @@ where
             "modify",
         ];
 
-        keywords.iter().any(|keyword| input.contains(keyword))
+        keywords.iter().any(|x| input.contains(x))
     }
 
-    async fn answer(&self, tx: &tokio::sync::mpsc::Sender<AgentEvent>) -> Result<String> {
+    async fn answer(&self, tx: &Sender<AgentEvent>) -> Result<String> {
         let mut messages = vec![Message {
             role: MessageRole::System,
             content: r#"
@@ -86,13 +87,12 @@ You are Luma.
 You are an AI coding assistant.
 
 For normal conversation:
-- answer normally.
+answer normally.
 
 For workspace questions:
-- use ONLY workspace observations.
+use ONLY workspace observations.
 
 Rules:
-
 - Never guess.
 - Never invent technologies.
 - Never invent features.
@@ -125,45 +125,42 @@ Return plain text only.
         Ok(response)
     }
 
-    pub async fn run(
-        &mut self,
-        input: String,
-        tx: tokio::sync::mpsc::Sender<AgentEvent>,
-    ) -> Result<()> {
-        let workspace_request = self.needs_workspace(&input);
+    pub async fn run(&mut self, mut rx: Receiver<String>, tx: Sender<AgentEvent>) -> Result<()> {
+        while let Some(input) = rx.recv().await {
+            self.context.add(MessageRole::User, input.clone());
 
-        self.context.add(MessageRole::User, input);
+            let workspace_request = self.needs_workspace(&input);
 
-        // Normal chat bypasses planner/tools
-        if !workspace_request {
-            let response = self.answer(&tx).await?;
-
-            self.context.add(MessageRole::Assistant, response);
-
-            tx.send(AgentEvent::Finished).await?;
-
-            return Ok(());
-        }
-
-        tx.send(AgentEvent::Thinking).await?;
-
-        let mut steps = 0;
-
-        loop {
-            steps += 1;
-
-            if steps > 12 {
+            if !workspace_request {
                 let response = self.answer(&tx).await?;
 
                 self.context.add(MessageRole::Assistant, response);
 
-                break;
+                tx.send(AgentEvent::Finished).await?;
+
+                continue;
             }
 
-            let mut messages = vec![Message {
-                role: MessageRole::System,
-                content: format!(
-                    r#"
+            tx.send(AgentEvent::Thinking).await?;
+
+            let mut steps = 0;
+
+            loop {
+                steps += 1;
+
+                if steps > 12 {
+                    let response = self.answer(&tx).await?;
+
+                    self.context.add(MessageRole::Assistant, response);
+
+                    break;
+                }
+
+                let mut messages = vec![Message {
+                    role: MessageRole::System,
+
+                    content: format!(
+                        r#"
 You are Luma's planner.
 
 Inspection state:
@@ -179,54 +176,55 @@ Inspected files:
 Use tools if information is missing.
 Do not answer without evidence.
 "#,
-                    self.inspection.listed,
-                    self.inspection.config,
-                    self.inspection.readme,
-                    self.inspection.source,
-                    self.inspected_files,
-                ),
-            }];
+                        self.inspection.listed,
+                        self.inspection.config,
+                        self.inspection.readme,
+                        self.inspection.source,
+                        self.inspected_files,
+                    ),
+                }];
 
-            messages.extend(self.context.messages().iter().cloned());
+                messages.extend(self.context.messages().iter().cloned());
 
-            let plan = self.planner.plan(messages).await?;
+                let plan = self.planner.plan(messages).await?;
 
-            match plan {
-                PlanAction::Tool { name, input } => {
-                    self.execute_tool(&name, &input, &tx).await?;
-                }
+                match plan {
+                    PlanAction::Tool { name, input } => {
+                        self.execute_tool(&name, &input, &tx).await?;
+                    }
 
-                PlanAction::Multi { actions } => {
-                    for action in actions {
-                        if let PlanAction::Tool { name, input } = action {
-                            self.execute_tool(&name, &input, &tx).await?;
+                    PlanAction::Multi { actions } => {
+                        for action in actions {
+                            if let PlanAction::Tool { name, input } = action {
+                                self.execute_tool(&name, &input, &tx).await?;
+                            }
                         }
                     }
-                }
 
-                PlanAction::Answer { .. } => {
-                    if !self.inspection.config {
-                        self.execute_tool("read_file", "Cargo.toml", &tx).await?;
+                    PlanAction::Answer { .. } => {
+                        if !self.inspection.config {
+                            self.execute_tool("read_file", "Cargo.toml", &tx).await?;
 
-                        continue;
+                            continue;
+                        }
+
+                        if !self.inspection.source {
+                            self.execute_tool("read_file", "src/main.rs", &tx).await?;
+
+                            continue;
+                        }
+
+                        let response = self.answer(&tx).await?;
+
+                        self.context.add(MessageRole::Assistant, response);
+
+                        break;
                     }
-
-                    if !self.inspection.source {
-                        self.execute_tool("read_file", "src/main.rs", &tx).await?;
-
-                        continue;
-                    }
-
-                    let response = self.answer(&tx).await?;
-
-                    self.context.add(MessageRole::Assistant, response);
-
-                    break;
                 }
             }
-        }
 
-        tx.send(AgentEvent::Finished).await?;
+            tx.send(AgentEvent::Finished).await?;
+        }
 
         Ok(())
     }
@@ -274,7 +272,7 @@ Do not answer without evidence.
         &mut self,
         name: &str,
         input: &str,
-        tx: &tokio::sync::mpsc::Sender<AgentEvent>,
+        tx: &Sender<AgentEvent>,
     ) -> Result<()> {
         let start = std::time::Instant::now();
 

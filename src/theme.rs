@@ -1,3 +1,5 @@
+use ratatui::prelude::Color;
+
 pub struct LumaTheme {
     pub star: Color,
     pub glow: Color,
