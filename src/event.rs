@@ -13,4 +13,6 @@ pub enum AgentEvent {
     Finished,
 
     Error(String),
+
+    Debug(String),
 }

@@ -344,6 +344,12 @@ impl App {
                     content: error,
                 });
             }
+            AgentEvent::Debug(text) => {
+                self.messages.push(MessageLine {
+                    role: MessageRole::System,
+                    content: text,
+                });
+            }
         }
     }
 
@@ -367,5 +373,12 @@ impl App {
         }
 
         self.auto_scroll = true;
+    }
+
+    pub fn add_system_message(&mut self, text: impl Into<String>) {
+        self.messages.push(MessageLine {
+            role: MessageRole::System,
+            content: text.into(),
+        });
     }
 }

@@ -6,6 +6,7 @@ mod event;
 mod history;
 mod model;
 mod planner;
+mod router;
 mod theme;
 mod tools;
 mod tui;

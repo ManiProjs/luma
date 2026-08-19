@@ -1,4 +1,7 @@
-use crate::workspace::language::{self, ProgrammingLanguage};
+use crate::{
+    router::{RoutedAction, ToolRouter},
+    workspace::language::{self, ProgrammingLanguage},
+};
 use anyhow::Result;
 use futures_util::StreamExt;
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -303,6 +306,11 @@ You are Luma.
 
             self.context.add(MessageRole::User, input.clone());
 
+            if !self.inspection.listed {
+                self.execute_tool("list_directory", ".", &tx, &cancel)
+                    .await?;
+            }
+
             self.history.messages.push(HistoryMessage {
                 role: "user".into(),
                 content: input.clone(),
@@ -310,8 +318,32 @@ You are Luma.
 
             self.history.save()?;
 
+            /*
+                Deterministic tool routing
+
+                Handles obvious actions without asking the model.
+                Example:
+                "list directories"
+                "show files"
+                "show project structure"
+            */
+
+            match ToolRouter::route(&input) {
+                RoutedAction::Tool { name, input } => {
+                    tx.send(AgentEvent::Debug(format!("Router selected {}", name)))
+                        .await?;
+
+                    self.execute_tool(&name, &input, &tx, &cancel).await?;
+
+                    continue;
+                }
+
+                RoutedAction::Planner => {}
+            }
+
             let workspace_request = self.needs_workspace(&input);
 
+            // Normal chat
             if !workspace_request {
                 let response = self.answer(&tx, &cancel).await?;
 
@@ -342,6 +374,7 @@ You are Luma.
 
                 steps += 1;
 
+                // Safety limit
                 if steps > 12 {
                     let response = self.answer(&tx, &cancel).await?;
 
