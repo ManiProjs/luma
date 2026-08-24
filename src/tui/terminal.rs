@@ -59,7 +59,11 @@ pub async fn run(
             ui::draw(frame, &app, &theme, &info, confirm_exit);
         })?;
 
+        let mut received_event = false;
+
         while let Ok(agent_event) = rx.try_recv() {
+            received_event = true;
+
             match &agent_event {
                 AgentEvent::Thinking => {
                     info.set_status("Thinking");
@@ -85,6 +89,12 @@ pub async fn run(
             if app.auto_scroll {
                 app.scroll_to_bottom();
             }
+        }
+
+        if received_event {
+            terminal.draw(|frame| {
+                ui::draw(frame, &app, &theme, &info, confirm_exit);
+            })?;
         }
 
         if confirm_exit && last_ctrl_c.elapsed() > Duration::from_secs(3) {
@@ -201,9 +211,7 @@ pub async fn run(
                                         }
 
                                         Command::Init => {
-                                            input_tx
-                                                .send(
-                                                    r#"Initialize this workspace.
+                                            let prompt = r#"Initialize this workspace.
 
 Tasks:
 1. Inspect the project files using available tools.
@@ -221,9 +229,14 @@ Tasks:
 7. After finishing, reply exactly:
 
 Workspace initialized."#
-                                                        .into(),
-                                                )
-                                                .await?;
+                                                .to_string();
+
+                                            app.messages.push(MessageLine {
+                                                role: MessageRole::User,
+                                                content: prompt.clone(),
+                                            });
+
+                                            input_tx.send(prompt).await?;
                                         }
 
                                         Command::Unknown(name) => {
