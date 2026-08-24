@@ -110,8 +110,6 @@ async fn main() -> anyhow::Result<()> {
 
     tools.register(WriteFile);
 
-    workspace::bootstrap::WorkspaceBootstrap::initialize()?;
-
     let tool_names = tools.names();
 
     let planner_model = create_model(&config.planner);

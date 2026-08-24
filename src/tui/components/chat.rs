@@ -30,7 +30,7 @@ impl<'a> ChatView<'a> {
 
                 MessageRole::Assistant => ("Luma: ", Style::default().fg(self.theme.glow)),
 
-                MessageRole::Tool => ("🔧 ", Style::default().fg(self.theme.space)),
+                MessageRole::Tool => (" ", Style::default().fg(self.theme.space)),
 
                 MessageRole::System => ("[!] ", Style::default().fg(self.theme.star)),
             };

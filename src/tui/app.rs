@@ -294,17 +294,47 @@ impl App {
             }
 
             AgentEvent::ToolStarted { name, input } => {
-                self.current_tool = Some(ToolState { name, input });
+                let display_input = match name.as_str() {
+                    "write_file" => {
+                        let path = input.lines().next().unwrap_or("?");
+
+                        format!("→ {}", path)
+                    }
+
+                    "read_file" => {
+                        format!("→ {}", input.trim())
+                    }
+
+                    "list_directory" => "→ .".into(),
+
+                    "search_files" => {
+                        format!("→ {}", input.trim())
+                    }
+
+                    "run_command" => {
+                        format!("→ {}", input.trim())
+                    }
+
+                    _ => "→ running".into(),
+                };
+
+                self.current_tool = Some(ToolState {
+                    name,
+                    input: display_input,
+                });
             }
 
             AgentEvent::ToolFinished { name, duration_ms } => {
                 self.messages.push(MessageLine {
                     role: MessageRole::Tool,
-
-                    content: format!("{} finished ({}ms)", name, duration_ms),
+                    content: format!("🔧 {} finished ({}ms)", name, duration_ms),
                 });
 
                 self.current_tool = None;
+
+                if self.auto_scroll {
+                    self.scroll_to_bottom();
+                }
             }
 
             AgentEvent::TextDelta(text) => {
@@ -315,7 +345,7 @@ impl App {
                         last.content.push_str(&text);
 
                         if self.auto_scroll {
-                            self.scroll = usize::MAX;
+                            self.scroll_to_bottom();
                         }
 
                         return;
@@ -324,31 +354,59 @@ impl App {
 
                 self.messages.push(MessageLine {
                     role: MessageRole::Assistant,
-
                     content: text,
                 });
 
                 if self.auto_scroll {
-                    self.scroll = usize::MAX;
+                    self.scroll_to_bottom();
+                }
+            }
+
+            AgentEvent::SystemMessage(text) => {
+                self.messages.push(MessageLine {
+                    role: MessageRole::System,
+                    content: text,
+                });
+
+                self.thinking = false;
+                self.current_tool = None;
+
+                if self.auto_scroll {
+                    self.scroll_to_bottom();
                 }
             }
 
             AgentEvent::Finished => {
                 self.thinking = false;
+                self.current_tool = None;
+
+                if self.auto_scroll {
+                    self.scroll_to_bottom();
+                }
             }
 
             AgentEvent::Error(error) => {
                 self.messages.push(MessageLine {
                     role: MessageRole::System,
-
                     content: error,
                 });
+
+                self.current_tool = None;
+
+                if self.auto_scroll {
+                    self.scroll_to_bottom();
+                }
             }
+
             AgentEvent::Debug(text) => {
                 self.messages.push(MessageLine {
                     role: MessageRole::System,
                     content: text,
                 });
+
+                if self.auto_scroll {
+                    self.scroll_to_bottom();
+                }
             }
         }
     }

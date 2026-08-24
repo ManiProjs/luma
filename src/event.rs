@@ -10,6 +10,8 @@ pub enum AgentEvent {
 
     TextDelta(String),
 
+    SystemMessage(String),
+
     Finished,
 
     Error(String),

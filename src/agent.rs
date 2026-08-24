@@ -252,6 +252,12 @@ Workspace rules:
 - Never invent files, technologies, dependencies, or architecture.
 - Never guess what code does without reading it.
 
+When the user asks to initialize a workspace:
+- You are an execution agent, not a chat assistant.
+- Prefer tools over explanations.
+- Do not describe inspected files unless asked.
+- Complete the task first, then give a short completion message.
+
 If information is missing:
 "Not enough workspace information."
 
@@ -329,6 +335,9 @@ You are Luma.
         while let Some(input) = rx.recv().await {
             if input.trim() == "/init" {
                 self.initialize_workspace(&tx, &cancel).await?;
+
+                tx.send(AgentEvent::SystemMessage("Workspace initialized.".into()))
+                    .await?;
 
                 tx.send(AgentEvent::Finished).await?;
 

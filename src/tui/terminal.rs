@@ -201,7 +201,29 @@ pub async fn run(
                                         }
 
                                         Command::Init => {
-                                            input_tx.send("/init".into()).await?;
+                                            input_tx
+                                                .send(
+                                                    r#"Initialize this workspace.
+
+Tasks:
+1. Inspect the project files using available tools.
+2. Detect the programming language and framework.
+3. Create or update GALAXY.md with:
+   - Project name
+   - Language
+   - Framework
+   - Important files
+   - Project structure
+   - Notes for future sessions
+4. Do not explain files.
+5. Do not summarize code.
+6. Use tools whenever possible.
+7. After finishing, reply exactly:
+
+Workspace initialized."#
+                                                        .into(),
+                                                )
+                                                .await?;
                                         }
 
                                         Command::Unknown(name) => {
