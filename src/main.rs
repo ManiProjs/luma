@@ -96,9 +96,9 @@ async fn main() -> anyhow::Result<()> {
 
     let config = config::load()?;
 
-    let model = create_model(&config.model);
-
     let mut tools = ToolRegistry::new();
+
+    let model = create_model(&config.model);
 
     tools.register(ReadFile);
 
@@ -110,6 +110,8 @@ async fn main() -> anyhow::Result<()> {
 
     tools.register(WriteFile);
 
+    workspace::bootstrap::WorkspaceBootstrap::initialize()?;
+
     let tool_names = tools.names();
 
     let planner_model = create_model(&config.planner);
@@ -118,7 +120,11 @@ async fn main() -> anyhow::Result<()> {
 
     let history = History::load();
 
-    let mut agent = Agent::new(model, planner, tools, history);
+    workspace::bootstrap::WorkspaceBootstrap::initialize()?;
+
+    let galaxy = workspace::bootstrap::WorkspaceBootstrap::load()?;
+
+    let mut agent = Agent::new(model, planner, tools, history, galaxy);
 
     let (event_tx, event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(100);
 

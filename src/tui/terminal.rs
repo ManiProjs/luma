@@ -200,6 +200,10 @@ pub async fn run(
                                             break;
                                         }
 
+                                        Command::Init => {
+                                            input_tx.send("/init".into()).await?;
+                                        }
+
                                         Command::Unknown(name) => {
                                             app.messages.push(MessageLine {
                                                 role: MessageRole::System,

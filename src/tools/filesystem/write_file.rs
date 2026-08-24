@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use serde_json::Value;
 
 use crate::tools::Tool;
 
@@ -10,22 +11,25 @@ impl Tool for WriteFile {
     }
 
     fn description(&self) -> &str {
-        "Write a complete file. First line is the path, remaining lines are the file contents."
+        "Write a complete file using JSON: {\"path\":\"file\", \"content\":\"text\"}"
     }
 
     fn execute(&self, input: &str) -> Result<String> {
-        let mut lines = input.lines();
+        let json: Value =
+            serde_json::from_str(input).map_err(|e| anyhow!("Invalid JSON: {}", e))?;
 
-        let path = lines.next().ok_or_else(|| anyhow!("Missing file path"))?;
+        let path = json
+            .get("path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing file path"))?;
 
-        let content: String = lines.collect::<Vec<_>>().join("\n");
+        let content = json
+            .get("content")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow!("Missing file content"))?;
 
         if content.trim().is_empty() {
-            return Err(anyhow!(
-                "Missing file content. write_file requires:\n\
-                     <path>\n\
-                     <complete file contents>"
-            ));
+            return Err(anyhow!("Missing file content"));
         }
 
         std::fs::write(path, content)?;

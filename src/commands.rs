@@ -3,6 +3,7 @@ pub enum Command {
     Help,
     Clear,
     Quit,
+    Init,
     Unknown(String),
 }
 
@@ -22,6 +23,8 @@ impl Command {
             "/clear" => Command::Clear,
 
             "/quit" | "/exit" => Command::Quit,
+
+            "/init" => Command::Init,
 
             other => Command::Unknown(other.trim_start_matches('/').to_string()),
         })
