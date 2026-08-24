@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use futures_util::StreamExt;
 use serde_json::Value;
 
@@ -43,214 +43,64 @@ where
             r#"
 You are Luma Planner.
 
-You are NOT the final assistant.
+Your job is to decide the next action.
 
-Your only job:
-- Decide the next action.
-- Use tools to collect workspace information.
-- Return ONLY valid JSON.
+You MUST return JSON only.
 
-Another model writes the final answer.
-
-====================
-AVAILABLE TOOLS
-====================
+AVAILABLE TOOLS:
 
 {}
 
-====================
-MAIN RULE
-====================
+ACTION FORMAT:
 
-For repository questions:
-
-Examples:
-- What does this project do?
-- Explain this repository.
-- Describe this codebase.
-- What is this application?
-
-YOU MUST INSPECT FIRST.
-
-Never answer from your own knowledge.
-
-Never guess based on:
-- filenames
-- folder names
-- programming language alone
-- dependency names
-
-====================
-REQUIRED INSPECTION
-====================
-
-Before returning:
+Tool:
 
 {{
-"type":"answer",
-"content":"ready"
+  "type": "tool",
+  "name": "tool_name",
+  "input": "tool input"
 }}
 
-You need:
+For tools requiring structured input:
 
-1. Project metadata
-
-Examples:
-- Cargo.toml
-- package.json
-- pyproject.toml
-
-2. Documentation if available
-
-Examples:
-- README.md
-
-3. Source code
-
-Examples:
-- src/main.rs
-- src/lib.rs
-- src/
-- main.py
-
-A directory listing alone is never enough.
-
-====================
-OBSERVATIONS
-====================
-
-Previous tool results are workspace observations.
-
-Use them.
-
-Do not:
-- forget previous observations
-- repeat completed inspections
-- restart from zero
-
-If information is missing:
-call a tool.
-
-====================
-STOP CONDITIONS
-====================
-
-Return answer ONLY when:
-
-- Configuration file inspected
-- Source code inspected
-- Enough evidence exists to describe the project
-
-If not satisfied:
-use tools.
-
-====================
-TOOL RULES
-====================
-
-Prefer:
-
-list_directory:
 {{
-"type":"tool",
-"name":"list_directory",
-"input":"."
+  "type": "tool",
+  "name": "write_file",
+  "input": {{
+    "path": "file.txt",
+    "content": "hello"
+  }}
 }}
 
-read_file:
+Multiple actions:
 
 {{
-"type":"tool",
-"name":"read_file",
-"input":"Cargo.toml"
-}}
-
-Multiple:
-
-{{
-"type":"multi",
-"actions":[
+  "type": "multi",
+  "actions": [
     {{
-        "type":"tool",
-        "name":"read_file",
-        "input":"README.md"
-    }},
-    {{
-        "type":"tool",
-        "name":"read_file",
-        "input":"src/main.rs"
+      "type": "tool",
+      "name": "read_file",
+      "input": "README.md"
     }}
-]
+  ]
 }}
 
-====================
-FORBIDDEN
-====================
-
-Never:
-- answer project questions directly
-- invent project purpose
-- invent architecture
-- invent features
-- invent technologies
-
-Never say:
-- "I don't have access"
-- "provide files"
-- "I need context"
-
-You have tools.
-
-====================
-FINAL ANSWER SIGNAL
-====================
-
-Only when inspection is complete:
+Final answer:
 
 {{
-"type":"answer",
-"content":"ready"
+  "type": "answer",
+  "content": "ready"
 }}
 
-Return JSON only.
+RULES:
 
-====================
-CONVERSATION RULES
-====================
+- Never invent project information.
+- Inspect files before explaining projects.
+- Use tools when information is missing.
+- Use previous tool results.
+- Do not repeat completed inspections.
+- Return JSON only.
 
-Not every message requires workspace inspection.
-
-For normal conversation:
-
-Examples:
-- hello
-- hi
-- hey
-- thanks
-- how are you
-- what can you do
-
-Return:
-
-{{
-"type":"answer",
-"content":"ready"
-}}
-
-Do NOT use tools.
-
-Only use tools when the user requests workspace/code information.
-
-Examples that require tools:
-
-- What does this project do?
-- Explain this repository.
-- Read this file.
-- Find the bug.
-- How does this code work?
-- Analyze this project.
-
-====================
 "#,
             self.tools.join("\n")
         )
@@ -276,7 +126,7 @@ Examples that require tools:
             response.push_str(&chunk?);
         }
 
-        let json = extract_json(&response);
+        let json = extract_json(&response)?;
 
         Ok(parse_plan(json))
     }
@@ -295,15 +145,15 @@ where
 fn parse_plan(value: Value) -> PlanAction {
     match value["type"].as_str() {
         Some("tool") => {
-            let name = value["name"].as_str().unwrap_or("").trim().to_string();
-
-            let input = value["input"].as_str().unwrap_or("").to_string();
+            let name = value["name"].as_str().unwrap_or("").to_string();
 
             if name.is_empty() {
                 return PlanAction::Answer {
-                    content: "invalid tool".into(),
+                    content: "Invalid tool call".into(),
                 };
             }
+
+            let input = value["input"].to_string();
 
             PlanAction::Tool { name, input }
         }
@@ -317,13 +167,17 @@ fn parse_plan(value: Value) -> PlanAction {
             PlanAction::Multi { actions }
         }
 
-        _ => PlanAction::Answer {
+        Some("answer") => PlanAction::Answer {
             content: value["content"].as_str().unwrap_or("ready").to_string(),
+        },
+
+        _ => PlanAction::Answer {
+            content: "Invalid planner response".into(),
         },
     }
 }
 
-fn extract_json(text: &str) -> Value {
+fn extract_json(text: &str) -> Result<Value> {
     let clean = text
         .replace("```json", "")
         .replace("```", "")
@@ -331,17 +185,14 @@ fn extract_json(text: &str) -> Value {
         .to_string();
 
     if let Ok(value) = serde_json::from_str::<Value>(&clean) {
-        return value;
+        return Ok(value);
     }
 
     if let (Some(start), Some(end)) = (clean.find('{'), clean.rfind('}')) {
         if let Ok(value) = serde_json::from_str::<Value>(&clean[start..=end]) {
-            return value;
+            return Ok(value);
         }
     }
 
-    serde_json::json!({
-        "type": "answer",
-        "content": clean
-    })
+    Err(anyhow!("Planner returned invalid JSON:\n{}", clean))
 }
