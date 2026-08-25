@@ -333,110 +333,217 @@ You are Luma.
         cancel: CancellationToken,
     ) -> Result<()> {
         while let Some(input) = rx.recv().await {
-            if input.trim() == "/init" {
-                self.initialize_workspace(&tx, &cancel).await?;
+            let input = input.trim().to_string();
 
-                tx.send(AgentEvent::SystemMessage("Workspace initialized.".into()))
-                    .await?;
-
-                tx.send(AgentEvent::Finished).await?;
-
+            if input.is_empty() {
                 continue;
             }
+
+            // ---------------------------------------------------------
+            // /init
+            // ---------------------------------------------------------
+
+            if input == "/init" {
+                match self.initialize_workspace(&tx, &cancel).await {
+                    Ok(()) => {
+                        let _ = tx
+                            .send(AgentEvent::SystemMessage("Workspace initialized.".into()))
+                            .await;
+                    }
+
+                    Err(error) => {
+                        let _ = tx
+                            .send(AgentEvent::Error(format!(
+                                "Workspace initialization failed: {}",
+                                error
+                            )))
+                            .await;
+                    }
+                }
+
+                let _ = tx.send(AgentEvent::Finished).await;
+                continue;
+            }
+
+            // ---------------------------------------------------------
+            // Cancellation
+            // ---------------------------------------------------------
 
             if cancel.is_cancelled() {
+                let _ = tx
+                    .send(AgentEvent::SystemMessage("Generation cancelled.".into()))
+                    .await;
+
+                let _ = tx.send(AgentEvent::Finished).await;
                 continue;
             }
 
-            // Reset workspace inspection for each request
+            // ---------------------------------------------------------
+            // Reset request-local state
+            // ---------------------------------------------------------
+
             self.inspection = InspectionState::default();
             self.inspected_files.clear();
 
             self.context.add(MessageRole::User, input.clone());
 
+            // ---------------------------------------------------------
+            // Initial workspace inspection
+            // ---------------------------------------------------------
+
             if !self.inspection.listed {
-                self.execute_tool("list_directory", ".", &tx, &cancel)
-                    .await?;
+                if let Err(error) = self.execute_tool("list_directory", ".", &tx, &cancel).await {
+                    let _ = tx
+                        .send(AgentEvent::Error(format!(
+                            "Workspace inspection failed: {}",
+                            error
+                        )))
+                        .await;
+
+                    let _ = tx.send(AgentEvent::Finished).await;
+                    continue;
+                }
             }
+
+            // ---------------------------------------------------------
+            // History
+            // ---------------------------------------------------------
 
             self.history.messages.push(HistoryMessage {
                 role: "user".into(),
                 content: input.clone(),
             });
 
-            self.history.save()?;
+            if let Err(error) = self.history.save() {
+                let _ = tx
+                    .send(AgentEvent::Error(format!(
+                        "Failed to save history: {}",
+                        error
+                    )))
+                    .await;
+            }
 
-            /*
-                Deterministic tool routing
-
-                Handles obvious actions without asking the model.
-                Example:
-                "list directories"
-                "show files"
-                "show project structure"
-            */
+            // ---------------------------------------------------------
+            // Deterministic tool routing
+            // ---------------------------------------------------------
 
             match ToolRouter::route(&input) {
                 RoutedAction::Tool { name, input } => {
-                    tx.send(AgentEvent::Debug(format!("Router selected {}", name)))
-                        .await?;
+                    let _ = tx
+                        .send(AgentEvent::Debug(format!("Router selected {}", name)))
+                        .await;
 
-                    self.execute_tool(&name, &input, &tx, &cancel).await?;
+                    match self.execute_tool(&name, &input, &tx, &cancel).await {
+                        Ok(()) => {}
 
+                        Err(error) => {
+                            let _ = tx
+                                .send(AgentEvent::Error(format!("{} failed: {}", name, error)))
+                                .await;
+                        }
+                    }
+
+                    let _ = tx.send(AgentEvent::Finished).await;
                     continue;
                 }
 
                 RoutedAction::Planner => {}
             }
 
+            // ---------------------------------------------------------
+            // Normal chat
+            // ---------------------------------------------------------
+
             let workspace_request = self.needs_workspace(&input);
 
-            // Normal chat
             if !workspace_request {
-                let response = self.answer(&tx, &cancel).await?;
+                match self.answer(&tx, &cancel).await {
+                    Ok(response) => {
+                        self.context.add(MessageRole::Assistant, response.clone());
 
-                self.context.add(MessageRole::Assistant, response.clone());
+                        self.history.messages.push(HistoryMessage {
+                            role: "assistant".into(),
+                            content: response,
+                        });
 
-                self.history.messages.push(HistoryMessage {
-                    role: "assistant".into(),
-                    content: response,
-                });
+                        if let Err(error) = self.history.save() {
+                            let _ = tx
+                                .send(AgentEvent::Error(format!(
+                                    "Failed to save history: {}",
+                                    error
+                                )))
+                                .await;
+                        }
+                    }
 
-                self.history.save()?;
+                    Err(error) => {
+                        let _ = tx
+                            .send(AgentEvent::Error(format!("Generation failed: {}", error)))
+                            .await;
+                    }
+                }
 
-                tx.send(AgentEvent::Finished).await?;
-
+                let _ = tx.send(AgentEvent::Finished).await;
                 continue;
             }
 
-            tx.send(AgentEvent::Thinking).await?;
+            // ---------------------------------------------------------
+            // Planner / workspace agent
+            // ---------------------------------------------------------
+
+            let _ = tx.send(AgentEvent::Thinking).await;
 
             let mut steps = 0;
 
             loop {
                 if cancel.is_cancelled() {
-                    tx.send(AgentEvent::Error("Interrupted.".into())).await?;
+                    let _ = tx.send(AgentEvent::Error("Interrupted.".into())).await;
 
                     break;
                 }
 
                 steps += 1;
 
+                // -----------------------------------------------------
                 // Safety limit
+                // -----------------------------------------------------
+
                 if steps > 12 {
-                    let response = self.answer(&tx, &cancel).await?;
+                    match self.answer(&tx, &cancel).await {
+                        Ok(response) => {
+                            self.context.add(MessageRole::Assistant, response.clone());
 
-                    self.context.add(MessageRole::Assistant, response.clone());
+                            self.history.messages.push(HistoryMessage {
+                                role: "assistant".into(),
+                                content: response,
+                            });
 
-                    self.history.messages.push(HistoryMessage {
-                        role: "assistant".into(),
-                        content: response,
-                    });
+                            if let Err(error) = self.history.save() {
+                                let _ = tx
+                                    .send(AgentEvent::Error(format!(
+                                        "Failed to save history: {}",
+                                        error
+                                    )))
+                                    .await;
+                            }
+                        }
 
-                    self.history.save()?;
+                        Err(error) => {
+                            let _ = tx
+                                .send(AgentEvent::Error(format!(
+                                    "Final response failed: {}",
+                                    error
+                                )))
+                                .await;
+                        }
+                    }
 
                     break;
                 }
+
+                // -----------------------------------------------------
+                // Build planner context
+                // -----------------------------------------------------
 
                 let mut messages = vec![Message {
                     role: MessageRole::System,
@@ -450,39 +557,113 @@ You are Luma.
 
                 messages.extend(self.context.messages().iter().cloned());
 
-                let plan = self.planner.plan(messages).await?;
+                // -----------------------------------------------------
+                // IMPORTANT:
+                // Planner failure must NOT escape run()
+                // -----------------------------------------------------
+
+                let plan = match self.planner.plan(messages).await {
+                    Ok(plan) => plan,
+
+                    Err(error) => {
+                        let _ = tx
+                            .send(AgentEvent::Error(format!("Planner failed: {}", error)))
+                            .await;
+
+                        // Stop this request only.
+                        //
+                        // The outer `while let Some(input)` stays alive,
+                        // so the user can immediately send another prompt.
+                        break;
+                    }
+                };
+
+                // -----------------------------------------------------
+                // Execute plan
+                // -----------------------------------------------------
 
                 match plan {
                     PlanAction::Tool { name, input } => {
-                        self.execute_tool(&name, &input, &tx, &cancel).await?;
+                        if let Err(error) = self.execute_tool(&name, &input, &tx, &cancel).await {
+                            let _ = tx
+                                .send(AgentEvent::Error(format!("{} failed: {}", name, error)))
+                                .await;
+
+                            break;
+                        }
                     }
 
                     PlanAction::Multi { actions } => {
+                        let mut failed = false;
+
                         for action in actions {
-                            if let PlanAction::Tool { name, input } = action {
-                                self.execute_tool(&name, &input, &tx, &cancel).await?;
+                            if cancel.is_cancelled() {
+                                failed = true;
+                                break;
                             }
+
+                            if let PlanAction::Tool { name, input } = action {
+                                if let Err(error) =
+                                    self.execute_tool(&name, &input, &tx, &cancel).await
+                                {
+                                    let _ = tx
+                                        .send(AgentEvent::Error(format!(
+                                            "{} failed: {}",
+                                            name, error
+                                        )))
+                                        .await;
+
+                                    failed = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if failed {
+                            break;
                         }
                     }
 
                     PlanAction::Answer { .. } => {
-                        let response = self.answer(&tx, &cancel).await?;
+                        match self.answer(&tx, &cancel).await {
+                            Ok(response) => {
+                                self.context.add(MessageRole::Assistant, response.clone());
 
-                        self.context.add(MessageRole::Assistant, response.clone());
+                                self.history.messages.push(HistoryMessage {
+                                    role: "assistant".into(),
+                                    content: response,
+                                });
 
-                        self.history.messages.push(HistoryMessage {
-                            role: "assistant".into(),
-                            content: response,
-                        });
+                                if let Err(error) = self.history.save() {
+                                    let _ = tx
+                                        .send(AgentEvent::Error(format!(
+                                            "Failed to save history: {}",
+                                            error
+                                        )))
+                                        .await;
+                                }
+                            }
 
-                        self.history.save()?;
+                            Err(error) => {
+                                let _ = tx
+                                    .send(AgentEvent::Error(format!("Response failed: {}", error)))
+                                    .await;
+                            }
+                        }
 
                         break;
                     }
                 }
             }
 
-            tx.send(AgentEvent::Finished).await?;
+            // ---------------------------------------------------------
+            // Request finished.
+            //
+            // CRITICAL:
+            // This happens even when the planner failed.
+            // ---------------------------------------------------------
+
+            let _ = tx.send(AgentEvent::Finished).await;
         }
 
         Ok(())

@@ -134,7 +134,14 @@ async fn main() -> anyhow::Result<()> {
 
     tokio::spawn(async move {
         if let Err(error) = agent.run(input_rx, event_tx.clone(), cancel.clone()).await {
-            let _ = event_tx.send(AgentEvent::Error(error.to_string())).await;
+            let _ = event_tx
+                .send(AgentEvent::Error(format!(
+                    "Agent session terminated: {}",
+                    error
+                )))
+                .await;
+
+            let _ = event_tx.send(AgentEvent::Finished).await;
         }
     });
     // Send CLI prompt as first message
