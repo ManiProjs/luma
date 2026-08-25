@@ -20,6 +20,7 @@ use tokio::sync::mpsc::{Receiver, Sender};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    agent::Confirmation,
     commands::Command,
     event::AgentEvent,
     theme::LumaTheme,
@@ -34,6 +35,7 @@ pub async fn run(
     mut rx: Receiver<AgentEvent>,
     input_tx: Sender<String>,
     cancel: CancellationToken,
+    confirmation_tx: Sender<Confirmation>,
     mut info: LumaInfo,
 ) -> Result<()> {
     enable_raw_mode()?;
@@ -51,7 +53,6 @@ pub async fn run(
     let theme = LumaTheme::default();
 
     let mut confirm_exit = false;
-
     let mut last_ctrl_c = Instant::now();
 
     loop {
@@ -73,12 +74,48 @@ pub async fn run(
                     info.set_status(format!("Running {}", name));
                 }
 
-                AgentEvent::Finished => {
-                    info.set_status("Ready");
+                AgentEvent::ConfirmationRequired { name, input } => {
+                    info.set_status("Confirmation required");
+
+                    app.messages.push(MessageLine {
+                        role: MessageRole::System,
+                        content: format!(
+                            "Tool `{}` wants to run:\n\n{}\n\n\
+                             Press Enter to allow or Esc to deny.",
+                            name, input
+                        ),
+                    });
+
+                    app.thinking = false;
                 }
 
-                AgentEvent::Error(_) => {
+                AgentEvent::ToolFinished { .. } => {
+                    info.set_status("Thinking");
+                }
+
+                AgentEvent::Finished => {
+                    info.set_status("Ready");
+                    app.thinking = false;
+                }
+
+                AgentEvent::Error(error) => {
                     info.set_status("Error");
+
+                    app.messages.push(MessageLine {
+                        role: MessageRole::System,
+                        content: error.clone(),
+                    });
+
+                    app.thinking = false;
+                }
+
+                AgentEvent::SystemMessage(message) => {
+                    info.set_status("Ready");
+
+                    app.messages.push(MessageLine {
+                        role: MessageRole::System,
+                        content: message.clone(),
+                    });
                 }
 
                 _ => {}
@@ -91,6 +128,14 @@ pub async fn run(
             }
         }
 
+        /*
+         * Confirmation responses are sent by the TUI only when the
+         * user explicitly chooses Allow/Deny.
+         *
+         * The receiver exists here so the channel remains part of
+         * the terminal session, but the actual confirmation request
+         * is represented by AgentEvent::ConfirmationRequired.
+         */
         if received_event {
             terminal.draw(|frame| {
                 ui::draw(frame, &app, &theme, &info, confirm_exit);
@@ -116,6 +161,16 @@ pub async fn run(
                 },
 
                 Event::Key(key) => {
+                    /*
+                     * Ctrl+C
+                     *
+                     * First press while the agent is working:
+                     * cancel the current generation.
+                     *
+                     * Otherwise:
+                     * first Ctrl+C arms exit confirmation.
+                     * second Ctrl+C exits.
+                     */
                     if key.modifiers.contains(KeyModifiers::CONTROL)
                         && key.code == KeyCode::Char('c')
                     {
@@ -124,7 +179,6 @@ pub async fn run(
 
                             app.messages.push(MessageLine {
                                 role: MessageRole::System,
-
                                 content: "Generation interrupted.".into(),
                             });
 
@@ -138,22 +192,62 @@ pub async fn run(
                         }
 
                         confirm_exit = true;
-
                         last_ctrl_c = Instant::now();
 
                         continue;
                     }
 
+                    /*
+                     * If the last event was ConfirmationRequired,
+                     * Enter/Esc can be used to answer it.
+                     */
+                    if matches!(
+                        app.messages.last(),
+                        Some(MessageLine {
+                            role: MessageRole::System,
+                            content,
+                        }) if content.contains("Press Enter to allow")
+                            && content.contains("Esc to deny")
+                    ) {
+                        match key.code {
+                            KeyCode::Enter => {
+                                confirmation_tx.send(Confirmation::Allow).await?;
+
+                                app.messages.push(MessageLine {
+                                    role: MessageRole::System,
+                                    content: "Allowed.".into(),
+                                });
+
+                                app.thinking = true;
+
+                                continue;
+                            }
+
+                            KeyCode::Esc => {
+                                confirmation_tx.send(Confirmation::Deny).await?;
+
+                                app.messages.push(MessageLine {
+                                    role: MessageRole::System,
+                                    content: "Denied.".into(),
+                                });
+
+                                app.thinking = true;
+
+                                continue;
+                            }
+
+                            _ => {}
+                        }
+                    }
+
                     match key.code {
                         KeyCode::Char(c) => {
                             app.input.insert(c);
-
                             app.update_suggestions();
                         }
 
                         KeyCode::Backspace => {
                             app.input.backspace();
-
                             app.update_suggestions();
                         }
 
@@ -195,14 +289,12 @@ pub async fn run(
                                         Command::Help => {
                                             app.messages.push(MessageLine {
                                                 role: MessageRole::System,
-
                                                 content: "Commands:\n\n/help\n/clear\n/quit".into(),
                                             });
                                         }
 
                                         Command::Clear => {
                                             app.messages.clear();
-
                                             app.welcome_visible = true;
                                         }
 
@@ -242,12 +334,13 @@ Workspace initialized."#
                                         Command::Unknown(name) => {
                                             app.messages.push(MessageLine {
                                                 role: MessageRole::System,
-
                                                 content: format!("Unknown command: /{}", name),
                                             });
                                         }
                                     }
                                 } else {
+                                    app.thinking = true;
+
                                     input_tx.send(message).await?;
                                 }
                             }

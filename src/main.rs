@@ -134,20 +134,18 @@ async fn main() -> anyhow::Result<()> {
 
     let (input_tx, input_rx) = tokio::sync::mpsc::channel::<String>(100);
 
+    let (confirmation_tx, confirmation_rx) = tokio::sync::mpsc::channel::<agent::Confirmation>(16);
+
     let cancel: CancellationToken = CancellationToken::new();
 
     let agent_cancel: CancellationToken = cancel.clone();
 
     tokio::spawn(async move {
-        if let Err(error) = agent.run(input_rx, event_tx.clone(), cancel.clone()).await {
-            let _ = event_tx
-                .send(AgentEvent::Error(format!(
-                    "Agent session terminated: {}",
-                    error
-                )))
-                .await;
-
-            let _ = event_tx.send(AgentEvent::Finished).await;
+        if let Err(error) = agent
+            .run(input_rx, event_tx.clone(), cancel.clone(), confirmation_rx)
+            .await
+        {
+            let _ = event_tx.send(AgentEvent::Error(error.to_string())).await;
         }
     });
     // Send CLI prompt as first message
@@ -164,7 +162,7 @@ async fn main() -> anyhow::Result<()> {
 
     info.workspace = Some(std::env::current_dir()?.display().to_string());
 
-    tui::terminal::run(event_rx, input_tx, agent_cancel, info).await?;
+    tui::terminal::run(event_rx, input_tx, agent_cancel, confirmation_tx, info).await?;
 
     Ok(())
 }

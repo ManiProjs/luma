@@ -9,6 +9,8 @@ pub struct App {
     pub thinking: bool,
     pub current_tool: Option<ToolState>,
 
+    pub confirmation: Option<ConfirmationRequest>,
+
     pub scroll: usize,
     pub auto_scroll: bool,
     pub running: bool,
@@ -22,6 +24,12 @@ pub struct App {
     // Slash command autocomplete
     pub suggestions: Vec<String>,
     pub selected_suggestion: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConfirmationRequest {
+    pub name: String,
+    pub input: String,
 }
 
 #[derive(Debug)]
@@ -158,6 +166,8 @@ impl App {
             thinking: false,
 
             current_tool: None,
+
+            confirmation: None,
 
             scroll: 0,
 
@@ -297,6 +307,28 @@ impl App {
     }
 
     // ─────────────────────────────────────────────
+    // Confirmation
+    // ─────────────────────────────────────────────
+
+    pub fn request_confirmation(&mut self, name: String, input: String) {
+        self.confirmation = Some(ConfirmationRequest { name, input });
+
+        self.thinking = false;
+
+        if self.auto_scroll {
+            self.scroll_to_bottom();
+        }
+    }
+
+    pub fn clear_confirmation(&mut self) {
+        self.confirmation = None;
+    }
+
+    pub fn confirmation_pending(&self) -> bool {
+        self.confirmation.is_some()
+    }
+
+    // ─────────────────────────────────────────────
     // Agent events
     // ─────────────────────────────────────────────
 
@@ -329,8 +361,6 @@ impl App {
                     }
                 }
 
-                // Keep a compact activity record rather than polluting
-                // the normal assistant conversation.
                 self.messages.push(MessageLine {
                     role: MessageRole::System,
                     content: format!("✓ {} completed in {}ms", name, duration_ms),
@@ -341,6 +371,10 @@ impl App {
                 if self.auto_scroll {
                     self.scroll_to_bottom();
                 }
+            }
+
+            AgentEvent::ConfirmationRequired { name, input } => {
+                self.request_confirmation(name, input);
             }
 
             AgentEvent::TextDelta(text) => {
@@ -372,6 +406,7 @@ impl App {
             AgentEvent::Finished => {
                 self.thinking = false;
                 self.current_tool = None;
+                self.confirmation = None;
             }
 
             AgentEvent::Error(error) => {
@@ -387,6 +422,7 @@ impl App {
                 }
 
                 self.current_tool = None;
+                self.confirmation = None;
             }
 
             AgentEvent::Debug(text) => {
@@ -401,6 +437,8 @@ impl App {
     fn format_tool_input(name: &str, input: &str) -> String {
         match name {
             "write_file" => input.lines().next().unwrap_or("?").to_string(),
+
+            "patch_file" => input.lines().next().unwrap_or("?").to_string(),
 
             "read_file" => input.trim().to_string(),
 

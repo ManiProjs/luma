@@ -1,5 +1,7 @@
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AgentEvent {
+    TextDelta(String),
+
     Thinking,
 
     Planning,
@@ -8,13 +10,13 @@ pub enum AgentEvent {
 
     ToolFinished { name: String, duration_ms: u128 },
 
-    TextDelta(String),
+    ConfirmationRequired { name: String, input: String },
 
     SystemMessage(String),
 
-    Finished,
-
     Error(String),
+
+    Finished,
 
     Debug(String),
 }
