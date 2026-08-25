@@ -1338,6 +1338,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "indicatif",
+ "rand 0.10.2",
  "ratatui",
  "reqwest",
  "serde",
