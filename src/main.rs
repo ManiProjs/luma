@@ -29,7 +29,11 @@ use std::io::{self, Write};
 
 use tokio_util::sync::CancellationToken;
 
-use crate::{model::create_model, tools::filesystem::write_file::WriteFile, tui::info::LumaInfo};
+use crate::{
+    model::create_model,
+    tools::filesystem::{patch_file::PatchFile, write_file::WriteFile},
+    tui::info::LumaInfo,
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "luma", version, about = "A lightweight AI coding agent")]
@@ -109,6 +113,8 @@ async fn main() -> anyhow::Result<()> {
     tools.register(SearchFiles);
 
     tools.register(WriteFile);
+
+    tools.register(PatchFile);
 
     let tool_names = tools.names();
 

@@ -180,7 +180,6 @@ Treat it as project memory.
     async fn answer(&self, tx: &Sender<AgentEvent>, cancel: &CancellationToken) -> Result<String> {
         let mut messages = vec![Message {
             role: MessageRole::System,
-
             content: r#"
 You are Luma.
 
@@ -195,8 +194,9 @@ Identity:
 Personality:
 - Be concise, technical, and helpful.
 - Prefer practical solutions.
-- Explain debugging reasoning.
-- Ask questions only when necessary.
+- Explain debugging reasoning when useful.
+- Ask questions only when absolutely necessary.
+- Prefer taking action over explaining what could be done.
 
 Programming abilities:
 
@@ -243,7 +243,7 @@ Rules:
 - Detect the programming language from the workspace.
 - Never assume Rust.
 - Use the project's existing conventions.
-- Use the correct package manager/build system.
+- Use the correct package manager and build system.
 - Do not invent dependencies.
 - Do not invent APIs.
 
@@ -259,7 +259,8 @@ When the user asks to initialize a workspace:
 - Complete the task first, then give a short completion message.
 
 If information is missing:
-"Not enough workspace information."
+- Say that the workspace information is insufficient.
+- Do not fabricate an answer.
 
 Tool rules:
 - Inspect before modifying.
@@ -272,7 +273,9 @@ Response style:
 - Use Markdown when useful.
 - Use code blocks for code.
 - Explain important tradeoffs.
-- Keep conversation natural.
+- Keep responses concise.
+- Do not repeat the user's request.
+- Do not add unnecessary introductions.
 
 You are Luma.
 "#
@@ -281,44 +284,62 @@ You are Luma.
 
         messages.extend(self.context.messages().iter().cloned());
 
-        let mut stream = self.model.stream(CompletionRequest { messages }).await?;
+        // ------------------------------------------------------------
+        // Start model request
+        // ------------------------------------------------------------
+
+        let mut stream = tokio::select! {
+            _ = cancel.cancelled() => {
+                return Ok(String::new());
+            }
+
+            result = self.model.stream(
+                CompletionRequest { messages }
+            ) => {
+                result?
+            }
+        };
+
+        // ------------------------------------------------------------
+        // Stream response
+        // ------------------------------------------------------------
 
         let mut response = String::new();
 
         loop {
             tokio::select! {
-
+                // Cancellation is checked while the model is streaming.
                 _ = cancel.cancelled() => {
-
-                    tx.send(
+                    let _ = tx.send(
                         AgentEvent::Error(
                             "Generation interrupted.".into()
                         )
-                    )
-                    .await?;
+                    ).await;
 
-
-                    break;
+                    return Ok(response);
                 }
 
-
                 chunk = stream.next() => {
-
                     let Some(chunk) = chunk else {
                         break;
                     };
 
-
                     let chunk = chunk?;
 
+                    if chunk.is_empty() {
+                        continue;
+                    }
 
                     response.push_str(&chunk);
 
-
-                    tx.send(
+                    // The TUI may have gone away.
+                    //
+                    // This should NOT kill the agent task.
+                    if tx.send(
                         AgentEvent::TextDelta(chunk)
-                    )
-                    .await?;
+                    ).await.is_err() {
+                        return Ok(response);
+                    }
                 }
             }
         }
@@ -330,25 +351,32 @@ You are Luma.
         &mut self,
         mut rx: Receiver<String>,
         tx: Sender<AgentEvent>,
-        cancel: CancellationToken,
+        session_cancel: CancellationToken,
     ) -> Result<()> {
-        while let Some(input) = rx.recv().await {
-            let input = input.trim().to_string();
+        while let Some(input) = tokio::select! {
+            _ = session_cancel.cancelled() => {
+                None
+            }
 
-            if input.is_empty() {
+            input = rx.recv() => {
+                input
+            }
+        } {
+            if input.trim().is_empty() {
                 continue;
             }
 
-            // ---------------------------------------------------------
-            // /init
-            // ---------------------------------------------------------
+            // Each request gets its own cancellation token.
+            let cancel = session_cancel.child_token();
 
-            if input == "/init" {
+            if input.trim() == "/init" {
                 match self.initialize_workspace(&tx, &cancel).await {
                     Ok(()) => {
                         let _ = tx
                             .send(AgentEvent::SystemMessage("Workspace initialized.".into()))
                             .await;
+
+                        let _ = tx.send(AgentEvent::Finished).await;
                     }
 
                     Err(error) => {
@@ -361,35 +389,18 @@ You are Luma.
                     }
                 }
 
-                let _ = tx.send(AgentEvent::Finished).await;
                 continue;
             }
-
-            // ---------------------------------------------------------
-            // Cancellation
-            // ---------------------------------------------------------
 
             if cancel.is_cancelled() {
-                let _ = tx
-                    .send(AgentEvent::SystemMessage("Generation cancelled.".into()))
-                    .await;
-
-                let _ = tx.send(AgentEvent::Finished).await;
                 continue;
             }
-
-            // ---------------------------------------------------------
-            // Reset request-local state
-            // ---------------------------------------------------------
-
-            self.inspection = InspectionState::default();
-            self.inspected_files.clear();
 
             self.context.add(MessageRole::User, input.clone());
 
-            // ---------------------------------------------------------
-            // Initial workspace inspection
-            // ---------------------------------------------------------
+            // --------------------------------------------------------
+            // Initial workspace listing
+            // --------------------------------------------------------
 
             if !self.inspection.listed {
                 if let Err(error) = self.execute_tool("list_directory", ".", &tx, &cancel).await {
@@ -400,14 +411,13 @@ You are Luma.
                         )))
                         .await;
 
-                    let _ = tx.send(AgentEvent::Finished).await;
                     continue;
                 }
             }
 
-            // ---------------------------------------------------------
+            // --------------------------------------------------------
             // History
-            // ---------------------------------------------------------
+            // --------------------------------------------------------
 
             self.history.messages.push(HistoryMessage {
                 role: "user".into(),
@@ -423,9 +433,9 @@ You are Luma.
                     .await;
             }
 
-            // ---------------------------------------------------------
+            // --------------------------------------------------------
             // Deterministic tool routing
-            // ---------------------------------------------------------
+            // --------------------------------------------------------
 
             match ToolRouter::route(&input) {
                 RoutedAction::Tool { name, input } => {
@@ -433,84 +443,30 @@ You are Luma.
                         .send(AgentEvent::Debug(format!("Router selected {}", name)))
                         .await;
 
-                    match self.execute_tool(&name, &input, &tx, &cancel).await {
-                        Ok(()) => {}
-
-                        Err(error) => {
-                            let _ = tx
-                                .send(AgentEvent::Error(format!("{} failed: {}", name, error)))
-                                .await;
-                        }
+                    if let Err(error) = self.execute_tool(&name, &input, &tx, &cancel).await {
+                        let _ = tx
+                            .send(AgentEvent::Error(format!("Tool failed: {}", error)))
+                            .await;
                     }
 
                     let _ = tx.send(AgentEvent::Finished).await;
+
                     continue;
                 }
 
                 RoutedAction::Planner => {}
             }
 
-            // ---------------------------------------------------------
+            // --------------------------------------------------------
             // Normal chat
-            // ---------------------------------------------------------
+            // --------------------------------------------------------
 
             let workspace_request = self.needs_workspace(&input);
 
             if !workspace_request {
                 match self.answer(&tx, &cancel).await {
                     Ok(response) => {
-                        self.context.add(MessageRole::Assistant, response.clone());
-
-                        self.history.messages.push(HistoryMessage {
-                            role: "assistant".into(),
-                            content: response,
-                        });
-
-                        if let Err(error) = self.history.save() {
-                            let _ = tx
-                                .send(AgentEvent::Error(format!(
-                                    "Failed to save history: {}",
-                                    error
-                                )))
-                                .await;
-                        }
-                    }
-
-                    Err(error) => {
-                        let _ = tx
-                            .send(AgentEvent::Error(format!("Generation failed: {}", error)))
-                            .await;
-                    }
-                }
-
-                let _ = tx.send(AgentEvent::Finished).await;
-                continue;
-            }
-
-            // ---------------------------------------------------------
-            // Planner / workspace agent
-            // ---------------------------------------------------------
-
-            let _ = tx.send(AgentEvent::Thinking).await;
-
-            let mut steps = 0;
-
-            loop {
-                if cancel.is_cancelled() {
-                    let _ = tx.send(AgentEvent::Error("Interrupted.".into())).await;
-
-                    break;
-                }
-
-                steps += 1;
-
-                // -----------------------------------------------------
-                // Safety limit
-                // -----------------------------------------------------
-
-                if steps > 12 {
-                    match self.answer(&tx, &cancel).await {
-                        Ok(response) => {
+                        if !response.is_empty() {
                             self.context.add(MessageRole::Assistant, response.clone());
 
                             self.history.messages.push(HistoryMessage {
@@ -527,13 +483,64 @@ You are Luma.
                                     .await;
                             }
                         }
+                    }
+
+                    Err(error) => {
+                        if cancel.is_cancelled() {
+                            let _ = tx
+                                .send(AgentEvent::Error("Generation interrupted.".into()))
+                                .await;
+                        } else {
+                            let _ = tx
+                                .send(AgentEvent::Error(format!("Model failed: {}", error)))
+                                .await;
+                        }
+                    }
+                }
+
+                let _ = tx.send(AgentEvent::Finished).await;
+
+                continue;
+            }
+
+            // --------------------------------------------------------
+            // Planner / workspace agent
+            // --------------------------------------------------------
+
+            let _ = tx.send(AgentEvent::Thinking).await;
+
+            let mut steps = 0;
+
+            loop {
+                if cancel.is_cancelled() {
+                    let _ = tx
+                        .send(AgentEvent::Error("Generation interrupted.".into()))
+                        .await;
+
+                    break;
+                }
+
+                steps += 1;
+
+                // Safety limit
+                if steps > 12 {
+                    match self.answer(&tx, &cancel).await {
+                        Ok(response) => {
+                            if !response.is_empty() {
+                                self.context.add(MessageRole::Assistant, response.clone());
+
+                                self.history.messages.push(HistoryMessage {
+                                    role: "assistant".into(),
+                                    content: response,
+                                });
+
+                                let _ = self.history.save();
+                            }
+                        }
 
                         Err(error) => {
                             let _ = tx
-                                .send(AgentEvent::Error(format!(
-                                    "Final response failed: {}",
-                                    error
-                                )))
+                                .send(AgentEvent::Error(format!("Model failed: {}", error)))
                                 .await;
                         }
                     }
@@ -541,13 +548,12 @@ You are Luma.
                     break;
                 }
 
-                // -----------------------------------------------------
+                // ----------------------------------------------------
                 // Build planner context
-                // -----------------------------------------------------
+                // ----------------------------------------------------
 
                 let mut messages = vec![Message {
                     role: MessageRole::System,
-
                     content: Self::planner_system_prompt(
                         &self.language,
                         &self.inspection,
@@ -557,30 +563,55 @@ You are Luma.
 
                 messages.extend(self.context.messages().iter().cloned());
 
-                // -----------------------------------------------------
-                // IMPORTANT:
-                // Planner failure must NOT escape run()
-                // -----------------------------------------------------
+                // ----------------------------------------------------
+                // Planner
+                // ----------------------------------------------------
 
-                let plan = match self.planner.plan(messages).await {
+                let plan = tokio::select! {
+                    _ = cancel.cancelled() => {
+                        let _ = tx
+                            .send(AgentEvent::Error(
+                                "Generation interrupted.".into(),
+                            ))
+                            .await;
+
+                        break;
+                    }
+
+                    result = self.planner.plan(
+                        messages,
+                        cancel.clone(),
+                    ) => {
+                        result
+                    }
+                };
+
+                let plan = match plan {
                     Ok(plan) => plan,
 
                     Err(error) => {
-                        let _ = tx
-                            .send(AgentEvent::Error(format!("Planner failed: {}", error)))
-                            .await;
+                        if cancel.is_cancelled() {
+                            let _ = tx
+                                .send(AgentEvent::Error("Generation interrupted.".into()))
+                                .await;
+                        } else {
+                            let _ = tx
+                                .send(AgentEvent::Error(format!("Planner failed: {}", error)))
+                                .await;
+                        }
 
-                        // Stop this request only.
+                        // IMPORTANT:
                         //
-                        // The outer `while let Some(input)` stays alive,
-                        // so the user can immediately send another prompt.
+                        // Do NOT return Err(error).
+                        //
+                        // This request failed, but Luma stays alive.
                         break;
                     }
                 };
 
-                // -----------------------------------------------------
+                // ----------------------------------------------------
                 // Execute plan
-                // -----------------------------------------------------
+                // ----------------------------------------------------
 
                 match plan {
                     PlanAction::Tool { name, input } => {
@@ -594,11 +625,8 @@ You are Luma.
                     }
 
                     PlanAction::Multi { actions } => {
-                        let mut failed = false;
-
                         for action in actions {
                             if cancel.is_cancelled() {
-                                failed = true;
                                 break;
                             }
 
@@ -613,41 +641,37 @@ You are Luma.
                                         )))
                                         .await;
 
-                                    failed = true;
                                     break;
                                 }
                             }
-                        }
-
-                        if failed {
-                            break;
                         }
                     }
 
                     PlanAction::Answer { .. } => {
                         match self.answer(&tx, &cancel).await {
                             Ok(response) => {
-                                self.context.add(MessageRole::Assistant, response.clone());
+                                if !response.is_empty() {
+                                    self.context.add(MessageRole::Assistant, response.clone());
 
-                                self.history.messages.push(HistoryMessage {
-                                    role: "assistant".into(),
-                                    content: response,
-                                });
+                                    self.history.messages.push(HistoryMessage {
+                                        role: "assistant".into(),
+                                        content: response,
+                                    });
 
-                                if let Err(error) = self.history.save() {
-                                    let _ = tx
-                                        .send(AgentEvent::Error(format!(
-                                            "Failed to save history: {}",
-                                            error
-                                        )))
-                                        .await;
+                                    let _ = self.history.save();
                                 }
                             }
 
                             Err(error) => {
-                                let _ = tx
-                                    .send(AgentEvent::Error(format!("Response failed: {}", error)))
-                                    .await;
+                                if cancel.is_cancelled() {
+                                    let _ = tx
+                                        .send(AgentEvent::Error("Generation interrupted.".into()))
+                                        .await;
+                                } else {
+                                    let _ = tx
+                                        .send(AgentEvent::Error(format!("Model failed: {}", error)))
+                                        .await;
+                                }
                             }
                         }
 
@@ -655,13 +679,6 @@ You are Luma.
                     }
                 }
             }
-
-            // ---------------------------------------------------------
-            // Request finished.
-            //
-            // CRITICAL:
-            // This happens even when the planner failed.
-            // ---------------------------------------------------------
 
             let _ = tx.send(AgentEvent::Finished).await;
         }
@@ -790,7 +807,7 @@ list_directory
 Purpose:
 Understand the workspace structure.
 
-Use immediately when the user asks:
+Use when the user asks:
 
 - "what files are here?"
 - "list files"
@@ -809,6 +826,9 @@ list_directory(".")
 
 first unless a specific directory is requested.
 
+Do NOT repeatedly call list_directory when the workspace has
+already been inspected and the existing observation is sufficient.
+
 --------------------------------------------------
 read_file
 --------------------------------------------------
@@ -823,8 +843,11 @@ Use when:
 - explaining implementation
 - modifying existing files
 - understanding configuration
+- verifying a change
 
-Never modify a file you have not read.
+Never modify an existing file you have not read.
+
+Prefer reading only the relevant file or relevant section.
 
 --------------------------------------------------
 search_files
@@ -840,27 +863,87 @@ Use when:
 - locating errors
 - finding TODOs
 - finding configuration
+- locating a file whose path is unknown
+
+Prefer search_files over repeatedly listing directories when
+you are looking for a specific symbol, filename, or piece of text.
+
+--------------------------------------------------
+patch_file
+--------------------------------------------------
+
+Purpose:
+Make a precise modification to an existing file.
+
+Use patch_file for modifications to existing files.
+
+Before using patch_file:
+
+- The target file MUST have been read.
+- You MUST know the exact file path.
+- You MUST know the exact existing text to replace.
+- The "old" text must come from the actual file contents.
+- The "new" text must be complete and intentional.
+
+patch_file performs an exact replacement.
+
+Rules:
+
+- Never invent the "old" text.
+- Never use placeholders.
+- Never use approximate text.
+- Never patch a file that has not been inspected.
+- Never assume whitespace or formatting.
+- If "old" matches zero times, read the file again.
+- If "old" matches more than once, make the match more specific.
+- Never blindly retry the same failed patch.
+- Prefer small, focused patches.
+- After patching, verify the result when practical.
+
+Example:
+
+patch_file(
+    path="src/main.rs",
+    old="let value = old_value;",
+    new="let value = new_value;",
+)
+
+For multiple independent changes, prefer multiple precise patches
+rather than replacing an entire file.
 
 --------------------------------------------------
 write_file
 --------------------------------------------------
 
 Purpose:
-Create or replace files.
+Create a new file or replace an entire file.
+
+Prefer patch_file when modifying an existing file.
+
+Use write_file primarily when:
+
+- creating a new file
+- generating a completely new file
+- replacing an entire file is explicitly necessary
 
 Before using write_file:
 
 You MUST know:
+
 - exact path
 - complete content
 
 Never send:
+
 - partial files
 - patches
 - explanations
 - placeholders
 
 The content must be a complete valid file.
+
+Do NOT use write_file simply because it is easier than constructing
+a precise patch.
 
 --------------------------------------------------
 run_command
@@ -874,9 +957,72 @@ Use for:
 - building
 - testing
 - formatting
+- linting
 - running applications
+- verifying changes
 
 Never assume command output.
+
+After making important code changes, prefer running the project's
+appropriate verification command when practical.
+
+Examples:
+
+Rust:
+cargo check
+cargo test
+cargo fmt -- --check
+cargo clippy
+
+Python:
+pytest
+python -m compileall
+
+JavaScript / TypeScript:
+npm test
+npm run build
+npx tsc --noEmit
+
+Go:
+go test ./...
+go vet ./...
+
+Use the project's existing package manager and conventions.
+
+==================================================
+MODIFICATION WORKFLOW
+==================================================
+
+When modifying existing code, follow:
+
+1. Locate the target file.
+2. Read the target file.
+3. Understand the surrounding implementation.
+4. Choose the smallest safe modification.
+5. Use patch_file.
+6. Inspect or verify the resulting change.
+7. Run an appropriate check when possible.
+8. Report the result.
+
+Do NOT jump directly from:
+
+"user wants a change"
+
+to:
+
+"write_file"
+
+unless creating a new file.
+
+The preferred flow is:
+
+read_file
+    ↓
+patch_file
+    ↓
+read_file / run_command
+    ↓
+answer
 
 ==================================================
 PROJECT DETECTION
@@ -933,21 +1079,47 @@ DECISION RULES
 ==================================================
 
 If the user asks a question:
+
 - Answer directly if no workspace information is needed.
 
 If the user asks about the workspace:
+
 - Use tools.
 
 If the user requests a change:
+
 - Inspect first.
 - Then modify.
 
 If the user reports an error:
+
 - Read relevant files.
 - Search for related code.
 - Do not guess.
 
+If the target file is already known but its contents are not:
+
+- read_file first.
+
+If the target file has already been read:
+
+- Do not unnecessarily list the workspace again.
+- Use the existing observation.
+
+If a precise modification is required:
+
+- Prefer patch_file.
+
+If creating a new file:
+
+- Use write_file.
+
+If an existing file must be completely regenerated:
+
+- Use write_file only when necessary.
+
 If unsure:
+
 - Gather information.
 
 ==================================================
@@ -978,8 +1150,58 @@ Assistant:
 "I would change the borrow checker issue by..."
 
 Correct:
+
 read_file("file.rs")
 then decide.
+
+---
+
+Wrong:
+
+User:
+"Change this function"
+
+Assistant:
+write_file("file.rs", entire guessed file)
+
+Correct:
+
+read_file("file.rs")
+then:
+
+patch_file(
+    path="file.rs",
+    old="exact existing code",
+    new="exact replacement",
+)
+
+---
+
+Wrong:
+
+patch_file(
+    path="src/agent.rs",
+    old="probably this code",
+    new="..."
+)
+
+Correct:
+
+Read the file first and use text that actually exists.
+
+---
+
+Wrong:
+
+A patch fails.
+
+Assistant:
+retry the same patch repeatedly.
+
+Correct:
+
+Read the file again, determine why the match failed,
+construct a more precise patch, then retry.
 
 ---
 
@@ -992,6 +1214,7 @@ Assistant:
 "Here is a config example."
 
 Correct:
+
 Use write_file if a real file is requested.
 
 ==================================================
@@ -1017,15 +1240,37 @@ Previously inspected files:
 {:?}
 
 ==================================================
-Workspace memory:
+WORKSPACE MEMORY
 ==================================================
 
 A GALAXY.md file may exist.
 
 Rules:
-- Read GALAXY.md before exploring the project.
+
+- Read GALAXY.md before exploring the project when it exists.
 - Treat it as project memory.
-- Update it after major architecture changes.
+- Do not invent information that is not present in GALAXY.md.
+- Update it after major architecture changes when appropriate.
+
+==================================================
+EFFICIENCY
+==================================================
+
+Do not use tools merely because they are available.
+
+Every tool call should answer a question or perform a necessary action.
+
+Avoid redundant calls.
+
+In particular:
+
+- Do not repeatedly call list_directory.
+- Do not reread unchanged files without a reason.
+- Do not use search_files when the exact file is already known.
+- Do not use write_file when patch_file is sufficient.
+- Do not run expensive commands unless they provide useful verification.
+
+Prefer the smallest number of tool calls that produces a reliable result.
 
 ==================================================
 FINAL RULE
@@ -1042,7 +1287,14 @@ When a tool can answer:
 use it.
 
 When a file must change:
-inspect, modify, verify
+
+inspect
+→ patch
+→ verify
+
+Prefer precise, minimal, reversible changes.
+
+Never guess when the filesystem can tell you the answer.
 
 "#,
             language.name(),
@@ -1262,7 +1514,7 @@ Update it when major architecture changes happen.
 
 #[async_trait::async_trait]
 pub trait PlannerTrait: Send + Sync {
-    async fn plan(&self, messages: Vec<Message>) -> Result<PlanAction>;
+    async fn plan(&self, messages: Vec<Message>, cancel: CancellationToken) -> Result<PlanAction>;
 }
 
 #[async_trait::async_trait]
@@ -1270,7 +1522,15 @@ impl<M> PlannerTrait for Planner<M>
 where
     M: Model + Send + Sync,
 {
-    async fn plan(&self, messages: Vec<Message>) -> Result<PlanAction> {
-        self.create_plan(messages).await
+    async fn plan(&self, messages: Vec<Message>, cancel: CancellationToken) -> Result<PlanAction> {
+        tokio::select! {
+            _ = cancel.cancelled() => {
+                anyhow::bail!("Generation interrupted.")
+            }
+
+            result = self.create_plan(messages) => {
+                result
+            }
+        }
     }
 }
