@@ -10,15 +10,15 @@ use crate::{
     event::AgentEvent,
     history::{History, HistoryMessage},
     model::{CompletionRequest, Model},
-    planner::{PlanAction, Planner},
+    planner::{PlanAction, Planner, PlannerTrait},
     router::{RoutedAction, ToolRouter},
     tools::ToolRegistry,
     workspace::language::{self, ProgrammingLanguage},
 };
 
-// ============================================================
+// ============================================================================
 // Confirmation
-// ============================================================
+// ============================================================================
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Confirmation {
@@ -30,31 +30,32 @@ fn requires_confirmation(tool: &str) -> bool {
     matches!(tool, "write_file" | "patch_file" | "run_command")
 }
 
-// ============================================================
-// Inspection
-// ============================================================
+// ============================================================================
+// Workspace inspection
+// ============================================================================
 
 #[derive(Default, Debug)]
 struct InspectionState {
-    listed: bool,
+    directory: bool,
     config: bool,
     readme: bool,
     source: bool,
     galaxy: bool,
 }
 
-// ============================================================
+// ============================================================================
 // Agent
-// ============================================================
+// ============================================================================
 
 pub struct Agent<M, P> {
     model: M,
     planner: P,
     context: Context,
     tools: ToolRegistry,
+    history: History,
+
     inspected_files: Vec<String>,
     inspection: InspectionState,
-    history: History,
     language: ProgrammingLanguage,
 }
 
@@ -76,7 +77,7 @@ where
             context.add(
                 MessageRole::System,
                 format!(
-                    r#"
+                    "\
 # Luma Workspace Memory
 
 The following information comes from GALAXY.md.
@@ -88,7 +89,7 @@ Treat it as project memory.
 {}
 
 ---
-"#,
+",
                     galaxy
                 ),
             );
@@ -99,101 +100,132 @@ Treat it as project memory.
             planner,
             context,
             tools,
+            history,
             inspected_files: Vec::new(),
             inspection: InspectionState::default(),
-            history,
             language: ProgrammingLanguage::Unknown,
         }
     }
 
-    // ========================================================
+    // ========================================================================
     // Main loop
-    // ========================================================
+    // ========================================================================
 
     pub async fn run(
         &mut self,
-        mut rx: Receiver<String>,
-        tx: Sender<AgentEvent>,
+        mut input_rx: Receiver<String>,
+        event_tx: Sender<AgentEvent>,
         cancel: CancellationToken,
-        mut confirmation_rx: Receiver<Confirmation>,
+        confirmation_rx: Receiver<Confirmation>,
     ) -> Result<()> {
-        while let Some(input) = rx.recv().await {
+        let mut confirmation_rx = confirmation_rx;
+
+        while let Some(input) = input_rx.recv().await {
             if cancel.is_cancelled() {
                 continue;
             }
 
-            if input.trim() == "/init" {
-                self.initialize_workspace(&tx, &cancel, &mut confirmation_rx)
-                    .await?;
-
-                self.send_finished(&tx).await?;
-                continue;
-            }
-
-            self.begin_request(&input)?;
-
-            match ToolRouter::route(&input) {
-                RoutedAction::Tool { name, input } => {
-                    self.run_direct_tool(&name, &input, &tx, &cancel, &mut confirmation_rx)
-                        .await?;
-
-                    self.send_finished(&tx).await?;
-                    continue;
-                }
-
-                RoutedAction::Planner => {}
-            }
-
-            if !self.needs_workspace(&input) {
-                self.run_conversation(&tx, &cancel).await?;
-
-                self.send_finished(&tx).await?;
-                continue;
-            }
-
-            self.run_agent_loop(&tx, &cancel, &mut confirmation_rx)
+            self.handle_input(input, &event_tx, &cancel, &mut confirmation_rx)
                 .await?;
-
-            self.send_finished(&tx).await?;
         }
 
         Ok(())
     }
+
+    async fn handle_input(
+        &mut self,
+        input: String,
+        tx: &Sender<AgentEvent>,
+        cancel: &CancellationToken,
+        confirmation_rx: &mut Receiver<Confirmation>,
+    ) -> Result<()> {
+        let input = input.trim();
+
+        if input.is_empty() {
+            return Ok(());
+        }
+
+        if input == "/init" {
+            self.initialize_workspace(tx, cancel, confirmation_rx)
+                .await?;
+
+            self.finish(tx).await?;
+            return Ok(());
+        }
+
+        self.begin_request(input)?;
+
+        match ToolRouter::route(input) {
+            RoutedAction::Tool { name, input } => {
+                self.run_direct_tool(&name, &input, tx, cancel, confirmation_rx)
+                    .await?;
+
+                self.finish(tx).await?;
+                return Ok(());
+            }
+
+            RoutedAction::Planner => {}
+        }
+
+        if self.needs_workspace(input) {
+            self.run_agent_loop(tx, cancel, confirmation_rx).await?;
+        } else {
+            self.run_conversation(tx, cancel).await?;
+        }
+
+        self.finish(tx).await
+    }
+
+    async fn finish(&self, tx: &Sender<AgentEvent>) -> Result<()> {
+        tx.send(AgentEvent::Finished).await?;
+        Ok(())
+    }
+
+    // ========================================================================
+    // Request / history
+    // ========================================================================
 
     fn begin_request(&mut self, input: &str) -> Result<()> {
         self.inspection = InspectionState::default();
         self.inspected_files.clear();
 
-        self.context.add(MessageRole::User, input.to_string());
+        self.context.add(MessageRole::User, input.to_owned());
 
         self.history.messages.push(HistoryMessage {
             role: "user".into(),
-            content: input.to_string(),
+            content: input.to_owned(),
         });
 
-        self.history.save()?;
-
-        Ok(())
+        self.history.save()
     }
 
-    async fn send_finished(&self, tx: &Sender<AgentEvent>) -> Result<()> {
-        tx.send(AgentEvent::Finished).await?;
-        Ok(())
+    fn store_assistant_response(&mut self, response: &str) -> Result<()> {
+        if response.trim().is_empty() {
+            return Ok(());
+        }
+
+        self.context
+            .add(MessageRole::Assistant, response.to_owned());
+
+        self.history.messages.push(HistoryMessage {
+            role: "assistant".into(),
+            content: response.to_owned(),
+        });
+
+        self.history.save()
     }
 
-    // ========================================================
+    // ========================================================================
     // Conversation
-    // ========================================================
+    // ========================================================================
 
     async fn run_conversation(
         &mut self,
         tx: &Sender<AgentEvent>,
         cancel: &CancellationToken,
     ) -> Result<()> {
-        match self.answer(tx, cancel).await {
-            Ok(response) => {
-                self.store_assistant_response(&response)?;
-            }
+        match self.generate_answer(tx, cancel).await {
+            Ok(response) => self.store_assistant_response(&response)?,
 
             Err(error) => {
                 tx.send(AgentEvent::Error(error.to_string())).await?;
@@ -203,24 +235,14 @@ Treat it as project memory.
         Ok(())
     }
 
-    async fn answer(&self, tx: &Sender<AgentEvent>, cancel: &CancellationToken) -> Result<String> {
+    async fn generate_answer(
+        &self,
+        tx: &Sender<AgentEvent>,
+        cancel: &CancellationToken,
+    ) -> Result<String> {
         let mut messages = vec![Message {
             role: MessageRole::System,
-            content: r#"
-You are Luma.
-
-You are a local-first AI coding agent.
-
-Be concise, technical, and practical.
-
-Do not claim workspace facts without tool observations.
-
-When the user asks about the workspace, use the available tools
-rather than guessing.
-
-Do not invent files, commands, project structure, or tool results.
-"#
-            .to_string(),
+            content: self.answer_system_prompt(),
         }];
 
         messages.extend(self.context.messages().iter().cloned());
@@ -232,11 +254,9 @@ Do not invent files, commands, project structure, or tool results.
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => {
-                    tx.send(
-                        AgentEvent::Error(
-                            "Generation interrupted.".into()
-                        )
-                    )
+                    tx.send(AgentEvent::Error(
+                        "Generation interrupted.".into()
+                    ))
                     .await?;
 
                     break;
@@ -251,10 +271,8 @@ Do not invent files, commands, project structure, or tool results.
 
                     response.push_str(&chunk);
 
-                    tx.send(
-                        AgentEvent::TextDelta(chunk)
-                    )
-                    .await?;
+                    tx.send(AgentEvent::TextDelta(chunk))
+                        .await?;
                 }
             }
         }
@@ -262,27 +280,28 @@ Do not invent files, commands, project structure, or tool results.
         Ok(response)
     }
 
-    fn store_assistant_response(&mut self, response: &str) -> Result<()> {
-        if response.trim().is_empty() {
-            return Ok(());
-        }
+    fn answer_system_prompt(&self) -> String {
+        "\
+You are Luma.
 
-        self.context
-            .add(MessageRole::Assistant, response.to_string());
+You are a local-first AI coding agent.
 
-        self.history.messages.push(HistoryMessage {
-            role: "assistant".into(),
-            content: response.to_string(),
-        });
+Be concise, technical, and practical.
 
-        self.history.save()?;
+Do not claim workspace facts without tool observations.
 
-        Ok(())
+When the user asks about the workspace, use the available tools
+rather than guessing.
+
+Do not invent files, commands, project structure, dependencies,
+or tool results.
+"
+        .into()
     }
 
-    // ========================================================
+    // ========================================================================
     // Agent loop
-    // ========================================================
+    // ========================================================================
 
     async fn run_agent_loop(
         &mut self,
@@ -292,14 +311,16 @@ Do not invent files, commands, project structure, or tool results.
     ) -> Result<()> {
         tx.send(AgentEvent::Thinking).await?;
 
-        for step in 0..12 {
+        const MAX_STEPS: usize = 12;
+
+        for step in 0..MAX_STEPS {
             if cancel.is_cancelled() {
                 tx.send(AgentEvent::Error("Interrupted.".into())).await?;
 
                 return Ok(());
             }
 
-            let plan = match self.create_plan(cancel).await {
+            let plan = match self.create_plan().await {
                 Ok(plan) => plan,
 
                 Err(error) => {
@@ -318,25 +339,8 @@ Do not invent files, commands, project structure, or tool results.
                 }
 
                 PlanAction::Multi { actions } => {
-                    for action in actions {
-                        if cancel.is_cancelled() {
-                            return Ok(());
-                        }
-
-                        let PlanAction::Tool { name, input } = action else {
-                            continue;
-                        };
-
-                        if let Err(error) = self
-                            .execute_tool(&name, &input, tx, cancel, confirmation_rx)
-                            .await
-                        {
-                            tx.send(AgentEvent::Error(format!("{} failed: {}", name, error)))
-                                .await?;
-
-                            break;
-                        }
-                    }
+                    self.execute_actions(actions, tx, cancel, confirmation_rx)
+                        .await?;
                 }
 
                 PlanAction::Answer { .. } => {
@@ -345,7 +349,7 @@ Do not invent files, commands, project structure, or tool results.
                 }
             }
 
-            if step == 11 {
+            if step + 1 == MAX_STEPS {
                 self.run_conversation(tx, cancel).await?;
             }
         }
@@ -353,7 +357,37 @@ Do not invent files, commands, project structure, or tool results.
         Ok(())
     }
 
-    async fn create_plan(&self, cancel: &CancellationToken) -> Result<PlanAction> {
+    async fn execute_actions(
+        &mut self,
+        actions: Vec<PlanAction>,
+        tx: &Sender<AgentEvent>,
+        cancel: &CancellationToken,
+        confirmation_rx: &mut Receiver<Confirmation>,
+    ) -> Result<()> {
+        for action in actions {
+            if cancel.is_cancelled() {
+                return Ok(());
+            }
+
+            let PlanAction::Tool { name, input } = action else {
+                continue;
+            };
+
+            if let Err(error) = self
+                .execute_tool(&name, &input, tx, cancel, confirmation_rx)
+                .await
+            {
+                tx.send(AgentEvent::Error(format!("{} failed: {}", name, error)))
+                    .await?;
+
+                break;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn create_plan(&self) -> Result<PlanAction> {
         let mut messages = vec![Message {
             role: MessageRole::System,
             content: self.planner_system_prompt(),
@@ -361,12 +395,12 @@ Do not invent files, commands, project structure, or tool results.
 
         messages.extend(self.context.messages().iter().cloned());
 
-        self.planner.plan(messages, cancel.clone()).await
+        self.planner.plan(messages).await
     }
 
-    // ========================================================
+    // ========================================================================
     // Tool execution
-    // ========================================================
+    // ========================================================================
 
     async fn execute_tool(
         &mut self,
@@ -380,15 +414,11 @@ Do not invent files, commands, project structure, or tool results.
             return Ok(());
         }
 
-        let display_input = Self::format_tool_display(name, input);
-
-        // ----------------------------------------------------
-        // Confirmation policy
-        // ----------------------------------------------------
+        let display = Self::format_tool_display(name, input);
 
         if requires_confirmation(name) {
             let allowed = self
-                .request_confirmation(name, &display_input, tx, cancel, confirmation_rx)
+                .request_confirmation(name, &display, tx, cancel, confirmation_rx)
                 .await?;
 
             if !allowed {
@@ -396,13 +426,9 @@ Do not invent files, commands, project structure, or tool results.
             }
         }
 
-        // ----------------------------------------------------
-        // Start tool
-        // ----------------------------------------------------
-
         tx.send(AgentEvent::ToolStarted {
-            name: name.to_string(),
-            input: display_input,
+            name: name.to_owned(),
+            input: display,
         })
         .await?;
 
@@ -410,18 +436,12 @@ Do not invent files, commands, project structure, or tool results.
             return Ok(());
         }
 
-        let start = Instant::now();
+        let started = Instant::now();
 
-        let result = match self.tools.execute(name, input.trim()) {
-            Ok(result) => result,
-
-            Err(error) => {
-                tx.send(AgentEvent::Error(format!("{} failed: {}", name, error)))
-                    .await?;
-
-                return Ok(());
-            }
-        };
+        let result = self
+            .tools
+            .execute(name, input.trim())
+            .map_err(|error| anyhow!("{} failed: {}", name, error))?;
 
         if cancel.is_cancelled() {
             return Ok(());
@@ -430,8 +450,8 @@ Do not invent files, commands, project structure, or tool results.
         self.update_inspection(name, input.trim());
 
         tx.send(AgentEvent::ToolFinished {
-            name: name.to_string(),
-            duration_ms: start.elapsed().as_millis(),
+            name: name.to_owned(),
+            duration_ms: started.elapsed().as_millis(),
         })
         .await?;
 
@@ -452,8 +472,8 @@ Do not invent files, commands, project structure, or tool results.
         confirmation_rx: &mut Receiver<Confirmation>,
     ) -> Result<bool> {
         tx.send(AgentEvent::ConfirmationRequired {
-            name: name.to_string(),
-            input: input.to_string(),
+            name: name.to_owned(),
+            input: input.to_owned(),
         })
         .await?;
 
@@ -507,7 +527,10 @@ Do not invent files, commands, project structure, or tool results.
 
             "write_file" | "patch_file" => match serde_json::from_str::<serde_json::Value>(input) {
                 Ok(json) => {
-                    let path = json.get("path").and_then(|v| v.as_str()).unwrap_or("?");
+                    let path = json
+                        .get("path")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("?");
 
                     format!("{} → {}", name, path)
                 }
@@ -527,87 +550,265 @@ Do not invent files, commands, project structure, or tool results.
         }
     }
 
-    // ========================================================
+    // ========================================================================
     // Workspace detection
-    // ========================================================
+    // ========================================================================
 
     fn needs_workspace(&self, input: &str) -> bool {
-        let input = input.to_lowercase();
+        let input = input.trim().to_lowercase();
 
-        const KEYWORDS: &[&str] = &[
+        if input.is_empty() {
+            return false;
+        }
+
+        // ------------------------------------------------------------------------
+        // Explicit filesystem references
+        // ------------------------------------------------------------------------
+
+        if Self::contains_path_reference(&input) {
+            return true;
+        }
+
+        // ------------------------------------------------------------------------
+        // File operations
+        // ------------------------------------------------------------------------
+
+        const FILE_ACTIONS: &[&str] = &[
+            "read", "open", "edit", "modify", "change", "update", "rewrite", "refactor", "rename",
+            "move", "delete", "remove", "create", "write", "patch", "fix", "replace", "add",
+            "remove",
+        ];
+
+        const FILE_TARGETS: &[&str] = &[
+            "file",
+            "files",
+            "code",
+            "source",
+            "source code",
+            "implementation",
+            "function",
+            "method",
+            "class",
+            "module",
+            "struct",
+            "enum",
+            "trait",
+            "variable",
+            "config",
+            "configuration",
+            "script",
+        ];
+
+        if Self::contains_action_target(&input, FILE_ACTIONS, FILE_TARGETS) {
+            return true;
+        }
+
+        // ------------------------------------------------------------------------
+        // Workspace / repository inspection
+        // ------------------------------------------------------------------------
+
+        const WORKSPACE_TERMS: &[&str] = &[
+            "workspace",
             "project",
             "repository",
             "repo",
-            "code",
-            "file",
-            "files",
-            "folder",
-            "folders",
+            "codebase",
+            "code base",
+            "current project",
+            "this project",
+            "my project",
+            "my code",
+            "this code",
+            "current code",
+            "working directory",
             "directory",
-            "directories",
-            "dir",
-            "tree",
-            "structure",
-            "layout",
-            "workspace",
-            "list",
-            "show",
-            "find",
-            "search",
-            "browse",
-            "explore",
-            "inspect",
-            "look",
-            "rust",
-            "cargo",
-            "crate",
-            "rustc",
-            "c++",
-            "cpp",
-            "cmake",
-            "makefile",
-            "clang",
-            "gcc",
-            "python",
-            "pip",
-            "django",
-            "flask",
-            "fastapi",
-            "javascript",
-            "typescript",
-            "node",
-            "npm",
-            "pnpm",
-            "yarn",
-            "react",
-            "vue",
-            "svelte",
-            "java",
-            "kotlin",
-            "gradle",
-            "maven",
-            "golang",
-            "go.mod",
-            "swift",
-            "xcode",
-            "dart",
-            "flutter",
-            "c#",
-            "csharp",
-            "dotnet",
+            "folder",
+            "file tree",
+            "project tree",
+            "project structure",
+            "directory structure",
+            "project layout",
+            "codebase structure",
         ];
 
-        KEYWORDS.iter().any(|word| input.contains(word))
+        if Self::contains_any(&input, WORKSPACE_TERMS) {
+            return true;
+        }
+
+        // ------------------------------------------------------------------------
+        // Inspection verbs
+        // ------------------------------------------------------------------------
+
+        const INSPECTION_PATTERNS: &[&str] = &[
+            "show me the files",
+            "show the files",
+            "show files",
+            "list the files",
+            "list files",
+            "list the directory",
+            "list directory",
+            "show the directory",
+            "show directory",
+            "what files",
+            "which files",
+            "find the file",
+            "find files",
+            "find where",
+            "search the code",
+            "search my code",
+            "search the project",
+            "search the repository",
+            "look through the code",
+            "look through my code",
+            "look through the project",
+            "browse the project",
+            "explore the project",
+            "inspect the project",
+            "inspect the code",
+            "inspect my code",
+            "what's in this project",
+            "what is in this project",
+            "what's in the project",
+            "what is in the project",
+            "how is this project structured",
+            "how is the project structured",
+        ];
+
+        if Self::contains_any(&input, INSPECTION_PATTERNS) {
+            return true;
+        }
+
+        // ------------------------------------------------------------------------
+        // Build / test / lint / debug requests
+        //
+        // These are workspace operations because the answer depends on actually
+        // running commands or inspecting the project.
+        // ------------------------------------------------------------------------
+
+        const WORKSPACE_OPERATIONS: &[&str] = &[
+            "build this",
+            "build the project",
+            "build my project",
+            "compile this",
+            "compile the project",
+            "run the tests",
+            "run tests",
+            "test this",
+            "test the project",
+            "run the project",
+            "run this project",
+            "start the project",
+            "launch the project",
+            "lint the project",
+            "format the project",
+            "format this project",
+            "check the project",
+            "check my code",
+            "debug this",
+            "debug the project",
+            "debug my code",
+            "why does this fail",
+            "why is this failing",
+            "why doesn't this work",
+            "why does this not work",
+            "fix this error",
+            "fix this bug",
+            "fix the error",
+            "fix the bug",
+        ];
+
+        if Self::contains_any(&input, WORKSPACE_OPERATIONS) {
+            return true;
+        }
+
+        // ------------------------------------------------------------------------
+        // Explicit development-tool commands
+        // ------------------------------------------------------------------------
+
+        const TOOL_COMMANDS: &[&str] = &[
+            "cargo ",
+            "cargo",
+            "npm ",
+            "npm",
+            "pnpm ",
+            "pnpm",
+            "yarn ",
+            "yarn",
+            "bun ",
+            "bun",
+            "python ",
+            "pytest ",
+            "pip ",
+            "poetry ",
+            "uv ",
+            "go ",
+            "go test",
+            "go build",
+            "cmake ",
+            "make ",
+            "swift ",
+            "xcodebuild ",
+            "dotnet ",
+            "gradle ",
+            "mvn ",
+        ];
+
+        if Self::contains_any(&input, TOOL_COMMANDS) {
+            return true;
+        }
+
+        false
     }
 
-    // ========================================================
+    fn contains_any(input: &str, terms: &[&str]) -> bool {
+        terms.iter().any(|term| input.contains(term))
+    }
+
+    fn contains_action_target(input: &str, actions: &[&str], targets: &[&str]) -> bool {
+        actions.iter().any(|action| {
+            targets.iter().any(|target| {
+                input.contains(&format!("{action} {target}"))
+                    || input.contains(&format!("{action} the {target}"))
+                    || input.contains(&format!("{action} my {target}"))
+                    || input.contains(&format!("{action} this {target}"))
+            })
+        })
+    }
+
+    fn contains_path_reference(input: &str) -> bool {
+        // Unix paths.
+        if input.contains('/') {
+            return true;
+        }
+
+        // Home-relative paths.
+        if input.contains("~/") {
+            return true;
+        }
+
+        // Common source/config extensions.
+        const EXTENSIONS: &[&str] = &[
+            ".rs", ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".java", ".kt", ".swift", ".c",
+            ".h", ".cpp", ".hpp", ".cc", ".zig", ".lua", ".rb", ".php", ".cs", ".fs", ".fsx",
+            ".dart", ".vue", ".svelte", ".html", ".css", ".scss", ".json", ".toml", ".yaml",
+            ".yml", ".xml", ".md", ".txt", ".lock",
+        ];
+
+        if EXTENSIONS.iter().any(|ext| input.contains(ext)) {
+            return true;
+        }
+
+        false
+    }
+
+    // ========================================================================
     // Inspection
-    // ========================================================
+    // ========================================================================
 
     fn update_inspection(&mut self, name: &str, input: &str) {
         match name {
             "list_directory" => {
-                self.inspection.listed = true;
+                self.inspection.directory = true;
             }
 
             "read_file" => {
@@ -619,23 +820,20 @@ Do not invent files, commands, project structure, or tool results.
     }
 
     fn inspect_file(&mut self, input: &str) {
-        let file = input.to_lowercase();
+        let path = input.trim();
+        let file = path.to_lowercase();
 
-        if !self.inspected_files.contains(&input.to_string()) {
-            self.inspected_files.push(input.to_string());
+        if !self.inspected_files.iter().any(|item| item == path) {
+            self.inspected_files.push(path.to_owned());
 
-            let detected = language::detect_from_file(input);
+            let detected = language::detect_from_file(path);
 
             if detected != ProgrammingLanguage::Unknown {
                 self.language = detected;
             }
         }
 
-        if file.ends_with("cargo.toml")
-            || file.ends_with("package.json")
-            || file.ends_with("pyproject.toml")
-            || file.ends_with("requirements.txt")
-        {
+        if is_config_file(&file) {
             self.inspection.config = true;
         }
 
@@ -643,12 +841,7 @@ Do not invent files, commands, project structure, or tool results.
             self.inspection.readme = true;
         }
 
-        if file.contains("src/")
-            || file.ends_with(".rs")
-            || file.ends_with(".py")
-            || file.ends_with(".js")
-            || file.ends_with(".ts")
-        {
+        if is_source_file(&file) {
             self.inspection.source = true;
         }
 
@@ -657,19 +850,19 @@ Do not invent files, commands, project structure, or tool results.
         }
     }
 
-    // ========================================================
+    // ========================================================================
     // Planner prompt
-    // ========================================================
+    // ========================================================================
 
     fn planner_system_prompt(&self) -> String {
         format!(
-            r#"
+            "\
 You are Luma's Planner.
 
 You are the decision-making system of a local-first
 AI coding agent.
 
-Your job is to choose exactly one of:
+Choose exactly one of:
 
 1. A tool action
 2. Multiple tool actions
@@ -797,9 +990,9 @@ inspect
 → verify
 
 Never guess when the filesystem can provide the answer.
-"#,
+",
             self.language.name(),
-            self.inspection.listed,
+            self.inspection.directory,
             self.inspection.config,
             self.inspection.readme,
             self.inspection.source,
@@ -808,9 +1001,9 @@ Never guess when the filesystem can provide the answer.
         )
     }
 
-    // ========================================================
-    // Initialization
-    // ========================================================
+    // ========================================================================
+    // Workspace initialization
+    // ========================================================================
 
     async fn initialize_workspace(
         &mut self,
@@ -821,12 +1014,12 @@ Never guess when the filesystem can provide the answer.
         self.execute_tool("list_directory", ".", tx, cancel, confirmation_rx)
             .await?;
 
-        let (project, language, files) = self.detect_project();
-
+        let (project, language, important_files) = self.detect_project();
         let structure = self.directory_structure();
 
         let galaxy = format!(
-            r#"# GALAXY.md
+            "\
+# GALAXY.md
 
 Generated by Luma.
 
@@ -851,24 +1044,25 @@ Generated by Luma.
 This file is Luma's workspace memory.
 
 Update it when major architecture changes happen.
-"#,
+",
             project,
             language,
-            if files.is_empty() {
-                "No important files detected.".to_string()
+            if important_files.is_empty() {
+                "No important files detected.".to_owned()
             } else {
-                files.join("\n")
+                important_files.join("\n")
             },
             structure,
         );
 
+        let input = serde_json::json!({
+            "path": "GALAXY.md",
+            "content": galaxy,
+        });
+
         self.execute_tool(
             "write_file",
-            &serde_json::json!({
-                "path": "GALAXY.md",
-                "content": galaxy,
-            })
-            .to_string(),
+            &input.to_string(),
             tx,
             cancel,
             confirmation_rx,
@@ -884,10 +1078,8 @@ Update it when major architecture changes happen.
     }
 
     fn detect_project(&self) -> (String, String, Vec<String>) {
-        let mut project = "Unknown project".to_string();
-
-        let mut language = "Unknown".to_string();
-
+        let mut project = "Unknown project".to_owned();
+        let mut language = "Unknown".to_owned();
         let mut files = Vec::new();
 
         if Path::new("Cargo.toml").exists() {
@@ -896,18 +1088,19 @@ Update it when major architecture changes happen.
 
             if let Ok(content) = std::fs::read_to_string("Cargo.toml") {
                 for line in content.lines() {
-                    if let Some(name) = line.strip_prefix("name =") {
-                        project = name.replace('"', "").trim().to_string();
+                    let Some(name) = line.strip_prefix("name =") else {
+                        continue;
+                    };
 
-                        break;
-                    }
+                    project = name.replace('"', "").trim().to_owned();
+
+                    break;
                 }
             }
         }
 
         if Path::new("package.json").exists() {
             language = "JavaScript / TypeScript".into();
-
             files.push("package.json".into());
         }
 
@@ -928,46 +1121,42 @@ Update it when major architecture changes happen.
 
     fn directory_structure(&self) -> String {
         std::fs::read_dir(".")
-            .ok()
             .map(|entries| {
                 entries
-                    .filter_map(|entry| {
-                        entry
-                            .ok()
-                            .and_then(|entry| entry.file_name().into_string().ok())
-                    })
+                    .filter_map(Result::ok)
+                    .filter_map(|entry| entry.file_name().into_string().ok())
                     .collect::<Vec<_>>()
                     .join("\n")
             })
-            .unwrap_or_else(|| "Unable to inspect.".into())
+            .unwrap_or_else(|_| "Unable to inspect.".into())
     }
 }
 
-// ============================================================
-// Planner adapter
-// ============================================================
+// ============================================================================
+// Helpers
+// ============================================================================
 
-#[async_trait::async_trait]
-pub trait PlannerTrait: Send + Sync {
-    async fn plan(&self, messages: Vec<Message>, cancel: CancellationToken) -> Result<PlanAction>;
+fn is_config_file(path: &str) -> bool {
+    path.ends_with("cargo.toml")
+        || path.ends_with("package.json")
+        || path.ends_with("pyproject.toml")
+        || path.ends_with("requirements.txt")
 }
 
-#[async_trait::async_trait]
-impl<M> PlannerTrait for Planner<M>
-where
-    M: Model + Send + Sync,
-{
-    async fn plan(&self, messages: Vec<Message>, cancel: CancellationToken) -> Result<PlanAction> {
-        tokio::select! {
-            _ = cancel.cancelled() => {
-                anyhow::bail!(
-                    "Generation interrupted."
-                )
-            }
-
-            result = self.create_plan(messages) => {
-                result
-            }
-        }
-    }
+fn is_source_file(path: &str) -> bool {
+    path.contains("src/")
+        || path.ends_with(".rs")
+        || path.ends_with(".py")
+        || path.ends_with(".js")
+        || path.ends_with(".ts")
+        || path.ends_with(".tsx")
+        || path.ends_with(".jsx")
+        || path.ends_with(".go")
+        || path.ends_with(".java")
+        || path.ends_with(".kt")
+        || path.ends_with(".swift")
+        || path.ends_with(".c")
+        || path.ends_with(".h")
+        || path.ends_with(".cpp")
+        || path.ends_with(".hpp")
 }

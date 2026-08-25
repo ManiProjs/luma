@@ -35,6 +35,8 @@ use crate::{
     tui::info::LumaInfo,
 };
 
+use dialoguer::Confirm;
+
 #[derive(Parser, Debug)]
 #[command(name = "luma", version, about = "A lightweight AI coding agent")]
 struct Args {
@@ -53,17 +55,10 @@ enum Commands {
 }
 
 fn confirm_setup() -> anyhow::Result<bool> {
-    print!("\nLuma is not configured yet.\n\nRun setup? [Y/n] ");
-
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-
-    io::stdin().read_line(&mut input)?;
-
-    let answer = input.trim().to_lowercase();
-
-    Ok(answer.is_empty() || answer == "y" || answer == "yes")
+    Ok(Confirm::new()
+        .with_prompt("Luma is not configured yet. Run setup?")
+        .default(true)
+        .interact()?)
 }
 
 #[tokio::main]
