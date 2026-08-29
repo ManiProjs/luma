@@ -9,8 +9,6 @@ pub struct App {
     pub thinking: bool,
     pub current_tool: Option<ToolState>,
 
-    pub confirmation: Option<ConfirmationRequest>,
-
     pub scroll: usize,
     pub auto_scroll: bool,
     pub running: bool,
@@ -24,15 +22,18 @@ pub struct App {
     // Slash command autocomplete
     pub suggestions: Vec<String>,
     pub selected_suggestion: usize,
+
+    // Pending tool confirmation
+    pub confirmation: Option<PendingConfirmation>,
 }
 
 #[derive(Debug, Clone)]
-pub struct ConfirmationRequest {
+pub struct PendingConfirmation {
     pub name: String,
     pub input: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ToolState {
     pub name: String,
     pub input: String,
@@ -64,7 +65,7 @@ impl ToolStatus {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MessageLine {
     pub role: MessageRole,
     pub content: String,
@@ -76,6 +77,8 @@ pub enum MessageRole {
     Assistant,
     Tool,
     System,
+    Error,
+    Plan,
 }
 
 #[derive(Debug, Default)]
@@ -100,12 +103,42 @@ impl TextBuffer {
             self.cursor_y = self.lines.len() - 1;
         }
 
-        self.lines[self.cursor_y].insert(self.cursor_x, c);
-        self.cursor_x += 1;
+        let line = &mut self.lines[self.cursor_y];
+
+        let cursor = self.cursor_x.min(line.len());
+
+        // Keep the cursor on a UTF-8 character boundary.
+        let cursor = if line.is_char_boundary(cursor) {
+            cursor
+        } else {
+            let mut pos = cursor;
+            while pos > 0 && !line.is_char_boundary(pos) {
+                pos -= 1;
+            }
+            pos
+        };
+
+        line.insert(cursor, c);
+        self.cursor_x = cursor + c.len_utf8();
     }
 
     pub fn newline(&mut self) {
-        let rest = self.lines[self.cursor_y].split_off(self.cursor_x);
+        if self.cursor_y >= self.lines.len() {
+            self.lines.push(String::new());
+            self.cursor_y = self.lines.len() - 1;
+            self.cursor_x = 0;
+            return;
+        }
+
+        let line_len = self.lines[self.cursor_y].len();
+
+        let mut cursor = self.cursor_x.min(line_len);
+
+        while cursor > 0 && !self.lines[self.cursor_y].is_char_boundary(cursor) {
+            cursor -= 1;
+        }
+
+        let rest = self.lines[self.cursor_y].split_off(cursor);
 
         self.lines.insert(self.cursor_y + 1, rest);
 
@@ -114,12 +147,31 @@ impl TextBuffer {
     }
 
     pub fn backspace(&mut self) {
-        if self.cursor_x > 0 {
-            self.cursor_x -= 1;
-            self.lines[self.cursor_y].remove(self.cursor_x);
+        if self.cursor_y >= self.lines.len() {
             return;
         }
 
+        if self.cursor_x > 0 {
+            let line = &mut self.lines[self.cursor_y];
+
+            let mut previous = self.cursor_x.min(line.len());
+
+            // Move to the beginning of the previous UTF-8 character.
+            previous -= 1;
+
+            while previous > 0 && !line.is_char_boundary(previous) {
+                previous -= 1;
+            }
+
+            if line.is_char_boundary(previous) {
+                line.drain(previous..self.cursor_x);
+                self.cursor_x = previous;
+            }
+
+            return;
+        }
+
+        // Join with the previous line.
         if self.cursor_y > 0 {
             let current = self.lines.remove(self.cursor_y);
 
@@ -170,19 +222,15 @@ impl App {
             confirmation: None,
 
             scroll: 0,
-
             auto_scroll: true,
-
             running: true,
 
             logo_frame: 0,
 
             input_history: Vec::new(),
-
             history_index: None,
 
             suggestions: Vec::new(),
-
             selected_suggestion: 0,
         }
     }
@@ -209,6 +257,7 @@ impl App {
         }
 
         self.suggestions.clear();
+        self.selected_suggestion = 0;
     }
 
     pub fn suggestion_up(&mut self) {
@@ -296,11 +345,10 @@ impl App {
         self.add_history(text.clone());
 
         self.input.clear();
-
         self.suggestions.clear();
+        self.selected_suggestion = 0;
 
         self.welcome_visible = false;
-
         self.auto_scroll = true;
 
         Some(text)
@@ -311,13 +359,14 @@ impl App {
     // ─────────────────────────────────────────────
 
     pub fn request_confirmation(&mut self, name: String, input: String) {
-        self.confirmation = Some(ConfirmationRequest { name, input });
+        self.confirmation = Some(PendingConfirmation { name, input });
 
+        // The agent is blocked waiting for the user's response.
         self.thinking = false;
 
-        if self.auto_scroll {
-            self.scroll_to_bottom();
-        }
+        // A confirmation is an active UI state, not a chat message.
+        self.welcome_visible = false;
+        self.auto_scroll = true;
     }
 
     pub fn clear_confirmation(&mut self) {
@@ -344,23 +393,36 @@ impl App {
 
             AgentEvent::PlanGenerated(content) => {
                 self.messages.push(MessageLine {
-                    role: MessageRole::System,
-                    content: format!("\u{1F4CB} Implementation Plan\n{}", content),
+                    role: MessageRole::Plan,
+                    content,
                 });
 
                 self.thinking = false;
+
+                if self.auto_scroll {
+                    self.scroll_to_bottom();
+                }
             }
 
             AgentEvent::ToolStarted { name, input } => {
-                self.thinking = false;
-
                 let display_input = Self::format_tool_input(&name, &input);
+
+                self.messages.push(MessageLine {
+                    role: MessageRole::Tool,
+                    content: format!("{} {}", name, display_input),
+                });
+
+                self.thinking = false;
 
                 self.current_tool = Some(ToolState {
                     name,
                     input: display_input,
                     status: ToolStatus::Running,
                 });
+
+                if self.auto_scroll {
+                    self.scroll_to_bottom();
+                }
             }
 
             AgentEvent::ToolFinished { name, duration_ms } => {
@@ -370,10 +432,11 @@ impl App {
                     }
                 }
 
-                self.messages.push(MessageLine {
-                    role: MessageRole::System,
-                    content: format!("✓ {} completed in {}ms", name, duration_ms),
-                });
+                if let Some(message) = self.messages.iter_mut().rev().find(|message| {
+                    message.role == MessageRole::Tool && message.content.starts_with(&name)
+                }) {
+                    message.content = format!("✓ {}  Completed in {} ms", name, duration_ms);
+                }
 
                 self.current_tool = None;
 
@@ -390,8 +453,13 @@ impl App {
                 self.thinking = false;
 
                 if let Some(last) = self.messages.last_mut() {
-                    if matches!(&last.role, MessageRole::Assistant) {
+                    if last.role == MessageRole::Assistant {
                         last.content.push_str(&text);
+
+                        if self.auto_scroll {
+                            self.scroll_to_bottom();
+                        }
+
                         return;
                     }
                 }
@@ -400,6 +468,10 @@ impl App {
                     role: MessageRole::Assistant,
                     content: text,
                 });
+
+                if self.auto_scroll {
+                    self.scroll_to_bottom();
+                }
             }
 
             AgentEvent::SystemMessage(text) => {
@@ -410,17 +482,31 @@ impl App {
 
                 self.thinking = false;
                 self.current_tool = None;
+
+                if self.auto_scroll {
+                    self.scroll_to_bottom();
+                }
             }
 
             AgentEvent::Finished => {
                 self.thinking = false;
                 self.current_tool = None;
-                self.confirmation = None;
+
+                // IMPORTANT:
+                //
+                // Do NOT blindly clear confirmation here.
+                //
+                // A confirmation request means the agent is waiting for
+                // the user. If another Finished event arrives while the
+                // confirmation UI is still active, we must preserve it.
+                //
+                // Normally Finished should happen after the confirmation
+                // has already been answered.
             }
 
             AgentEvent::Error(error) => {
                 self.messages.push(MessageLine {
-                    role: MessageRole::System,
+                    role: MessageRole::Error,
                     content: error,
                 });
 
@@ -431,7 +517,9 @@ impl App {
                 }
 
                 self.current_tool = None;
-                self.confirmation = None;
+
+                // Keep an explicit confirmation visible until the user
+                // answers it. Errors should not unexpectedly erase it.
             }
 
             AgentEvent::Debug(text) => {
@@ -439,15 +527,19 @@ impl App {
                     role: MessageRole::System,
                     content: text,
                 });
+
+                if self.auto_scroll {
+                    self.scroll_to_bottom();
+                }
             }
         }
     }
 
     fn format_tool_input(name: &str, input: &str) -> String {
         match name {
-            "write_file" => input.lines().next().unwrap_or("?").to_string(),
+            "write_file" => input.lines().next().unwrap_or("?").trim().to_string(),
 
-            "patch_file" => input.lines().next().unwrap_or("?").to_string(),
+            "patch_file" => input.lines().next().unwrap_or("?").trim().to_string(),
 
             "read_file" => input.trim().to_string(),
 

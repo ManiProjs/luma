@@ -8,7 +8,7 @@ use ratatui::{
 
 use crate::{
     theme::LumaTheme,
-    tui::app::{App, MessageRole},
+    tui::app::{App, MessageLine, MessageRole, ToolStatus},
 };
 
 pub struct ChatView<'a> {
@@ -22,7 +22,7 @@ impl<'a> ChatView<'a> {
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        let mut lines = Vec::new();
+        let mut lines: Vec<Line<'static>> = Vec::new();
 
         let animation = self.app.logo_frame % 4;
 
@@ -33,38 +33,133 @@ impl<'a> ChatView<'a> {
             _ => "◒",
         };
 
+        // ─────────────────────────────────────────
+        // Messages
+        // ─────────────────────────────────────────
+
         for message in &self.app.messages {
-            self.render_message(&mut lines, message, animation);
+            match message.role {
+                MessageRole::Tool => {
+                    self.render_tool_message(&mut lines, message);
+                }
+
+                _ => {
+                    self.render_message(&mut lines, message, animation);
+                }
+            }
+
+            lines.push(Line::from(""));
         }
 
-        // --------------------------------------------------------
-        // Active tool
-        // --------------------------------------------------------
+        // ─────────────────────────────────────────
+        // Confirmation request
+        // ─────────────────────────────────────────
 
-        if let Some(tool) = &self.app.current_tool {
+        if let Some(confirmation) = &self.app.confirmation {
+            lines.push(Line::from(vec![
+                Span::styled("╭─", Style::default().fg(self.theme.accent)),
+                Span::styled(
+                    " CONFIRMATION REQUIRED ",
+                    Style::default()
+                        .fg(self.theme.accent)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    "────────────────────────",
+                    Style::default().fg(self.theme.space),
+                ),
+            ]));
+
             lines.push(Line::from(vec![
                 Span::styled(
-                    format!("{} ", spinner),
+                    "│ Tool: ",
                     Style::default()
-                        .fg(self.theme.accent)
+                        .fg(self.theme.space)
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    &tool.name,
+                    confirmation.name.clone(),
                     Style::default()
                         .fg(self.theme.accent)
                         .add_modifier(Modifier::BOLD),
                 ),
+            ]));
+
+            lines.push(Line::from(vec![
+                Span::styled(
+                    "│ Input: ",
+                    Style::default()
+                        .fg(self.theme.space)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    confirmation.input.clone(),
+                    Style::default().fg(self.theme.star),
+                ),
+            ]));
+
+            lines.push(Line::from("│"));
+
+            lines.push(Line::from(vec![
+                Span::styled("│ ", Style::default().fg(self.theme.space)),
+                Span::styled(
+                    "[Enter]",
+                    Style::default()
+                        .fg(self.theme.glow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" Allow    ", Style::default().fg(self.theme.star)),
+                Span::styled(
+                    "[esc]",
+                    Style::default()
+                        .fg(self.theme.accent)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(" Deny", Style::default().fg(self.theme.star)),
+            ]));
+
+            lines.push(Line::from(Span::styled(
+                "╰────────────────────────────────",
+                Style::default().fg(self.theme.accent),
+            )));
+
+            lines.push(Line::from(""));
+        }
+
+        // ─────────────────────────────────────────
+        // Active tool
+        // ─────────────────────────────────────────
+
+        if let Some(tool) = &self.app.current_tool {
+            let status = tool.status;
+
+            let status_style = match status {
+                ToolStatus::Running => Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+
+                ToolStatus::Success => Style::default()
+                    .fg(self.theme.glow)
+                    .add_modifier(Modifier::BOLD),
+
+                ToolStatus::Failed => Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(format!("{} ", spinner), status_style),
+                Span::styled(tool.name.clone(), status_style),
                 Span::raw(" "),
-                Span::styled(&tool.input, Style::default().fg(self.theme.space)),
+                Span::styled(tool.input.clone(), Style::default().fg(self.theme.space)),
             ]));
 
             lines.push(Line::from(""));
         }
 
-        // --------------------------------------------------------
+        // ─────────────────────────────────────────
         // Thinking indicator
-        // --------------------------------------------------------
+        // ─────────────────────────────────────────
 
         if self.app.thinking {
             let thinking_text = match animation {
@@ -90,9 +185,9 @@ impl<'a> ChatView<'a> {
             ]));
         }
 
-        // --------------------------------------------------------
+        // ─────────────────────────────────────────
         // Scrolling
-        // --------------------------------------------------------
+        // ─────────────────────────────────────────
 
         let inner_width = area.width.saturating_sub(2);
         let viewport_height = area.height.saturating_sub(2);
@@ -107,9 +202,9 @@ impl<'a> ChatView<'a> {
             self.app.scroll.min(max_scroll)
         };
 
-        // --------------------------------------------------------
+        // ─────────────────────────────────────────
         // Container
-        // --------------------------------------------------------
+        // ─────────────────────────────────────────
 
         let border_char = match animation {
             0 => "─",
@@ -149,13 +244,13 @@ impl<'a> ChatView<'a> {
         let chat = Paragraph::new(lines)
             .block(block)
             .wrap(Wrap { trim: false })
-            .scroll((scroll as u16, 0));
+            .scroll((scroll.min(u16::MAX as usize) as u16, 0));
 
         frame.render_widget(chat, area);
 
-        // --------------------------------------------------------
+        // ─────────────────────────────────────────
         // Generation animation
-        // --------------------------------------------------------
+        // ─────────────────────────────────────────
 
         if self.app.thinking && area.width > 4 {
             let x = area.x + 2;
@@ -174,7 +269,7 @@ impl<'a> ChatView<'a> {
                 if i == position {
                     animation_line.push('●');
                 } else {
-                    animation_line.push(border_char.chars().next().unwrap());
+                    animation_line.push(border_char.chars().next().unwrap_or('─'));
                 }
             }
 
@@ -194,21 +289,83 @@ impl<'a> ChatView<'a> {
     }
 
     // ============================================================
-    // Message rendering
+    // Tool messages
+    // ============================================================
+
+    fn render_tool_message(&self, lines: &mut Vec<Line<'static>>, message: &MessageLine) {
+        let content = message.content.as_str();
+
+        let (icon, style) = if content.starts_with("✓ ") {
+            (
+                "✓",
+                Style::default()
+                    .fg(self.theme.glow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else if content.starts_with("✗ ") {
+            (
+                "✗",
+                Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            (
+                "◇",
+                Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            )
+        };
+
+        let mut parts = content.splitn(2, ' ');
+
+        let first = parts.next().unwrap_or("tool");
+        let rest = parts.next().unwrap_or("");
+
+        let tool_name = if first == "✓" || first == "✗" {
+            rest.split_whitespace().next().unwrap_or("tool")
+        } else {
+            first
+        };
+
+        let display_input = if first == "✓" || first == "✗" {
+            rest.strip_prefix(tool_name).unwrap_or("").trim()
+        } else {
+            rest
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(format!("{} ", icon), style),
+            Span::styled(tool_name.to_string(), style),
+            Span::styled(
+                if display_input.is_empty() {
+                    String::new()
+                } else {
+                    format!("  {}", display_input)
+                },
+                Style::default().fg(self.theme.space),
+            ),
+        ]));
+    }
+
+    // ============================================================
+    // Normal messages
     // ============================================================
 
     fn render_message(
         &self,
-        lines: &mut Vec<Line<'_>>,
-        message: &crate::tui::app::MessageLine,
+        lines: &mut Vec<Line<'static>>,
+        message: &MessageLine,
         animation: usize,
     ) {
-        let (title, title_style) = match message.role {
+        let (title, title_style, body_style) = match message.role {
             MessageRole::User => (
                 " You ",
                 Style::default()
                     .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
+                Style::default(),
             ),
 
             MessageRole::Assistant => (
@@ -216,13 +373,7 @@ impl<'a> ChatView<'a> {
                 Style::default()
                     .fg(self.theme.glow)
                     .add_modifier(Modifier::BOLD),
-            ),
-
-            MessageRole::Tool => (
-                " Tool ",
-                Style::default()
-                    .fg(self.theme.space)
-                    .add_modifier(Modifier::BOLD),
+                Style::default(),
             ),
 
             MessageRole::System => (
@@ -230,6 +381,31 @@ impl<'a> ChatView<'a> {
                 Style::default()
                     .fg(self.theme.star)
                     .add_modifier(Modifier::BOLD),
+                Style::default(),
+            ),
+
+            MessageRole::Plan => (
+                " Plan ",
+                Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+                Style::default(),
+            ),
+
+            MessageRole::Error => (
+                " Error ",
+                Style::default()
+                    .fg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+                Style::default(),
+            ),
+
+            MessageRole::Tool => (
+                " Tool ",
+                Style::default()
+                    .fg(self.theme.space)
+                    .add_modifier(Modifier::BOLD),
+                Style::default(),
             ),
         };
 
@@ -243,11 +419,11 @@ impl<'a> ChatView<'a> {
             ),
         ]));
 
-        // Markdown body
-        self.render_markdown(lines, &message.content);
+        // Body
+        self.render_markdown_with_base(lines, &message.content, body_style);
 
         // Streaming cursor
-        if matches!(message.role, MessageRole::Assistant) && self.app.thinking {
+        if message.role == MessageRole::Assistant && self.app.thinking {
             let cursor = if animation % 2 == 0 { "▌" } else { " " };
 
             lines.push(Line::from(vec![
@@ -261,23 +437,30 @@ impl<'a> ChatView<'a> {
             "╰────────────────────────",
             Style::default().fg(self.theme.space),
         )));
-
-        lines.push(Line::from(""));
     }
 
     // ============================================================
     // Markdown renderer
     // ============================================================
 
-    fn render_markdown(&self, output: &mut Vec<Line<'_>>, markdown: &str) {
+    fn render_markdown(&self, output: &mut Vec<Line<'static>>, markdown: &str) {
+        self.render_markdown_with_base(output, markdown, Style::default());
+    }
+
+    fn render_markdown_with_base(
+        &self,
+        output: &mut Vec<Line<'static>>,
+        markdown: &str,
+        base_style: Style,
+    ) {
         let mut in_code_block = false;
 
         for raw_line in markdown.lines() {
             let line = raw_line.trim_end();
 
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
             // Fenced code block
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
 
             if line.trim_start().starts_with("```") {
                 in_code_block = !in_code_block;
@@ -306,9 +489,9 @@ impl<'a> ChatView<'a> {
                 continue;
             }
 
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
             // Empty line
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
 
             if line.trim().is_empty() {
                 output.push(Line::from(Span::styled(
@@ -319,9 +502,9 @@ impl<'a> ChatView<'a> {
                 continue;
             }
 
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
             // Headings
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
 
             if let Some(heading) = line.strip_prefix("### ") {
                 output.push(self.markdown_line(
@@ -353,26 +536,28 @@ impl<'a> ChatView<'a> {
                 continue;
             }
 
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
             // Blockquote
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
 
             if let Some(quote) = line.strip_prefix("> ") {
+                let quote_style = self.theme.quote_style();
+
                 let mut spans = vec![
                     Span::styled("│ ", Style::default().fg(self.theme.space)),
-                    Span::styled("│ ", self.theme.quote_style()),
+                    Span::styled("│ ", quote_style),
                 ];
 
-                spans.extend(self.inline_markdown(quote, self.theme.quote_style()));
+                spans.extend(self.inline_markdown(quote, quote_style));
 
                 output.push(Line::from(spans));
 
                 continue;
             }
 
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
             // Unordered lists
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
 
             if let Some(item) = line.strip_prefix("- ") {
                 let mut spans = vec![
@@ -385,7 +570,7 @@ impl<'a> ChatView<'a> {
                     ),
                 ];
 
-                spans.extend(self.inline_markdown(item, Style::default()));
+                spans.extend(self.inline_markdown(item, base_style));
 
                 output.push(Line::from(spans));
 
@@ -403,16 +588,16 @@ impl<'a> ChatView<'a> {
                     ),
                 ];
 
-                spans.extend(self.inline_markdown(item, Style::default()));
+                spans.extend(self.inline_markdown(item, base_style));
 
                 output.push(Line::from(spans));
 
                 continue;
             }
 
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
             // Ordered lists
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
 
             if let Some((number, item)) = Self::ordered_list(line) {
                 let mut spans = vec![
@@ -425,16 +610,16 @@ impl<'a> ChatView<'a> {
                     ),
                 ];
 
-                spans.extend(self.inline_markdown(item, Style::default()));
+                spans.extend(self.inline_markdown(item, base_style));
 
                 output.push(Line::from(spans));
 
                 continue;
             }
 
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
             // Horizontal rule
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
 
             if Self::is_horizontal_rule(line) {
                 output.push(Line::from(Span::styled(
@@ -445,13 +630,13 @@ impl<'a> ChatView<'a> {
                 continue;
             }
 
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
             // Normal paragraph
-            // ----------------------------------------------------
+            // ─────────────────────────────────────
 
             let mut spans = vec![Span::styled("│ ", Style::default().fg(self.theme.space))];
 
-            spans.extend(self.inline_markdown(line, Style::default()));
+            spans.extend(self.inline_markdown(line, base_style));
 
             output.push(Line::from(spans));
         }
@@ -469,7 +654,10 @@ impl<'a> ChatView<'a> {
         let mut i = 0;
 
         while i < chars.len() {
+            // ─────────────────────────────────────
             // Inline code
+            // ─────────────────────────────────────
+
             if chars[i] == '`' {
                 if !current.is_empty() {
                     spans.push(Span::styled(std::mem::take(&mut current), base_style));
@@ -494,7 +682,10 @@ impl<'a> ChatView<'a> {
                 continue;
             }
 
+            // ─────────────────────────────────────
             // Bold
+            // ─────────────────────────────────────
+
             if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
                 if !current.is_empty() {
                     spans.push(Span::styled(std::mem::take(&mut current), base_style));
@@ -519,7 +710,10 @@ impl<'a> ChatView<'a> {
                 continue;
             }
 
+            // ─────────────────────────────────────
             // Italic
+            // ─────────────────────────────────────
+
             if chars[i] == '*' && (i + 1 >= chars.len() || chars[i + 1] != '*') {
                 if !current.is_empty() {
                     spans.push(Span::styled(std::mem::take(&mut current), base_style));
@@ -547,7 +741,10 @@ impl<'a> ChatView<'a> {
                 continue;
             }
 
+            // ─────────────────────────────────────
             // Strikethrough
+            // ─────────────────────────────────────
+
             if i + 1 < chars.len() && chars[i] == '~' && chars[i + 1] == '~' {
                 if !current.is_empty() {
                     spans.push(Span::styled(std::mem::take(&mut current), base_style));
@@ -602,25 +799,25 @@ impl<'a> ChatView<'a> {
     }
 
     fn ordered_list(line: &str) -> Option<(u32, &str)> {
-        let mut digits = String::new();
+        let mut end = 0;
 
-        for c in line.chars() {
+        for (index, c) in line.char_indices() {
             if c.is_ascii_digit() {
-                digits.push(c);
+                end = index + c.len_utf8();
             } else {
                 break;
             }
         }
 
-        if digits.is_empty() {
+        if end == 0 {
             return None;
         }
 
-        let rest = &line[digits.len()..];
+        let rest = &line[end..];
 
         let rest = rest.strip_prefix(". ")?;
 
-        let number = digits.parse().ok()?;
+        let number = line[..end].parse().ok()?;
 
         Some((number, rest))
     }
@@ -639,7 +836,7 @@ impl<'a> ChatView<'a> {
     // Visual height
     // ============================================================
 
-    fn visual_height(lines: &[Line], width: u16) -> usize {
+    fn visual_height(lines: &[Line<'static>], width: u16) -> usize {
         if width == 0 {
             return lines.len();
         }

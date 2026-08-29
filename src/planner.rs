@@ -44,7 +44,12 @@ pub trait PlannerTrait: Send + Sync {
 
 pub struct Planner<M> {
     model: M,
+
+    // Actual registered tool names.
     tools: Vec<String>,
+
+    // Human-readable descriptions used in the prompt.
+    descriptions: Vec<String>,
 }
 
 #[async_trait::async_trait]
@@ -52,8 +57,8 @@ impl<M> PlannerTrait for Planner<M>
 where
     M: Model,
 {
-    async fn plan(&self, messages: Vec<Message>, _cancel: CancellationToken) -> Result<PlanAction> {
-        self.create_plan(messages).await
+    async fn plan(&self, messages: Vec<Message>, cancel: CancellationToken) -> Result<PlanAction> {
+        self.create_plan(messages, cancel).await
     }
 }
 
@@ -64,11 +69,22 @@ where
     pub fn new(model: M, tools: &ToolRegistry) -> Self {
         Self {
             model,
-            tools: tools.descriptions(),
+            tools: tools.names(),
+            descriptions: tools.descriptions(),
         }
     }
 
+    // ========================================================================
+    // System prompt
+    // ========================================================================
+
     fn system_prompt(&self) -> String {
+        let tools = if self.descriptions.is_empty() {
+            "No tools are currently available.".to_owned()
+        } else {
+            self.descriptions.join("\n")
+        };
+
         format!(
             r#"
 You are Luma's Planner.
@@ -84,7 +100,14 @@ You MUST return valid JSON only.
 AVAILABLE TOOLS
 ==================================================
 
-{}
+{tools}
+
+IMPORTANT:
+The exact tool names are:
+
+{tool_names}
+
+Use these names exactly.
 
 ==================================================
 ACTION FORMAT
@@ -98,7 +121,7 @@ Tool action:
   "input": "tool input"
 }}
 
-For tools requiring structured input:
+For tools requiring structured input, input MUST be a JSON object:
 
 {{
   "type": "tool",
@@ -109,7 +132,7 @@ For tools requiring structured input:
   }}
 }}
 
-Multiple actions:
+Multiple tool actions:
 
 {{
   "type": "multi",
@@ -126,6 +149,12 @@ Multiple actions:
     }}
   ]
 }}
+
+IMPORTANT:
+
+"multi" may contain ONLY tool actions.
+
+Do not put another "multi", "answer", or "plan" inside "multi".
 
 Concise implementation plan:
 
@@ -222,14 +251,25 @@ Do not use write_file when patch_file is sufficient.
 Do not run commands that cannot contribute to the task.
 
 ==================================================
-FINAL RULE
+DECISION PROCESS
 ==================================================
 
-When information is missing:
-inspect.
+Think about the user's request and the observations already available.
 
-When a tool can answer the question:
-use the tool.
+If required information is missing:
+inspect it.
+
+If the task is purely conversational:
+answer it.
+
+If implementation requires multiple independent inspections:
+use "multi".
+
+If the implementation approach is known and should be presented
+for approval:
+return "plan".
+
+After a plan is approved, continue with tool actions.
 
 When modifying code:
 
@@ -239,13 +279,26 @@ inspect
 
 Never guess when the workspace can provide the answer.
 
+==================================================
+FINAL RULE
+==================================================
+
 Return JSON only.
 "#,
-            self.tools.join("\n")
+            tools = tools,
+            tool_names = self.tools.join(", "),
         )
     }
 
-    pub async fn create_plan(&self, messages: Vec<Message>) -> Result<PlanAction> {
+    // ========================================================================
+    // Planning
+    // ========================================================================
+
+    pub async fn create_plan(
+        &self,
+        messages: Vec<Message>,
+        cancel: CancellationToken,
+    ) -> Result<PlanAction> {
         let mut request_messages = Vec::with_capacity(messages.len() + 1);
 
         request_messages.push(Message {
@@ -263,29 +316,59 @@ Return JSON only.
 
         let mut response = String::new();
 
-        while let Some(chunk) = stream.next().await {
-            response.push_str(&chunk?);
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    return Err(anyhow!("Planning interrupted."));
+                }
+
+                chunk = stream.next() => {
+                    let Some(chunk) = chunk else {
+                        break;
+                    };
+
+                    response.push_str(&chunk?);
+                }
+            }
         }
 
         let json = extract_json(&response)?;
 
-        let planner_response: PlannerResponse = serde_json::from_value(json)
-            .map_err(|error| anyhow!("Invalid planner response schema: {}", error))?;
+        let planner_response: PlannerResponse =
+            serde_json::from_value(json.clone()).map_err(|error| {
+                anyhow!(
+                    "Invalid planner response schema: {}\n\nPlanner JSON:\n{}",
+                    error,
+                    serde_json::to_string_pretty(&json).unwrap_or_else(|_| json.to_string())
+                )
+            })?;
 
         self.validate_response(&planner_response)?;
 
         Ok(convert_response(planner_response))
     }
 
+    // ========================================================================
+    // Validation
+    // ========================================================================
+
     fn validate_response(&self, response: &PlannerResponse) -> Result<()> {
         match response {
-            PlannerResponse::Tool { name, .. } => {
+            PlannerResponse::Tool { name, input } => {
                 if name.trim().is_empty() {
                     return Err(anyhow!("Planner returned an empty tool name"));
                 }
 
                 if !self.tool_exists(name) {
-                    return Err(anyhow!("Planner requested unknown tool: {}", name));
+                    return Err(anyhow!(
+                        "Planner requested unknown tool: '{}'. Available tools: {}",
+                        name,
+                        self.tools.join(", ")
+                    ));
+                }
+
+                if input.is_null() {
+                    return Err(anyhow!("Planner returned null input for tool '{}'", name));
                 }
 
                 Ok(())
@@ -297,7 +380,23 @@ Return JSON only.
                 }
 
                 for action in actions {
-                    self.validate_response(action)?;
+                    match action {
+                        PlannerResponse::Tool { .. } => {
+                            self.validate_response(action)?;
+                        }
+
+                        PlannerResponse::Multi { .. } => {
+                            return Err(anyhow!("Nested multi actions are not allowed"));
+                        }
+
+                        PlannerResponse::Answer { .. } => {
+                            return Err(anyhow!("Answer actions are not allowed inside multi"));
+                        }
+
+                        PlannerResponse::Plan { .. } => {
+                            return Err(anyhow!("Plan actions are not allowed inside multi"));
+                        }
+                    }
                 }
 
                 Ok(())
@@ -322,11 +421,13 @@ Return JSON only.
     }
 
     fn tool_exists(&self, name: &str) -> bool {
-        self.tools.iter().any(|description| {
-            tool_name_from_description(description).is_some_and(|tool| tool == name)
-        })
+        self.tools.iter().any(|tool| tool == name)
     }
 }
+
+// ============================================================================
+// Response conversion
+// ============================================================================
 
 fn convert_response(response: PlannerResponse) -> PlanAction {
     match response {
@@ -345,46 +446,58 @@ fn convert_response(response: PlannerResponse) -> PlanAction {
     }
 }
 
+// ============================================================================
+// Input serialization
+// ============================================================================
+
 fn serialize_input(input: Value) -> String {
     match input {
         Value::String(value) => value,
-
         value => value.to_string(),
     }
 }
 
-fn tool_name_from_description(description: &str) -> Option<&str> {
-    description
-        .split_whitespace()
-        .next()
-        .filter(|name| !name.is_empty())
-}
+// ============================================================================
+// JSON extraction
+// ============================================================================
 
 fn extract_json(text: &str) -> Result<Value> {
     let clean = text
-        .replace("```json", "")
-        .replace("```", "")
         .trim()
-        .to_string();
+        .trim_start_matches("```json")
+        .trim_start_matches("```")
+        .trim_end_matches("```")
+        .trim();
 
     if clean.is_empty() {
         return Err(anyhow!("Planner returned an empty response"));
     }
 
-    if let Ok(value) = serde_json::from_str::<Value>(&clean) {
+    // Try the entire response first.
+    if let Ok(value) = serde_json::from_str::<Value>(clean) {
         return Ok(value);
     }
 
-    let start = clean.find('{');
-    let end = clean.rfind('}');
+    // Fall back to the first JSON object.
+    let Some(start) = clean.find('{') else {
+        return Err(anyhow!("Planner returned invalid JSON:\n{}", clean));
+    };
 
-    if let (Some(start), Some(end)) = (start, end) {
-        if start <= end {
-            if let Ok(value) = serde_json::from_str::<Value>(&clean[start..=end]) {
-                return Ok(value);
-            }
-        }
+    let Some(end) = clean.rfind('}') else {
+        return Err(anyhow!("Planner returned invalid JSON:\n{}", clean));
+    };
+
+    if start > end {
+        return Err(anyhow!("Planner returned invalid JSON:\n{}", clean));
     }
 
-    Err(anyhow!("Planner returned invalid JSON:\n{}", clean))
+    let candidate = &clean[start..=end];
+
+    serde_json::from_str::<Value>(candidate).map_err(|error| {
+        anyhow!(
+            "Planner returned invalid JSON: {}\n\nResponse:\n{}",
+            error,
+            clean
+        )
+    })
 }

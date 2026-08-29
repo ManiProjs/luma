@@ -16,7 +16,6 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use tokio::sync::mpsc::{Receiver, Sender};
-
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -25,7 +24,7 @@ use crate::{
     event::AgentEvent,
     theme::LumaTheme,
     tui::{
-        app::{App, MessageLine, MessageRole},
+        app::{App, MessageRole},
         info::LumaInfo,
         ui,
     },
@@ -45,11 +44,9 @@ pub async fn run(
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
 
     let backend = CrosstermBackend::new(stdout);
-
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new();
-
     let theme = LumaTheme::default();
 
     let mut confirm_exit = false;
@@ -60,13 +57,26 @@ pub async fn run(
             ui::draw(frame, &app, &theme, &info, confirm_exit);
         })?;
 
+        // --------------------------------------------------------
+        // Agent events
+        // --------------------------------------------------------
+
         let mut received_event = false;
 
         while let Ok(agent_event) = rx.try_recv() {
             received_event = true;
 
+            // Update the status bar separately from App's event handling.
             match &agent_event {
                 AgentEvent::Thinking => {
+                    info.set_status("Thinking");
+                }
+
+                AgentEvent::Planning => {
+                    info.set_status("Planning");
+                }
+
+                AgentEvent::PlanGenerated(_) => {
                     info.set_status("Thinking");
                 }
 
@@ -74,53 +84,36 @@ pub async fn run(
                     info.set_status(format!("Running {}", name));
                 }
 
-                AgentEvent::ConfirmationRequired { name, input } => {
-                    info.set_status("Confirmation required");
-
-                    app.messages.push(MessageLine {
-                        role: MessageRole::System,
-                        content: format!(
-                            "Tool `{}` wants to run:\n\n{}\n\n\
-                             Press Enter to allow or Esc to deny.",
-                            name, input
-                        ),
-                    });
-
-                    app.thinking = false;
-                }
-
                 AgentEvent::ToolFinished { .. } => {
                     info.set_status("Thinking");
                 }
 
+                AgentEvent::ConfirmationRequired { .. } => {
+                    info.set_status("Confirmation required");
+                }
+
+                AgentEvent::TextDelta(_) => {
+                    info.set_status("Generating");
+                }
+
                 AgentEvent::Finished => {
                     info.set_status("Ready");
-                    app.thinking = false;
                 }
 
-                AgentEvent::Error(error) => {
+                AgentEvent::Error(_) => {
                     info.set_status("Error");
-
-                    app.messages.push(MessageLine {
-                        role: MessageRole::System,
-                        content: error.clone(),
-                    });
-
-                    app.thinking = false;
                 }
 
-                AgentEvent::SystemMessage(message) => {
+                AgentEvent::SystemMessage(_) => {
                     info.set_status("Ready");
-
-                    app.messages.push(MessageLine {
-                        role: MessageRole::System,
-                        content: message.clone(),
-                    });
                 }
 
-                _ => {}
+                AgentEvent::Debug(_) => {
+                    // Keep the existing status unchanged.
+                }
             }
 
+            // App owns the actual conversation state.
             app.handle_event(agent_event);
 
             if app.auto_scroll {
@@ -128,26 +121,29 @@ pub async fn run(
             }
         }
 
-        /*
-         * Confirmation responses are sent by the TUI only when the
-         * user explicitly chooses Allow/Deny.
-         *
-         * The receiver exists here so the channel remains part of
-         * the terminal session, but the actual confirmation request
-         * is represented by AgentEvent::ConfirmationRequired.
-         */
         if received_event {
             terminal.draw(|frame| {
                 ui::draw(frame, &app, &theme, &info, confirm_exit);
             })?;
         }
 
+        // --------------------------------------------------------
+        // Exit confirmation timeout
+        // --------------------------------------------------------
+
         if confirm_exit && last_ctrl_c.elapsed() > Duration::from_secs(3) {
             confirm_exit = false;
         }
 
+        // --------------------------------------------------------
+        // Keyboard / mouse input
+        // --------------------------------------------------------
+
         if event::poll(Duration::from_millis(30))? {
             match event::read()? {
+                // ------------------------------------------------
+                // Mouse
+                // ------------------------------------------------
                 Event::Mouse(mouse) => match mouse.kind {
                     MouseEventKind::ScrollUp => {
                         app.scroll_up();
@@ -160,65 +156,59 @@ pub async fn run(
                     _ => {}
                 },
 
+                // ------------------------------------------------
+                // Keyboard
+                // ------------------------------------------------
                 Event::Key(key) => {
-                    /*
-                     * Ctrl+C
-                     *
-                     * First press while the agent is working:
-                     * cancel the current generation.
-                     *
-                     * Otherwise:
-                     * first Ctrl+C arms exit confirmation.
-                     * second Ctrl+C exits.
-                     */
+                    // ------------------------------------------------
+                    // Ctrl+C
+                    // ------------------------------------------------
+
                     if key.modifiers.contains(KeyModifiers::CONTROL)
                         && key.code == KeyCode::Char('c')
                     {
+                        // If the agent is currently working, cancel it.
                         if app.thinking {
                             cancel.cancel();
 
-                            app.messages.push(MessageLine {
+                            app.messages.push(crate::tui::app::MessageLine {
                                 role: MessageRole::System,
                                 content: "Generation interrupted.".into(),
                             });
 
                             app.thinking = false;
+                            app.current_tool = None;
+
+                            info.set_status("Ready");
 
                             continue;
                         }
 
-                        if confirm_exit {
-                            break;
+                        // First Ctrl+C arms exit confirmation.
+                        if !confirm_exit {
+                            confirm_exit = true;
+                            last_ctrl_c = Instant::now();
+
+                            continue;
                         }
 
-                        confirm_exit = true;
-                        last_ctrl_c = Instant::now();
-
-                        continue;
+                        // Second Ctrl+C exits.
+                        break;
                     }
 
-                    /*
-                     * If the last event was ConfirmationRequired,
-                     * Enter/Esc can be used to answer it.
-                     */
-                    if matches!(
-                        app.messages.last(),
-                        Some(MessageLine {
-                            role: MessageRole::System,
-                            content,
-                        }) if content.contains("Press Enter to allow")
-                            && content.contains("Esc to deny")
-                    ) {
+                    // ------------------------------------------------
+                    // Tool confirmation
+                    // ------------------------------------------------
+
+                    if app.confirmation_pending() {
                         match key.code {
                             KeyCode::Enter => {
                                 confirmation_tx.send(Confirmation::Allow).await?;
 
-                                app.messages.push(MessageLine {
-                                    role: MessageRole::System,
-                                    content: "Allowed.".into(),
-                                });
-
+                                app.clear_confirmation();
                                 app.thinking = true;
+
+                                info.set_status("Thinking");
 
                                 continue;
                             }
@@ -226,35 +216,57 @@ pub async fn run(
                             KeyCode::Esc => {
                                 confirmation_tx.send(Confirmation::Deny).await?;
 
-                                app.messages.push(MessageLine {
-                                    role: MessageRole::System,
-                                    content: "Denied.".into(),
-                                });
-
+                                app.clear_confirmation();
                                 app.thinking = true;
+
+                                info.set_status("Thinking");
 
                                 continue;
                             }
 
-                            _ => {}
+                            _ => {
+                                // Ignore normal input while confirmation
+                                // is waiting for a decision.
+                                continue;
+                            }
                         }
                     }
 
+                    // ------------------------------------------------
+                    // Normal input
+                    // ------------------------------------------------
+
                     match key.code {
+                        // --------------------------------------------
+                        // Character input
+                        // --------------------------------------------
                         KeyCode::Char(c) => {
                             app.input.insert(c);
+                            app.history_index = None;
                             app.update_suggestions();
                         }
 
+                        // --------------------------------------------
+                        // Backspace
+                        // --------------------------------------------
                         KeyCode::Backspace => {
                             app.input.backspace();
+                            app.history_index = None;
                             app.update_suggestions();
                         }
 
+                        // --------------------------------------------
+                        // Tab
+                        // --------------------------------------------
                         KeyCode::Tab => {
-                            app.accept_suggestion();
+                            if !app.suggestions.is_empty() {
+                                app.accept_suggestion();
+                            }
                         }
 
+                        // --------------------------------------------
+                        // Up
+                        // --------------------------------------------
                         KeyCode::Up => {
                             if !app.suggestions.is_empty() {
                                 app.suggestion_up();
@@ -263,6 +275,9 @@ pub async fn run(
                             }
                         }
 
+                        // --------------------------------------------
+                        // Down
+                        // --------------------------------------------
                         KeyCode::Down => {
                             if !app.suggestions.is_empty() {
                                 app.suggestion_down();
@@ -271,39 +286,69 @@ pub async fn run(
                             }
                         }
 
+                        // --------------------------------------------
+                        // Enter
+                        // --------------------------------------------
                         KeyCode::Enter => {
+                            // Accept autocomplete first.
                             if !app.suggestions.is_empty() {
                                 app.accept_suggestion();
                                 continue;
                             }
 
+                            // Shift+Enter inserts a newline.
                             if key.modifiers.contains(KeyModifiers::SHIFT) {
                                 app.input.newline();
                                 app.update_suggestions();
                                 continue;
                             }
 
-                            if let Some(message) = app.submit_input() {
-                                if let Some(command) = Command::parse(&message) {
-                                    match command {
-                                        Command::Help => {
-                                            app.messages.push(MessageLine {
-                                                role: MessageRole::System,
-                                                content: "Commands:\n\n/help\n/clear\n/quit".into(),
-                                            });
-                                        }
+                            let Some(message) = app.submit_input() else {
+                                continue;
+                            };
 
-                                        Command::Clear => {
-                                            app.messages.clear();
-                                            app.welcome_visible = true;
-                                        }
+                            // ----------------------------------------
+                            // Slash commands
+                            // ----------------------------------------
 
-                                        Command::Quit => {
-                                            break;
-                                        }
+                            if let Some(command) = Command::parse(&message) {
+                                match command {
+                                    Command::Help => {
+                                        app.messages.push(crate::tui::app::MessageLine {
+                                            role: MessageRole::System,
+                                            content: concat!(
+                                                "Commands:\n\n",
+                                                "/help\n",
+                                                "/clear\n",
+                                                "/quit\n",
+                                                "/init"
+                                            )
+                                            .into(),
+                                        });
 
-                                        Command::Init => {
-                                            let prompt = r#"Initialize this workspace.
+                                        if app.auto_scroll {
+                                            app.scroll_to_bottom();
+                                        }
+                                    }
+
+                                    Command::Clear => {
+                                        app.messages.clear();
+                                        app.current_tool = None;
+                                        app.confirmation = None;
+                                        app.thinking = false;
+                                        app.scroll = 0;
+                                        app.auto_scroll = true;
+                                        app.welcome_visible = true;
+
+                                        info.set_status("Ready");
+                                    }
+
+                                    Command::Quit => {
+                                        break;
+                                    }
+
+                                    Command::Init => {
+                                        let prompt = r#"Initialize this workspace.
 
 Tasks:
 1. Inspect the project files using available tools.
@@ -321,43 +366,90 @@ Tasks:
 7. After finishing, reply exactly:
 
 Workspace initialized."#
-                                                .to_string();
+                                            .to_string();
 
-                                            app.messages.push(MessageLine {
-                                                role: MessageRole::User,
-                                                content: prompt.clone(),
-                                            });
+                                        app.messages.push(crate::tui::app::MessageLine {
+                                            role: MessageRole::User,
+                                            content: prompt.clone(),
+                                        });
 
-                                            input_tx.send(prompt).await?;
-                                        }
+                                        app.thinking = true;
+                                        info.set_status("Thinking");
 
-                                        Command::Unknown(name) => {
-                                            app.messages.push(MessageLine {
-                                                role: MessageRole::System,
-                                                content: format!("Unknown command: /{}", name),
-                                            });
+                                        input_tx.send(prompt).await?;
+                                    }
+
+                                    Command::Unknown(name) => {
+                                        app.messages.push(crate::tui::app::MessageLine {
+                                            role: MessageRole::System,
+                                            content: format!("Unknown command: /{}", name),
+                                        });
+
+                                        if app.auto_scroll {
+                                            app.scroll_to_bottom();
                                         }
                                     }
-                                } else {
-                                    app.thinking = true;
-
-                                    input_tx.send(message).await?;
                                 }
+
+                                continue;
                             }
+
+                            // ----------------------------------------
+                            // Normal agent prompt
+                            // ----------------------------------------
+
+                            app.thinking = true;
+                            info.set_status("Thinking");
+
+                            input_tx.send(message).await?;
                         }
 
+                        // --------------------------------------------
+                        // Left
+                        // --------------------------------------------
                         KeyCode::Left => {
                             if app.input.cursor_x > 0 {
                                 app.input.cursor_x -= 1;
                             }
                         }
 
+                        // --------------------------------------------
+                        // Right
+                        // --------------------------------------------
                         KeyCode::Right => {
                             let len = app.input.lines[app.input.cursor_y].len();
 
                             if app.input.cursor_x < len {
                                 app.input.cursor_x += 1;
                             }
+                        }
+
+                        // --------------------------------------------
+                        // Home
+                        // --------------------------------------------
+                        KeyCode::Home => {
+                            app.input.cursor_x = 0;
+                        }
+
+                        // --------------------------------------------
+                        // End
+                        // --------------------------------------------
+                        KeyCode::End => {
+                            app.input.cursor_x = app.input.lines[app.input.cursor_y].len();
+                        }
+
+                        // --------------------------------------------
+                        // Page Up
+                        // --------------------------------------------
+                        KeyCode::PageUp => {
+                            app.scroll_up();
+                        }
+
+                        // --------------------------------------------
+                        // Page Down
+                        // --------------------------------------------
+                        KeyCode::PageDown => {
+                            app.scroll_down();
                         }
 
                         _ => {}
@@ -368,6 +460,10 @@ Workspace initialized."#
             }
         }
     }
+
+    // ------------------------------------------------------------
+    // Restore terminal
+    // ------------------------------------------------------------
 
     disable_raw_mode()?;
 

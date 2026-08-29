@@ -25,8 +25,6 @@ use tools::{
 
 use history::History;
 
-use std::io::{self, Write};
-
 use tokio_util::sync::CancellationToken;
 
 use crate::{
