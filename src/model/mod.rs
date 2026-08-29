@@ -30,6 +30,7 @@ pub fn create_model(config: &ModelConfig) -> Box<dyn Model> {
         _ => Box::new(OpenAICompatibleModel::new(
             config.endpoint.clone(),
             config.name.clone(),
+            config.api_key.clone(),
         )),
     }
 }

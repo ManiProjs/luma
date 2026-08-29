@@ -1,6 +1,8 @@
 use anyhow::{Result, anyhow};
 use futures_util::StreamExt;
+use serde::Deserialize;
 use serde_json::Value;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     context::{Message, MessageRole},
@@ -15,16 +17,44 @@ pub enum PlanAction {
     Answer { content: String },
 
     Multi { actions: Vec<PlanAction> },
+
+    Plan { content: String },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum PlannerResponse {
+    #[serde(rename = "tool")]
+    Tool { name: String, input: Value },
+
+    #[serde(rename = "multi")]
+    Multi { actions: Vec<PlannerResponse> },
+
+    #[serde(rename = "answer")]
+    Answer { content: String },
+
+    #[serde(rename = "plan")]
+    Plan { content: String },
 }
 
 #[async_trait::async_trait]
 pub trait PlannerTrait: Send + Sync {
-    async fn plan(&self, messages: Vec<Message>) -> Result<PlanAction>;
+    async fn plan(&self, messages: Vec<Message>, cancel: CancellationToken) -> Result<PlanAction>;
 }
 
 pub struct Planner<M> {
     model: M,
     tools: Vec<String>,
+}
+
+#[async_trait::async_trait]
+impl<M> PlannerTrait for Planner<M>
+where
+    M: Model,
+{
+    async fn plan(&self, messages: Vec<Message>, _cancel: CancellationToken) -> Result<PlanAction> {
+        self.create_plan(messages).await
+    }
 }
 
 impl<M> Planner<M>
@@ -38,26 +68,17 @@ where
         }
     }
 
-    fn prompt(&self) -> String {
-        let tools = self
-            .tools
-            .iter()
-            .map(|tool| format!("- {}", tool))
-            .collect::<Vec<_>>()
-            .join("\n");
-
+    fn system_prompt(&self) -> String {
         format!(
             r#"
-You are Luma's planning engine.
+You are Luma's Planner.
 
-You control a real coding agent.
+You are the decision-making system of a local-first AI coding agent.
 
-Your ONLY job is to choose the next action.
+Your job is to decide the NEXT action required to accomplish the user's
+request.
 
-You MUST output exactly one valid JSON object.
-Do not output markdown.
-Do not output explanations.
-Do not output reasoning.
+You MUST return valid JSON only.
 
 ==================================================
 AVAILABLE TOOLS
@@ -66,122 +87,29 @@ AVAILABLE TOOLS
 {}
 
 ==================================================
-TOOL DECISION RULES
+ACTION FORMAT
 ==================================================
 
-Use a tool whenever the user asks you to perform an operation
-that requires access to the workspace.
-
-Examples:
-
-User: "read README.md"
-→ use read_file
-
-User: "show me the project files"
-→ use list_directory
-
-User: "find where Foo is defined"
-→ use search_files
-
-User: "modify src/main.rs"
-→ use read_file first if the file has not already been read
-
-User: "patch /tmp/hello.txt"
-→ use read_file first if the file has not already been read
-
-User: "create config.toml"
-→ use write_file
-
-User: "run cargo check"
-→ use run_command
-
-User: "replace X with Y in a file"
-→ use read_file first if the current contents are unknown,
-then use patch_file
-
-==================================================
-CRITICAL RULE
-==================================================
-
-You DO have access to the tools listed above.
-
-NEVER say:
-
-"I do not have access to tools."
-
-NEVER answer a workspace operation with normal text.
-
-If a tool can perform the requested operation,
-SELECT THAT TOOL.
-
-==================================================
-READ BEFORE MODIFY
-==================================================
-
-Never modify an existing file unless its current contents
-are known.
-
-For an unknown existing file:
-
-FIRST:
-read_file
-
-THEN:
-patch_file
-
-For a new file:
-
-write_file may be used directly.
-
-==================================================
-ANSWER
-==================================================
-
-Use "answer" ONLY when no tool is required.
-
-Examples:
-
-User: "What is Rust?"
-→ answer
-
-User: "Explain ownership."
-→ answer
-
-User: "Patch /tmp/hello.txt"
-→ NOT answer
-
-==================================================
-JSON FORMAT
-==================================================
-
-Tool:
+Tool action:
 
 {{
   "type": "tool",
-  "name": "read_file",
-  "input": "path/to/file"
+  "name": "tool_name",
+  "input": "tool input"
 }}
 
-Structured tool input:
+For tools requiring structured input:
 
 {{
   "type": "tool",
-  "name": "patch_file",
+  "name": "write_file",
   "input": {{
-    "path": "path/to/file",
-    "old": "exact existing text",
-    "new": "replacement text"
+    "path": "file.txt",
+    "content": "hello"
   }}
 }}
 
-Answer:
-
-{{
-  "type": "answer",
-  "content": "response"
-}}
-
-Multi:
+Multiple actions:
 
 {{
   "type": "multi",
@@ -199,27 +127,131 @@ Multi:
   ]
 }}
 
+Concise implementation plan:
+
+{{
+  "type": "plan",
+  "content": "1. Read the relevant files. 2. Apply the change. 3. Verify."
+}}
+
+Use a plan only after exploring enough to know what to do.
+
+Final answer:
+
+{{
+  "type": "answer",
+  "content": "The answer..."
+}}
+
+==================================================
+WORKSPACE RULES
+==================================================
+
+The filesystem is unknown unless a tool has observed it.
+
+Never invent:
+
+- files
+- folders
+- symbols
+- project structure
+- configuration
+- dependencies
+- command output
+- source code
+- test results
+
+If information is missing, inspect it.
+
+Use previous tool observations.
+
+Do not repeat inspections that have already provided the
+information you need.
+
+==================================================
+MODIFICATION RULES
+==================================================
+
+For an existing file:
+
+1. Read it first.
+2. Understand the relevant code.
+3. Modify it.
+4. Verify the modification.
+
+Never invent the old contents of a file.
+
+Use patch_file for precise modifications.
+
+Use write_file primarily for new files or complete replacements.
+
+==================================================
+TOOL SELECTION
+==================================================
+
+list_directory
+    Understand directory structure.
+
+read_file
+    Read actual file contents.
+
+search_files
+    Locate files, symbols, or text.
+
+patch_file
+    Make precise changes to existing files.
+
+write_file
+    Create a new file or replace a complete file.
+
+run_command
+    Build, test, format, lint, or otherwise verify the project.
+
+==================================================
+EFFICIENCY
+==================================================
+
+Choose the smallest number of actions necessary.
+
+Do not repeatedly list the same directory.
+
+Do not reread unchanged files without a reason.
+
+Do not use write_file when patch_file is sufficient.
+
+Do not run commands that cannot contribute to the task.
+
 ==================================================
 FINAL RULE
 ==================================================
 
-Choose an action.
+When information is missing:
+inspect.
 
-Do not describe what you would do.
+When a tool can answer the question:
+use the tool.
 
-Do not explain the action.
+When modifying code:
+
+inspect
+→ modify
+→ verify
+
+Never guess when the workspace can provide the answer.
 
 Return JSON only.
 "#,
-            tools
+            self.tools.join("\n")
         )
     }
 
     pub async fn create_plan(&self, messages: Vec<Message>) -> Result<PlanAction> {
-        let mut request_messages = vec![Message {
+        let mut request_messages = Vec::with_capacity(messages.len() + 1);
+
+        request_messages.push(Message {
             role: MessageRole::System,
-            content: self.prompt(),
-        }];
+            content: self.system_prompt(),
+        });
 
         request_messages.extend(messages);
 
@@ -237,78 +269,95 @@ Return JSON only.
 
         let json = extract_json(&response)?;
 
-        parse_plan(json)
+        let planner_response: PlannerResponse = serde_json::from_value(json)
+            .map_err(|error| anyhow!("Invalid planner response schema: {}", error))?;
+
+        self.validate_response(&planner_response)?;
+
+        Ok(convert_response(planner_response))
+    }
+
+    fn validate_response(&self, response: &PlannerResponse) -> Result<()> {
+        match response {
+            PlannerResponse::Tool { name, .. } => {
+                if name.trim().is_empty() {
+                    return Err(anyhow!("Planner returned an empty tool name"));
+                }
+
+                if !self.tool_exists(name) {
+                    return Err(anyhow!("Planner requested unknown tool: {}", name));
+                }
+
+                Ok(())
+            }
+
+            PlannerResponse::Multi { actions } => {
+                if actions.is_empty() {
+                    return Err(anyhow!("Planner returned an empty multi action"));
+                }
+
+                for action in actions {
+                    self.validate_response(action)?;
+                }
+
+                Ok(())
+            }
+
+            PlannerResponse::Answer { content } => {
+                if content.trim().is_empty() {
+                    return Err(anyhow!("Planner returned an empty answer"));
+                }
+
+                Ok(())
+            }
+
+            PlannerResponse::Plan { content } => {
+                if content.trim().is_empty() {
+                    return Err(anyhow!("Planner returned an empty plan"));
+                }
+
+                Ok(())
+            }
+        }
+    }
+
+    fn tool_exists(&self, name: &str) -> bool {
+        self.tools.iter().any(|description| {
+            tool_name_from_description(description).is_some_and(|tool| tool == name)
+        })
     }
 }
 
-#[async_trait::async_trait]
-impl<M> PlannerTrait for Planner<M>
-where
-    M: Model + Send + Sync,
-{
-    async fn plan(&self, messages: Vec<Message>) -> Result<PlanAction> {
-        self.create_plan(messages).await
+fn convert_response(response: PlannerResponse) -> PlanAction {
+    match response {
+        PlannerResponse::Tool { name, input } => PlanAction::Tool {
+            name,
+            input: serialize_input(input),
+        },
+
+        PlannerResponse::Multi { actions } => PlanAction::Multi {
+            actions: actions.into_iter().map(convert_response).collect(),
+        },
+
+        PlannerResponse::Answer { content } => PlanAction::Answer { content },
+
+        PlannerResponse::Plan { content } => PlanAction::Plan { content },
     }
 }
 
-fn parse_plan(value: Value) -> Result<PlanAction> {
-    let action_type = value["type"]
-        .as_str()
-        .ok_or_else(|| anyhow!("Planner response missing `type`"))?;
+fn serialize_input(input: Value) -> String {
+    match input {
+        Value::String(value) => value,
 
-    match action_type {
-        "tool" => {
-            let name = value["name"]
-                .as_str()
-                .ok_or_else(|| anyhow!("Tool action missing `name`"))?
-                .trim();
-
-            if name.is_empty() {
-                return Err(anyhow!("Planner returned an empty tool name"));
-            }
-
-            let input = match &value["input"] {
-                Value::String(value) => value.clone(),
-
-                Value::Object(_) | Value::Array(_) => value["input"].to_string(),
-
-                Value::Null => String::new(),
-
-                other => other.to_string(),
-            };
-
-            Ok(PlanAction::Tool {
-                name: name.to_string(),
-                input,
-            })
-        }
-
-        "multi" => {
-            let items = value["actions"]
-                .as_array()
-                .ok_or_else(|| anyhow!("Multi action missing `actions`"))?;
-
-            if items.is_empty() {
-                return Err(anyhow!("Planner returned an empty action list"));
-            }
-
-            let mut actions = Vec::with_capacity(items.len());
-
-            for item in items {
-                actions.push(parse_plan(item.clone())?);
-            }
-
-            Ok(PlanAction::Multi { actions })
-        }
-
-        "answer" => {
-            let content = value["content"].as_str().unwrap_or("").to_string();
-
-            Ok(PlanAction::Answer { content })
-        }
-
-        other => Err(anyhow!("Unknown planner action type: {}", other)),
+        value => value.to_string(),
     }
+}
+
+fn tool_name_from_description(description: &str) -> Option<&str> {
+    description
+        .split_whitespace()
+        .next()
+        .filter(|name| !name.is_empty())
 }
 
 fn extract_json(text: &str) -> Result<Value> {
@@ -318,24 +367,24 @@ fn extract_json(text: &str) -> Result<Value> {
         .trim()
         .to_string();
 
+    if clean.is_empty() {
+        return Err(anyhow!("Planner returned an empty response"));
+    }
+
     if let Ok(value) = serde_json::from_str::<Value>(&clean) {
         return Ok(value);
     }
 
-    let start = clean
-        .find('{')
-        .ok_or_else(|| anyhow!("Planner returned no JSON object:\n{}", clean))?;
+    let start = clean.find('{');
+    let end = clean.rfind('}');
 
-    let end = clean
-        .rfind('}')
-        .ok_or_else(|| anyhow!("Planner returned incomplete JSON:\n{}", clean))?;
-
-    if start > end {
-        return Err(anyhow!("Invalid planner JSON:\n{}", clean));
+    if let (Some(start), Some(end)) = (start, end) {
+        if start <= end {
+            if let Ok(value) = serde_json::from_str::<Value>(&clean[start..=end]) {
+                return Ok(value);
+            }
+        }
     }
 
-    let json = &clean[start..=end];
-
-    serde_json::from_str::<Value>(json)
-        .map_err(|error| anyhow!("Planner returned invalid JSON: {}\n{}", error, clean))
+    Err(anyhow!("Planner returned invalid JSON:\n{}", clean))
 }

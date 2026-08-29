@@ -6,6 +6,8 @@ pub enum AgentEvent {
 
     Planning,
 
+    PlanGenerated(String),
+
     ToolStarted { name: String, input: String },
 
     ToolFinished { name: String, duration_ms: u128 },

@@ -102,12 +102,16 @@ pub async fn run() -> Result<()> {
             .interact_text()?,
     };
 
-    let api_key = if matches!(provider_index, 5 | 6 | 7 | 8 | 9 | 10) {
-        Some(
-            Input::<String>::with_theme(&theme)
-                .with_prompt("API key")
-                .interact_text()?,
-        )
+    let api_key = if provider_index >= 5 {
+        let key = Input::<String>::with_theme(&theme)
+            .with_prompt("API key (leave empty if not required)")
+            .interact_text()?;
+
+        if key.trim().is_empty() {
+            None
+        } else {
+            Some(key)
+        }
     } else {
         None
     };

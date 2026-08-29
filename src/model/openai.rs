@@ -57,14 +57,21 @@ pub struct OpenAICompatibleModel {
     endpoint: String,
 
     model: String,
+
+    api_key: Option<String>,
 }
 
 impl OpenAICompatibleModel {
-    pub fn new(endpoint: impl Into<String>, model: impl Into<String>) -> Self {
+    pub fn new(
+        endpoint: impl Into<String>,
+        model: impl Into<String>,
+        api_key: Option<String>,
+    ) -> Self {
         Self {
             client: Client::new(),
             endpoint: endpoint.into(),
             model: model.into(),
+            api_key,
         }
     }
 }
@@ -160,7 +167,15 @@ impl Model for OpenAICompatibleModel {
             stream: true,
         };
 
-        let response = self.client.post(&self.endpoint).json(&body).send().await?;
+        let request = self.client.post(&self.endpoint).json(&body);
+
+        let request = if let Some(key) = &self.api_key {
+            request.bearer_auth(key)
+        } else {
+            request
+        };
+
+        let response = request.send().await?;
 
         let stream = response
             .bytes_stream()

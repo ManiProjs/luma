@@ -44,6 +44,16 @@ struct InspectionState {
 }
 
 // ============================================================================
+// Planning state
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PlanningState {
+    Exploring,
+    Implementing,
+}
+
+// ============================================================================
 // Agent
 // ============================================================================
 
@@ -57,6 +67,7 @@ pub struct Agent<M, P> {
     inspected_files: Vec<String>,
     inspection: InspectionState,
     language: ProgrammingLanguage,
+    planning_state: PlanningState,
 }
 
 impl<M, P> Agent<M, P>
@@ -104,6 +115,7 @@ Treat it as project memory.
             inspected_files: Vec::new(),
             inspection: InspectionState::default(),
             language: ProgrammingLanguage::Unknown,
+            planning_state: PlanningState::Exploring,
         }
     }
 
@@ -188,6 +200,7 @@ Treat it as project memory.
     fn begin_request(&mut self, input: &str) -> Result<()> {
         self.inspection = InspectionState::default();
         self.inspected_files.clear();
+        self.planning_state = PlanningState::Exploring;
 
         self.context.add(MessageRole::User, input.to_owned());
 
@@ -320,7 +333,7 @@ or tool results.
                 return Ok(());
             }
 
-            let plan = match self.create_plan().await {
+            let plan = match self.create_plan(cancel).await {
                 Ok(plan) => plan,
 
                 Err(error) => {
@@ -346,6 +359,31 @@ or tool results.
                 PlanAction::Answer { .. } => {
                     self.run_conversation(tx, cancel).await?;
                     return Ok(());
+                }
+
+                PlanAction::Plan { content } => {
+                    tx.send(AgentEvent::PlanGenerated(content.clone())).await?;
+
+                    let display = format!("Plan:\n{}", content);
+
+                    let allowed = self
+                        .request_confirmation("approve_plan", &display, tx, cancel, confirmation_rx)
+                        .await?;
+
+                    if allowed {
+                        self.planning_state = PlanningState::Implementing;
+                        self.context.add(
+                            MessageRole::System,
+                            format!("Plan approved. Proceeding with implementation:\n{}", content),
+                        );
+                    } else {
+                        self.planning_state = PlanningState::Exploring;
+                        self.context.add(
+                            MessageRole::System,
+                            "Plan rejected. Rethink the approach and either explore more or propose a revised plan."
+                                .to_string(),
+                        );
+                    }
                 }
             }
 
@@ -373,6 +411,18 @@ or tool results.
                 continue;
             };
 
+            if self.planning_state == PlanningState::Exploring
+                && (name == "write_file" || name == "patch_file")
+            {
+                tx.send(AgentEvent::Error(format!(
+                    "Cannot execute '{}' while in planning phase. Approve a plan first.",
+                    name
+                )))
+                .await?;
+
+                break;
+            }
+
             if let Err(error) = self
                 .execute_tool(&name, &input, tx, cancel, confirmation_rx)
                 .await
@@ -387,7 +437,7 @@ or tool results.
         Ok(())
     }
 
-    async fn create_plan(&self) -> Result<PlanAction> {
+    async fn create_plan(&self, cancel: &CancellationToken) -> Result<PlanAction> {
         let mut messages = vec![Message {
             role: MessageRole::System,
             content: self.planner_system_prompt(),
@@ -395,7 +445,7 @@ or tool results.
 
         messages.extend(self.context.messages().iter().cloned());
 
-        self.planner.plan(messages).await
+        self.planner.plan(messages, cancel.clone()).await
     }
 
     // ========================================================================

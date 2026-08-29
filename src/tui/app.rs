@@ -342,6 +342,15 @@ impl App {
                 self.thinking = true;
             }
 
+            AgentEvent::PlanGenerated(content) => {
+                self.messages.push(MessageLine {
+                    role: MessageRole::System,
+                    content: format!("\u{1F4CB} Implementation Plan\n{}", content),
+                });
+
+                self.thinking = false;
+            }
+
             AgentEvent::ToolStarted { name, input } => {
                 self.thinking = false;
 
