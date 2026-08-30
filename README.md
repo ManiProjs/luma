@@ -99,7 +99,7 @@ This keeps the model grounded in the actual project instead of relying on guesse
 Luma currently provides:
 
 | Tool | Description |
-|---|---|
+| --- | --- |
 | `list_directory` | Explore files and directories |
 | `read_file` | Read file contents |
 | `search_files` | Search for files and code |
@@ -194,12 +194,12 @@ Configuration is stored separately from the agent itself, allowing the model and
 
 - Rust toolchain
 - A local LLM server
-- An OpenAI-compatible model endpoint
+- Or an OpenAI/Anthropic/Gemini-compatible model endpoint
 
 ### Clone
 
 ```bash
-git clone https://github.com/ManiProjs/luma
+git clone https://github.com/ManiArasteh/luma
 cd luma
 ```
 
@@ -214,6 +214,8 @@ cargo build --release
 ```bash
 cargo run --release
 ```
+
+Then create a config if you don't have one.
 
 ---
 
