@@ -1,0 +1,600 @@
+---
+const lines = [
+  { prompt: true, text: "luma" },
+  { text: "Initializing Luma..." },
+  { text: "✓ Workspace detected" },
+  { text: "✓ Loaded GALAXY.md" },
+  { text: "✓ Connected to local model" },
+  { text: "" },
+  { prompt: true, text: "Fix the borrow checker error in agent.rs" },
+  { text: "" },
+  { label: "planner", text: "Analyzing workspace..." },
+  { label: "tool", text: "read_file src/agent.rs" },
+  { label: "tool", text: "✓ Read 428 lines" },
+  { label: "planner", text: "Found ownership conflict." },
+  { label: "tool", text: "patch_file src/agent.rs" },
+  { label: "tool", text: "✓ Patch applied" },
+  { label: "tool", text: "run_command cargo check" },
+  { text: "✓ Finished successfully" },
+  { text: "" },
+  { text: "Luma > Ready." },
+];
+---
+
+<section class="terminal-section" id="terminal-demo">
+  <div class="terminal-stage">
+    <div class="terminal-glow"></div>
+
+    <div class="terminal-window" data-terminal>
+      <div class="terminal-header">
+        <div class="terminal-buttons">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+
+        <div class="terminal-title">
+          luma — ~/projects/my-project
+        </div>
+      </div>
+
+      <div class="terminal-body">
+        {
+          lines.map((line, index) => (
+            <div
+              class="terminal-line"
+              data-line={index}
+            >
+              {line.prompt ? (
+                <>
+                  <span class="prompt">❯</span>
+                  <span class="command">{line.text}</span>
+                </>
+              ) : line.label ? (
+                <>
+                  <span class={`label label-${line.label}`}>
+                    [{line.label}]
+                  </span>
+
+                  <span class="output">
+                    {line.text}
+                  </span>
+                </>
+              ) : (
+                <span class="output">
+                  {line.text}
+                </span>
+              )}
+            </div>
+          ))
+        }
+
+        <div class="cursor-line">
+          <span class="prompt">❯</span>
+          <span class="cursor"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .terminal-section {
+    position: relative;
+
+    /*
+     * Extra height gives the animation room to breathe.
+     */
+    height: 180vh;
+
+    padding: 0 1.5rem;
+  }
+
+  .terminal-stage {
+    position: sticky;
+
+    top: 0;
+
+    height: 100vh;
+
+    display: flex;
+
+    align-items: center;
+
+    justify-content: center;
+
+    perspective: 1400px;
+  }
+
+  .terminal-glow {
+    position: absolute;
+
+    width: 70%;
+
+    height: 60%;
+
+    border-radius: 50%;
+
+    background: radial-gradient(
+      ellipse,
+      rgba(255, 255, 255, 0.14),
+      transparent 70%
+    );
+
+    filter: blur(80px);
+
+    pointer-events: none;
+
+    opacity: 0;
+
+    transform: translateZ(-150px);
+  }
+
+  .terminal-window {
+    position: relative;
+
+    width: min(1000px, 100%);
+
+    overflow: hidden;
+
+    border: 1px solid rgba(255, 255, 255, 0.13);
+
+    border-radius: 16px;
+
+    background:
+      linear-gradient(
+        145deg,
+        rgba(255, 255, 255, 0.075),
+        rgba(255, 255, 255, 0.025)
+      ),
+      rgba(7, 7, 11, 0.95);
+
+    box-shadow:
+      0 60px 140px rgba(0, 0, 0, 0.55),
+      0 0 100px rgba(255, 255, 255, 0.04);
+
+    backdrop-filter: blur(24px);
+
+    transform-style: preserve-3d;
+
+    will-change:
+      transform,
+      opacity,
+      filter;
+  }
+
+  .terminal-header {
+    position: relative;
+
+    height: 46px;
+
+    display: flex;
+
+    align-items: center;
+
+    padding: 0 16px;
+
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+
+    background: rgba(255, 255, 255, 0.025);
+  }
+
+  .terminal-buttons {
+    display: flex;
+
+    gap: 7px;
+  }
+
+  .terminal-buttons span {
+    width: 11px;
+
+    height: 11px;
+
+    border-radius: 50%;
+
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  .terminal-title {
+    position: absolute;
+
+    left: 50%;
+
+    transform: translateX(-50%);
+
+    color: rgba(255, 255, 255, 0.4);
+
+    font-family:
+      ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      Monaco,
+      Consolas,
+      monospace;
+
+    font-size: 12px;
+
+    white-space: nowrap;
+  }
+
+  .terminal-body {
+    min-height: 520px;
+
+    padding: 28px;
+
+    font-family:
+      ui-monospace,
+      SFMono-Regular,
+      Menlo,
+      Monaco,
+      Consolas,
+      monospace;
+
+    font-size: 14px;
+
+    line-height: 1.8;
+
+    color: rgba(255, 255, 255, 0.75);
+  }
+
+  .terminal-line {
+    min-height: 25px;
+
+    display: flex;
+
+    gap: 10px;
+
+    opacity: 0;
+
+    transform:
+      translate3d(-30px, 0, 0);
+
+    transition:
+      opacity 0.25s ease,
+      transform 0.25s ease;
+  }
+
+  .terminal-line.visible {
+    opacity: 1;
+
+    transform:
+      translate3d(0, 0, 0);
+  }
+
+  .prompt {
+    color: white;
+
+    font-weight: 700;
+  }
+
+  .command {
+    color: white;
+  }
+
+  .output {
+    color: rgba(255, 255, 255, 0.52);
+  }
+
+  .label {
+    min-width: 78px;
+
+    font-weight: 700;
+  }
+
+  .label-planner {
+    color: white;
+  }
+
+  .label-tool {
+    color: rgba(255, 255, 255, 0.65);
+  }
+
+  .cursor-line {
+    display: flex;
+
+    align-items: center;
+
+    gap: 10px;
+
+    height: 28px;
+  }
+
+  .cursor {
+    width: 8px;
+
+    height: 17px;
+
+    background: rgba(255, 255, 255, 0.8);
+
+    animation: blink 1s steps(2) infinite;
+  }
+
+  @keyframes blink {
+    50% {
+      opacity: 0;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .terminal-section {
+      height: 150vh;
+
+      padding: 0 1rem;
+    }
+
+    .terminal-body {
+      min-height: 430px;
+
+      padding: 20px;
+
+      font-size: 11px;
+
+      overflow-x: auto;
+    }
+
+    .terminal-title {
+      display: none;
+    }
+
+    .terminal-window {
+      border-radius: 12px;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .terminal-section {
+      height: auto;
+    }
+
+    .terminal-stage {
+      position: relative;
+
+      height: auto;
+
+      min-height: 100vh;
+    }
+
+    .terminal-window {
+      transform: none !important;
+
+      opacity: 1 !important;
+
+      filter: none !important;
+    }
+
+    .terminal-line {
+      opacity: 1;
+
+      transform: none;
+
+      transition: none;
+    }
+
+    .terminal-glow {
+      opacity: 1;
+    }
+
+    .cursor {
+      animation: none;
+    }
+  }
+</style>
+
+<script>
+  const section =
+    document.querySelector<HTMLElement>(
+      "#terminal-demo"
+    );
+
+  const terminal =
+    document.querySelector<HTMLElement>(
+      "[data-terminal]"
+    );
+
+  const glow =
+    document.querySelector<HTMLElement>(
+      ".terminal-glow"
+    );
+
+  const lines =
+    document.querySelectorAll<HTMLElement>(
+      ".terminal-line"
+    );
+
+  if (section && terminal && glow) {
+    const reduceMotion =
+      window.matchMedia(
+        "(prefers-reduced-motion: reduce)"
+      ).matches;
+
+    if (!reduceMotion) {
+      let currentProgress = 0;
+      let targetProgress = 0;
+
+      const clamp = (
+        value: number,
+        min: number,
+        max: number
+      ) =>
+        Math.min(
+          max,
+          Math.max(min, value)
+        );
+
+      const updateTarget = () => {
+        const rect =
+          section.getBoundingClientRect();
+
+        /*
+         * 0 when the section enters the viewport.
+         *
+         * 1 when we've scrolled through the
+         * entire terminal section.
+         */
+        targetProgress = clamp(
+          -rect.top /
+            (rect.height - window.innerHeight),
+          0,
+          1
+        );
+      };
+
+      const animate = () => {
+        /*
+         * Smooth the movement so the terminal
+         * has inertia instead of snapping.
+         */
+        currentProgress +=
+          (targetProgress - currentProgress) *
+          0.08;
+
+        const p = currentProgress;
+
+        /*
+         * Smoothstep easing.
+         */
+        const eased =
+          p * p * (3 - 2 * p);
+
+        /*
+         * Terminal starts lower and tilted.
+         *
+         * As the user scrolls:
+         *
+         *       ↓
+         *
+         * terminal rises
+         * rotates
+         * scales
+         * becomes brighter
+         */
+        const translateY =
+          180 - eased * 360;
+
+        const translateX =
+          Math.sin(eased * Math.PI) * 80;
+
+        const rotateX =
+          18 - eased * 18;
+
+        const rotateY =
+          Math.sin(eased * Math.PI) * -8;
+
+        const rotateZ =
+          -3 + eased * 6;
+
+        const scale =
+          0.82 + eased * 0.18;
+
+        const opacity =
+          clamp(
+            p * 3,
+            0,
+            1
+          );
+
+        const blur =
+          Math.max(
+            0,
+            10 - eased * 10
+          );
+
+        terminal.style.transform = `
+          translate3d(
+            ${translateX}px,
+            ${translateY}px,
+            0
+          )
+          rotateX(${rotateX}deg)
+          rotateY(${rotateY}deg)
+          rotateZ(${rotateZ}deg)
+          scale(${scale})
+        `;
+
+        terminal.style.opacity =
+          String(opacity);
+
+        terminal.style.filter =
+          `blur(${blur}px)`;
+
+        /*
+         * Make the glow follow the terminal.
+         */
+        glow.style.opacity =
+          String(
+            0.15 +
+            Math.sin(eased * Math.PI) *
+              0.55
+          );
+
+        glow.style.transform = `
+          translate3d(
+            ${translateX * 0.4}px,
+            ${translateY * 0.2}px,
+            -150px
+          )
+          scale(${0.8 + eased * 0.4})
+        `;
+
+        /*
+         * Reveal terminal lines according
+         * to scroll position.
+         */
+        const revealStart = 0.18;
+        const revealEnd = 0.78;
+
+        const revealProgress =
+          clamp(
+            (p - revealStart) /
+              (revealEnd - revealStart),
+            0,
+            1
+          );
+
+        const visibleLines =
+          Math.floor(
+            revealProgress *
+              lines.length
+          );
+
+        lines.forEach(
+          (line, index) => {
+            line.classList.toggle(
+              "visible",
+              index < visibleLines
+            );
+          }
+        );
+
+        requestAnimationFrame(
+          animate
+        );
+      };
+
+      window.addEventListener(
+        "scroll",
+        updateTarget,
+        { passive: true }
+      );
+
+      window.addEventListener(
+        "resize",
+        updateTarget
+      );
+
+      updateTarget();
+
+      requestAnimationFrame(
+        animate
+      );
+    } else {
+      terminal.style.opacity = "1";
+      terminal.style.transform = "none";
+      terminal.style.filter = "none";
+
+      lines.forEach((line) => {
+        line.classList.add("visible");
+      });
+    }
+  }
+</script>

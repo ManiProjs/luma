@@ -1,0 +1,388 @@
+<section id="terminal-section" class="hero">
+  <div class="hero-background" aria-hidden="true">
+    <div class="hero-glow
+hero-glow-left"></div>
+    <div class="hero-glow hero-glow-right"></div>
+    <div class="hero-grid"></div>
+  </div>
+  <div class="hero-content">
+    <div class="hero-copy">
+      <div class="eyebrow">
+        <span class="eyebrow-dot"></span>
+        Local-first AI coding agent
+      </div>
+      <h1>Your codebase. <span>In good hands.</span></h1>
+      <p class="hero-description">
+        Luma is a lightweight AI coding agent built in Rust that can explore
+        your workspace, understand code, use development tools, modify files,
+        run commands, and verify its work.
+      </p>
+      <div class="hero-actions">
+        <a href="#download" class="button button-primary">
+          Download Luma <span aria-hidden="true">→</span>
+        </a>
+        <a
+          href="https://github.com/ManiProjs/luma"
+          class="button button-secondary"
+          target="_blank"
+          rel="noreferrer"
+        >
+          View source
+        </a>
+      </div>
+      <div class="hero-info">
+        <div class="hero-info-item">
+          <span class="hero-info-icon">🦀</span>
+          <div>
+            <strong>Built in Rust</strong>
+            <span>Fast, small, and efficient.</span>
+          </div>
+        </div>
+        <div class="hero-info-item">
+          <span class="hero-info-icon">🧠</span>
+          <div>
+            <strong>Local-first</strong>
+            <span>Works with your own model provider.</span>
+          </div>
+        </div>
+        <div class="hero-info-item">
+          <span class="hero-info-icon">🔧</span>
+          <div>
+            <strong>Real tools</strong>
+            <span>Reads, edits, searches, and runs commands.</span>
+          </div>
+        </div>
+      </div>
+      <div class="hero-stats">
+        <div><strong>Rust</strong> <span>Native core</span></div>
+        <div><strong>Local</strong> <span>Model support</span></div>
+        <div>
+          <strong>Tools</strong>
+          <span>Agent actions</span>
+        </div>
+        <div>
+          <strong>TUI</strong>
+          <span>Developer workflow</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="terminal-frame" class="terminal-frame">
+    <div class="terminal-window">
+      <div class="terminal-header">
+        <div class="terminal-controls">
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+        <div class="terminal-title">luma</div>
+        <div></div>
+      </div>
+      <div class="terminal-content">
+        <video autoplay muted loop playsinline preload="metadata">
+          <source src="/luma/demo.mp4" type="video/mp4" />
+        </video>
+      </div>
+    </div>
+    <div class="terminal-caption">
+      <span class="terminal-status"> <span></span> Live agent session </span>
+      <p>
+        Luma explores your workspace, selects tools, observes results, and
+        continues until the task is complete.
+      </p>
+    </div>
+  </div>
+</section>
+<script>
+  const section = document.getElementById("terminal-section")!;
+  const terminal = document.getElementById("terminal-frame")!;
+  function updateTerminal() {
+    const rect = section.getBoundingClientRect();
+    const scrollDistance = section.offsetHeight + window.innerHeight;
+    const traveled = window.innerHeight - rect.top;
+    const progress = Math.max(0, Math.min(1, traveled / scrollDistance));
+    const translateY = 180 - progress * 180;
+    const scale = 0.78 + progress * 0.22;
+    const rotateX = 14 - progress * 14;
+    terminal.style.transform = `
+perspective(1800px) translateY(${translateY}px) rotateX(${rotateX}deg) scale(${
+      scale
+    }) `;
+  }
+  let ticking = false;
+  function onScroll() {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => {
+      updateTerminal();
+      ticking = false;
+    });
+  }
+  window.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", updateTerminal);
+  updateTerminal();
+</script>
+<style>
+  .hero {
+    position: relative;
+    min-height: 230vh;
+    overflow: clip;
+  }
+  .hero-background {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+  .hero-glow {
+    position: absolute;
+    width: 55rem;
+    height: 55rem;
+    border-radius: 999px;
+    filter: blur(120px);
+    opacity: 0.2;
+  }
+  .hero-glow-left {
+    top: -20rem;
+    left: -25rem;
+    background: #8b5cf6;
+  }
+  .hero-glow-right {
+    top: 25rem;
+    right: -30rem;
+    background: #2563eb;
+  }
+  .hero-grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: linear-gradient(to bottom, black, transparent 80%);
+  }
+  .hero-content {
+    position: sticky;
+    top: 0;
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 7rem 1.5rem 22rem;
+    z-index: 1;
+  }
+  .hero-copy {
+    width: min(100%, 850px);
+    text-align: center;
+  }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.5rem 0.85rem;
+    margin-bottom: 1.75rem;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 0.85rem;
+  }
+  .eyebrow-dot {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: #a78bfa;
+    box-shadow: 0 0 16px rgba(167, 139, 250, 0.9);
+  }
+  h1 {
+    margin: 0;
+    font-size: clamp(3.5rem, 9vw, 8rem);
+    line-height: 0.95;
+    letter-spacing: -0.065em;
+  }
+  h1 span {
+    display: block;
+    background: linear-gradient(120deg, #ffffff, #a78bfa 45%, #60a5fa);
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+  }
+  .hero-description {
+    width: min(100%, 680px);
+    margin: 2rem auto 0;
+    color: rgba(255, 255, 255, 0.62);
+    font-size: clamp(1rem, 1.5vw, 1.2rem);
+    line-height: 1.7;
+  }
+  .hero-actions {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 2rem;
+  }
+  .button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.85rem 1.3rem;
+    border-radius: 999px;
+    text-decoration: none;
+    transition: transform 180ms ease;
+  }
+  .button:hover {
+    transform: translateY(-2px);
+  }
+  .button-primary {
+    background: white;
+    color: black;
+  }
+  .button-secondary {
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.04);
+    color: white;
+  }
+  .hero-info {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+    margin-top: 3rem;
+  }
+  .hero-info-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem;
+    text-align: left;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.025);
+  }
+  .hero-info-icon {
+    font-size: 1.3rem;
+  }
+  .hero-info-item div {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .hero-info-item strong {
+    font-size: 0.9rem;
+  }
+  .hero-info-item span:not(.hero-info-icon) {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.75rem;
+    line-height: 1.4;
+  }
+  .hero-stats {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 2rem;
+    margin-top: 2rem;
+  }
+  .hero-stats div {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .hero-stats strong {
+    font-size: 0.9rem;
+  }
+  .hero-stats span {
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 0.75rem;
+  }
+  .terminal-frame {
+    position: sticky;
+    top: 10vh;
+    width: min(1100px, calc(100vw - 2rem));
+    margin: -12rem auto 0;
+    transform-origin: center top;
+    will-change: transform;
+    z-index: 2;
+  }
+  .terminal-window {
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: clamp(14px, 2vw, 24px);
+    background: #080808;
+    box-shadow: 0 60px 150px rgba(0, 0, 0, 0.65);
+  }
+  .terminal-header {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    height: 42px;
+    padding: 0 1rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .terminal-controls {
+    display: flex;
+    gap: 0.45rem;
+  }
+  .terminal-controls span {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.16);
+  }
+  .terminal-title {
+    color: rgba(255, 255, 255, 0.45);
+    font-family: monospace;
+    font-size: 0.78rem;
+  }
+  .terminal-content video {
+    display: block;
+    width: 100%;
+  }
+  .terminal-caption {
+    display: flex;
+    justify-content: space-between;
+    gap: 2rem;
+    margin-top: 1rem;
+    color: rgba(255, 255, 255, 0.5);
+  }
+  .terminal-caption p {
+    max-width: 550px;
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.6;
+  }
+  .terminal-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    white-space: nowrap;
+    font-size: 0.8rem;
+  }
+  .terminal-status span {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: #22c55e;
+  }
+  @media (max-width: 750px) {
+    .hero {
+      min-height: 210vh;
+    }
+    .hero-content {
+      padding-bottom: 18rem;
+    }
+    .hero-info {
+      grid-template-columns: 1fr;
+    }
+    .hero-stats {
+      gap: 1rem;
+    }
+    .terminal-frame {
+      top: 18vh;
+      margin-top: -8rem;
+    }
+    .terminal-caption {
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+  }
+</style>

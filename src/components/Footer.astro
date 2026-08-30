@@ -1,0 +1,126 @@
+---
+const repoUrl = "https://github.com/ManiProjs/luma";
+const releasesUrl = "https://github.com/ManiProjs/luma/releases";
+
+const navigation = [
+  { label: "Features", href: "#features" },
+  { label: "How it works", href: "#how-it-works" },
+  { label: "Tools", href: "#tools" },
+  { label: "Architecture", href: "#architecture" },
+];
+
+const resources = [
+  { label: "GitHub", href: repoUrl },
+  { label: "Releases", href: releasesUrl },
+];
+---
+
+<footer class="relative overflow-hidden border-t border-white/10">
+  <!-- Cosmic glow -->
+  <div class="pointer-events-none absolute inset-0">
+    <div
+      class="absolute bottom-[-300px] left-1/2 h-[600px] w-[900px] -translate-x-1/2 rounded-full bg-gradient-to-r from-pink-500/10 via-fuchsia-500/10 to-purple-500/10 blur-[140px]"
+    >
+    </div>
+  </div>
+
+  <div class="relative mx-auto max-w-7xl px-6 py-16 lg:px-8">
+    <div class="grid gap-12 md:grid-cols-[1.5fr_1fr_1fr]">
+      <!-- Brand -->
+      <div class="max-w-sm">
+        <a
+          href="#top"
+          class="inline-flex items-center gap-3 text-xl font-semibold tracking-tight text-white"
+        >
+          <span
+            class="flex h-10 w-10 items-center justify-center rounded-xl border border-fuchsia-400/25 bg-gradient-to-br from-pink-400/15 to-purple-500/15 text-lg text-fuchsia-200"
+          >
+            ✦
+          </span>
+
+          Luma
+        </a>
+
+        <p class="mt-5 leading-7 text-white/45">
+          A lightweight AI coding agent built in Rust for local models, tool
+          use, and practical developer workflows.
+        </p>
+
+        <p class="mt-5 text-sm text-white/30">
+          Built with Rust.
+          <span class="mx-1 text-fuchsia-400/50">✦</span>
+          Built for developers.
+        </p>
+      </div>
+
+      <!-- Navigation -->
+      <div>
+        <h3
+          class="text-xs font-semibold uppercase tracking-[0.18em] text-white/40"
+        >
+          Explore
+        </h3>
+
+        <ul class="mt-5 space-y-3">
+          {
+            navigation.map((item) => (
+              <li>
+                <a
+                  href={item.href}
+                  class="text-sm text-white/50 transition hover:text-fuchsia-300"
+                >
+                  {item.label}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+
+      <!-- Resources -->
+      <div>
+        <h3
+          class="text-xs font-semibold uppercase tracking-[0.18em] text-white/40"
+        >
+          Resources
+        </h3>
+
+        <ul class="mt-5 space-y-3">
+          {
+            resources.map((item) => (
+              <li>
+                <a
+                  href={item.href}
+                  target="_blank"
+                  rel="noreferrer"
+                  class="inline-flex items-center gap-2 text-sm text-white/50 transition hover:text-fuchsia-300"
+                >
+                  {item.label}
+                  <span class="text-xs text-white/25">↗</span>
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+    </div>
+
+    <!-- Bottom -->
+    <div
+      class="mt-16 flex flex-col gap-4 border-t border-white/10 pt-8 text-sm text-white/30 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <p>
+        © {new Date().getFullYear()} Luma. Released under the MIT License.
+      </p>
+
+      <a
+        href={repoUrl}
+        target="_blank"
+        rel="noreferrer"
+        class="transition hover:text-fuchsia-300"
+      >
+        github.com/ManiProjs/luma
+      </a>
+    </div>
+  </div>
+</footer>

@@ -1,0 +1,142 @@
+---
+const features = [
+  {
+    icon: "✦",
+    title: "Tool-powered",
+    description:
+      "Luma can inspect files, search code, modify your workspace, and run commands instead of relying only on generated text.",
+    large: true,
+  },
+  {
+    icon: "◌",
+    title: "Local-first",
+    description:
+      "Built to work with local and OpenAI-compatible language model endpoints.",
+  },
+  {
+    icon: "⌘",
+    title: "Built for developers",
+    description:
+      "Explore codebases, understand projects, edit files, and automate development tasks.",
+  },
+  {
+    icon: "↻",
+    title: "Agent loop",
+    description:
+      "Luma plans, uses tools, observes results, and continues until the task is complete.",
+  },
+  {
+    icon: "⚡",
+    title: "Streaming",
+    description:
+      "See responses and agent activity as work happens.",
+  },
+  {
+    icon: "◈",
+    title: "Workspace memory",
+    description:
+      "Project-level context through GALAXY.md helps Luma stay grounded in your codebase.",
+  },
+];
+---
+
+<section id="features" class="relative overflow-hidden py-32 sm:py-40">
+  <!-- Background glow -->
+  <div
+    class="pointer-events-none absolute left-1/2 top-1/2 h-[700px] w-[700px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-fuchsia-500/10 blur-[160px]"
+  ></div>
+
+  <div class="relative mx-auto max-w-7xl px-6 lg:px-8">
+    <!-- Heading -->
+    <div class="mx-auto max-w-3xl text-center">
+      <p
+        class="mb-5 text-sm font-medium uppercase tracking-[0.22em] text-fuchsia-300"
+      >
+        Built for real work
+      </p>
+
+      <h2
+        class="text-4xl font-semibold tracking-tight text-white sm:text-5xl lg:text-6xl"
+      >
+        More than a chatbot.
+        <span
+          class="bg-gradient-to-r from-pink-400 via-fuchsia-400 to-purple-400 bg-clip-text text-transparent"
+        >
+          A coding agent.
+        </span>
+      </h2>
+
+      <p class="mt-6 text-lg leading-8 text-white/55">
+        Luma is designed to work inside your developer workflow — understanding
+        your project, using tools, and taking action when text alone isn't
+        enough.
+      </p>
+    </div>
+
+    <!-- Feature grid -->
+    <div class="mt-20 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+      {
+        features.map((feature) => (
+          <article
+            class:list={[
+              "group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.035] p-7 backdrop-blur-xl transition duration-500",
+              "hover:-translate-y-1 hover:border-fuchsia-400/30 hover:bg-white/[0.055]",
+              feature.large && "md:col-span-2 lg:col-span-2",
+            ]}
+          >
+            <!-- Hover glow -->
+            <div
+              class="pointer-events-none absolute -right-24 -top-24 h-48 w-48 rounded-full bg-fuchsia-500/0 blur-3xl transition duration-500 group-hover:bg-fuchsia-500/15"
+            ></div>
+
+            <div class="relative">
+              <div
+                class="flex h-11 w-11 items-center justify-center rounded-2xl border border-fuchsia-400/20 bg-gradient-to-br from-pink-400/15 to-purple-500/15 text-xl text-fuchsia-200"
+              >
+                {feature.icon}
+              </div>
+
+              <h3 class="mt-6 text-xl font-semibold text-white">
+                {feature.title}
+              </h3>
+
+              <p class="mt-3 max-w-xl leading-7 text-white/55">
+                {feature.description}
+              </p>
+
+              {
+                feature.large && (
+                  <div class="mt-8 flex flex-wrap gap-2">
+                    <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/55">
+                      Filesystem
+                    </span>
+
+                    <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/55">
+                      Shell
+                    </span>
+
+                    <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/55">
+                      Search
+                    </span>
+
+                    <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/55">
+                      Code editing
+                    </span>
+                  </div>
+                )
+              }
+            </div>
+          </article>
+        ))
+      }
+    </div>
+
+    <!-- Bottom statement -->
+    <div class="mx-auto mt-16 max-w-2xl text-center">
+      <p class="text-lg leading-8 text-white/45">
+        Small models become significantly more useful when they can
+        <span class="text-white/80"> observe the real workspace, use tools, and verify their work.</span>
+      </p>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,221 @@
+<section id="tools" class="relative overflow-hidden py-32 sm:py-40">
+  <div class="pointer-events-none absolute inset-0">
+    <div
+      class="absolute right-[-15%] top-[20%] h-[500px] w-[500px] rounded-full bg-pink-500/5 blur-[140px]"
+    >
+    </div>
+
+    <div
+      class="absolute left-[-15%] bottom-[10%] h-[500px] w-[500px] rounded-full bg-purple-500/5 blur-[140px]"
+    >
+    </div>
+  </div>
+
+  <div class="relative mx-auto max-w-7xl px-6 lg:px-8">
+    <div class="mx-auto max-w-3xl text-center">
+      <div
+        class="mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/60"
+      >
+        <span
+          class="h-2 w-2 rounded-full bg-gradient-to-r from-pink-400 to-purple-400"
+        ></span>
+        Built-in tools
+      </div>
+
+      <h2
+        class="text-4xl font-semibold tracking-tighter text-white sm:text-5xl lg:text-6xl"
+      >
+        Give the model
+        <span
+          class="bg-gradient-to-r from-pink-400 via-fuchsia-400 to-purple-400 bg-clip-text text-transparent"
+        >
+          something to do.
+        </span>
+      </h2>
+
+      <p class="mx-auto mt-6 max-w-2xl text-lg leading-8 text-white/60">
+        Luma connects the model to your workspace with a focused set of tools
+        for understanding, editing, and verifying real code.
+      </p>
+    </div>
+
+    <div class="mt-20 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+      <article
+        class="group rounded-3xl border border-white/10 bg-white/[0.025] p-7 transition duration-500 hover:-translate-y-1 hover:border-pink-400/30 hover:bg-white/[0.04]"
+      >
+        <div
+          class="mb-8 flex h-12 w-12 items-center justify-center rounded-2xl border border-pink-400/20 bg-pink-400/10 font-mono text-lg text-pink-300"
+        >
+          01
+        </div>
+
+        <div class="font-mono text-sm text-pink-400">list_directory</div>
+
+        <h3 class="mt-3 text-xl font-semibold text-white">
+          Explore the workspace
+        </h3>
+
+        <p class="mt-3 leading-7 text-white/50">
+          Discover project structure and understand where important files live.
+        </p>
+
+        <div
+          class="mt-7 rounded-xl border border-white/5 bg-black/30 p-4 font-mono text-xs text-white/45"
+        >
+          <div class="text-pink-300">→ src/</div>
+          <div class="mt-1 pl-3">agent.rs</div>
+          <div class="pl-3">planner.rs</div>
+          <div class="pl-3">tools/</div>
+        </div>
+      </article>
+
+      <article
+        class="group rounded-3xl border border-white/10 bg-white/[0.025] p-7 transition duration-500 hover:-translate-y-1 hover:border-purple-400/30 hover:bg-white/[0.04]"
+      >
+        <div
+          class="mb-8 flex h-12 w-12 items-center justify-center rounded-2xl border border-purple-400/20 bg-purple-400/10 font-mono text-lg text-purple-300"
+        >
+          02
+        </div>
+
+        <div class="font-mono text-sm text-purple-400">read_file</div>
+
+        <h3 class="mt-3 text-xl font-semibold text-white">
+          Read the real code
+        </h3>
+
+        <p class="mt-3 leading-7 text-white/50">
+          Give Luma the actual source instead of making it guess how your
+          project works.
+        </p>
+
+        <div
+          class="mt-7 rounded-xl border border-white/5 bg-black/30 p-4 font-mono text-xs text-white/45"
+        >
+          <div class="text-purple-300">pub struct Agent</div>
+          <div class="mt-1 pl-2">
+            {}
+            <div class="pl-4">planner: Planner,</div>
+            <div class="pl-4">tools: ToolRegistry,</div>
+            <div class="pl-2"></div>
+          </div>
+        </div>
+      </article>
+
+      <article
+        class="group rounded-3xl border border-white/10 bg-white/[0.025] p-7 transition duration-500 hover:-translate-y-1 hover:border-fuchsia-400/30 hover:bg-white/[0.04]"
+      >
+        <div
+          class="mb-8 flex h-12 w-12 items-center justify-center rounded-2xl border border-fuchsia-400/20 bg-fuchsia-400/10 font-mono text-lg text-fuchsia-300"
+        >
+          03
+        </div>
+
+        <div class="font-mono text-sm text-fuchsia-400">search_files</div>
+
+        <h3 class="mt-3 text-xl font-semibold text-white">Find what matters</h3>
+
+        <p class="mt-3 leading-7 text-white/50">
+          Search across the workspace for files, symbols, patterns, and relevant
+          code.
+        </p>
+
+        <div
+          class="mt-7 rounded-xl border border-white/5 bg-black/30 p-4 font-mono text-xs text-white/45"
+        >
+          <div class="text-white/30">$ search</div>
+          <div class="mt-1 text-fuchsia-300">"PlanAction"</div>
+          <div class="mt-3 text-purple-300">src/planner.rs:42</div>
+        </div>
+      </article>
+
+      <article
+        class="group rounded-3xl border border-pink-400/20 bg-pink-400/[0.035] p-7 transition duration-500 hover:-translate-y-1 hover:border-pink-400/40 hover:bg-pink-400/[0.06]"
+      >
+        <div
+          class="mb-8 flex h-12 w-12 items-center justify-center rounded-2xl border border-pink-400/30 bg-pink-400/10 font-mono text-lg text-pink-300"
+        >
+          04
+        </div>
+
+        <div class="font-mono text-sm text-pink-400">patch_file</div>
+
+        <h3 class="mt-3 text-xl font-semibold text-white">
+          Make precise edits
+        </h3>
+
+        <p class="mt-3 leading-7 text-white/50">
+          Change exactly what needs changing without rewriting an entire file.
+        </p>
+
+        <div
+          class="mt-7 rounded-xl border border-white/5 bg-black/30 p-4 font-mono text-xs"
+        >
+          <div class="text-red-300">- old_value</div>
+          <div class="mt-1 text-green-300">+ new_value</div>
+        </div>
+      </article>
+
+      <article
+        class="group rounded-3xl border border-white/10 bg-white/[0.025] p-7 transition duration-500 hover:-translate-y-1 hover:border-purple-400/30 hover:bg-white/[0.04]"
+      >
+        <div
+          class="mb-8 flex h-12 w-12 items-center justify-center rounded-2xl border border-purple-400/20 bg-purple-400/10 font-mono text-lg text-purple-300"
+        >
+          05
+        </div>
+
+        <div class="font-mono text-sm text-purple-400">write_file</div>
+
+        <h3 class="mt-3 text-xl font-semibold text-white">Create new code</h3>
+
+        <p class="mt-3 leading-7 text-white/50">
+          Create new files or completely replace existing ones when a larger
+          change is needed.
+        </p>
+
+        <div
+          class="mt-7 rounded-xl border border-white/5 bg-black/30 p-4 font-mono text-xs text-white/45"
+        >
+          <div class="text-purple-300">+ src/tools/git.rs</div>
+
+          <div class="mt-2 text-white/30">248 lines written</div>
+        </div>
+      </article>
+
+      <article
+        class="group rounded-3xl border border-white/10 bg-white/[0.025] p-7 transition duration-500 hover:-translate-y-1 hover:border-fuchsia-400/30 hover:bg-white/[0.04]"
+      >
+        <div
+          class="mb-8 flex h-12 w-12 items-center justify-center rounded-2xl border border-fuchsia-400/20 bg-fuchsia-400/10 font-mono text-lg text-fuchsia-300"
+        >
+          06
+        </div>
+
+        <div class="font-mono text-sm text-fuchsia-400">run_command</div>
+
+        <h3 class="mt-3 text-xl font-semibold text-white">Verify the work</h3>
+
+        <p class="mt-3 leading-7 text-white/50">
+          Run builds, tests, formatters, and other commands to check the result.
+        </p>
+
+        <div
+          class="mt-7 rounded-xl border border-white/5 bg-black/30 p-4 font-mono text-xs"
+        >
+          <div class="text-white/40">$ cargo check</div>
+
+          <div class="mt-3 text-green-400">✓ Finished successfully</div>
+        </div>
+      </article>
+    </div>
+
+    <div class="mx-auto mt-16 max-w-3xl text-center">
+      <p class="text-lg leading-8 text-white/50">
+        Tools let Luma interact with the actual project, so the model can
+        inspect, change, and verify code instead of relying entirely on its
+        initial guess.
+      </p>
+    </div>
+  </div>
+</section>

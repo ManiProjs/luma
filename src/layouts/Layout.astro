@@ -1,0 +1,66 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = "Luma — Local AI Coding Agent",
+  description = "A lightweight AI coding agent built in Rust for local LLMs, tool use, and low-memory environments.",
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1"
+    />
+
+    <meta
+      name="description"
+      content={description}
+    />
+
+    <meta
+      name="theme-color"
+      content="#050505"
+    />
+
+    <title>{title}</title>
+
+    <link
+      rel="icon"
+      href={`${import.meta.env.BASE_URL}favicon.svg`}
+    />
+  </head>
+
+  <body>
+    <slot />
+
+    <script>
+      const observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              entry.target.classList.add("visible");
+              observer.unobserve(entry.target);
+            }
+          });
+        },
+        {
+          threshold: 0.12,
+        }
+      );
+
+      document
+        .querySelectorAll(".reveal")
+        .forEach((element) => observer.observe(element));
+    </script>
+  </body>
+</html>

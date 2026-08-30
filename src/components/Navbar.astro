@@ -1,0 +1,307 @@
+---
+const base = import.meta.env.BASE_URL;
+const repoUrl = "https://github.com/ManiProjs/luma";
+
+const links = [
+  { label: "Features", href: "#features" },
+  { label: "How it works", href: "#how-it-works" },
+  { label: "Tools", href: "#tools" },
+  { label: "Architecture", href: "#architecture" },
+  { label: "Download", href: "#download" },
+];
+---
+
+<nav id="site-nav" class="fixed top-0 z-50 w-full" aria-label="Main navigation">
+  <div class="container-wide px-4 pt-4 sm:px-6 sm:pt-5">
+    <div
+      class="glass mx-auto flex h-14 max-w-6xl items-center justify-between rounded-full border border-white/10 px-4 shadow-[0_8px_40px_rgba(0,0,0,0.25)] sm:px-5"
+    >
+      <!-- Logo -->
+      <a
+        href={base}
+        class="group flex items-center gap-2.5 font-semibold tracking-tight text-white"
+        aria-label="Luma home"
+      >
+        <span
+          class="flex h-8 w-8 items-center justify-center rounded-full border border-fuchsia-400/20 bg-gradient-to-br from-pink-400/15 via-fuchsia-400/10 to-purple-500/15 transition duration-300 group-hover:scale-110 group-hover:border-fuchsia-400/40"
+        >
+          <svg viewBox="0 0 32 32" class="h-6 w-6" aria-hidden="true">
+            <!-- Left hand -->
+            <path
+              d="M8.5 16.5
+         C6.8 15.4 5.2 15.7 4.6 17
+         C4 18.2 4.8 19.3 6 19.2
+         C7.1 19.1 7.8 18.4 8.8 17.8Z"
+              fill="#FFD92F"></path>
+
+            <!-- Right hand -->
+            <path
+              d="M23.5 16.5
+         C25.2 15.4 26.8 15.7 27.4 17
+         C28 18.2 27.2 19.3 26 19.2
+         C24.9 19.1 24.2 18.4 23.2 17.8Z"
+              fill="#FFD92F"></path>
+
+            <!-- Round body -->
+            <circle cx="16" cy="15.5" r="9" fill="#FFD92F"></circle>
+
+            <!-- Eyes -->
+            <ellipse cx="12.8" cy="14.2" rx="1.2" ry="1.8" fill="#38220A"
+            ></ellipse>
+
+            <ellipse cx="19.2" cy="14.2" rx="1.2" ry="1.8" fill="#38220A"
+            ></ellipse>
+          </svg>
+        </span>
+
+        <span>Luma</span>
+      </a>
+
+      <!-- Desktop navigation -->
+      <div class="hidden items-center gap-6 text-sm text-white/50 lg:flex">
+        {
+          links.map((link) => (
+            <a
+              href={`${base}${link.href}`}
+              class="nav-link transition duration-200 hover:text-fuchsia-200"
+            >
+              {link.label}
+            </a>
+          ))
+        }
+      </div>
+
+      <!-- Desktop actions -->
+      <div class="hidden items-center gap-2 sm:flex">
+        <a
+          href={`${base}#download`}
+          class="rounded-full px-4 py-2 text-sm font-medium text-white/60 transition hover:text-white"
+        >
+          Download
+        </a>
+
+        <a
+          href={repoUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="group inline-flex items-center gap-2 rounded-full bg-gradient-to-r from-pink-500 via-fuchsia-500 to-purple-500 px-4 py-2 text-sm font-medium text-white transition duration-300 hover:scale-[1.03] hover:shadow-[0_0_30px_rgba(217,70,239,0.3)]"
+        >
+          GitHub
+
+          <span
+            class="text-xs transition duration-200 group-hover:translate-x-0.5"
+            aria-hidden="true"
+          >
+            ↗
+          </span>
+        </a>
+      </div>
+
+      <!-- Mobile menu button -->
+      <button
+        id="mobile-menu-button"
+        type="button"
+        class="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/70 transition hover:border-fuchsia-400/30 hover:bg-white/[0.08] hover:text-white sm:hidden"
+        aria-label="Open navigation menu"
+        aria-expanded="false"
+        aria-controls="mobile-menu"
+      >
+        <span class="sr-only">Open navigation menu</span>
+
+        <span
+          id="menu-icon"
+          class="relative flex h-4 w-4 flex-col justify-center gap-1"
+          aria-hidden="true"
+        >
+          <span class="menu-line line-one"></span>
+          <span class="menu-line line-two"></span>
+        </span>
+      </button>
+    </div>
+
+    <!-- Mobile menu -->
+    <div
+      id="mobile-menu"
+      class="pointer-events-none mx-auto max-h-0 max-w-6xl overflow-hidden opacity-0 transition-all duration-300 ease-out sm:hidden"
+      aria-hidden="true"
+    >
+      <div
+        class="mt-2 rounded-3xl border border-white/10 bg-black/70 p-2 shadow-[0_20px_60px_rgba(0,0,0,0.45)] backdrop-blur-2xl"
+      >
+        <div class="flex flex-col">
+          {
+            links.map((link) => (
+              <a
+                href={`${base}${link.href}`}
+                class="mobile-nav-link rounded-2xl px-4 py-3.5 text-sm font-medium text-white/60 transition hover:bg-white/[0.05] hover:text-fuchsia-200"
+              >
+                {link.label}
+              </a>
+            ))
+          }
+
+          <div class="my-2 h-px bg-white/10"></div>
+
+          <a
+            href={repoUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="flex items-center justify-between rounded-2xl bg-gradient-to-r from-pink-500/10 via-fuchsia-500/10 to-purple-500/10 px-4 py-3.5 text-sm font-medium text-white transition hover:from-pink-500/15 hover:via-fuchsia-500/15 hover:to-purple-500/15"
+          >
+            <span>View on GitHub</span>
+            <span class="text-white/40">↗</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<script>
+  const nav = document.querySelector("#site-nav");
+  const menuButton = document.querySelector("#mobile-menu-button");
+  const menu = document.querySelector("#mobile-menu");
+  const mobileLinks = document.querySelectorAll(".mobile-nav-link");
+
+  if (
+    nav instanceof HTMLElement &&
+    menuButton instanceof HTMLButtonElement &&
+    menu instanceof HTMLElement
+  ) {
+    let menuOpen = false;
+
+    const setMenuState = (open: boolean) => {
+      menuOpen = open;
+
+      menuButton.setAttribute("aria-expanded", String(open));
+      menuButton.setAttribute(
+        "aria-label",
+        open ? "Close navigation menu" : "Open navigation menu",
+      );
+
+      menu.setAttribute("aria-hidden", String(!open));
+
+      if (open) {
+        menu.classList.remove("pointer-events-none", "max-h-0", "opacity-0");
+
+        menu.classList.add(
+          "pointer-events-auto",
+          "max-h-[500px]",
+          "opacity-100",
+        );
+      } else {
+        menu.classList.remove(
+          "pointer-events-auto",
+          "max-h-[500px]",
+          "opacity-100",
+        );
+
+        menu.classList.add("pointer-events-none", "max-h-0", "opacity-0");
+      }
+
+      nav.classList.toggle("menu-open", open);
+    };
+
+    menuButton.addEventListener("click", () => {
+      setMenuState(!menuOpen);
+    });
+
+    mobileLinks.forEach((link) => {
+      link.addEventListener("click", () => {
+        setMenuState(false);
+      });
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!(event.target instanceof Node)) return;
+
+      if (
+        menuOpen &&
+        !menu.contains(event.target) &&
+        !menuButton.contains(event.target)
+      ) {
+        setMenuState(false);
+      }
+    });
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && menuOpen) {
+        setMenuState(false);
+        menuButton.focus();
+      }
+    });
+
+    window.addEventListener(
+      "scroll",
+      () => {
+        nav.classList.toggle("nav-scrolled", window.scrollY > 20);
+      },
+      { passive: true },
+    );
+  }
+</script>
+
+<style>
+  nav {
+    transition:
+      transform 300ms ease,
+      opacity 300ms ease;
+  }
+
+  nav > div > div:first-child {
+    transition:
+      background-color 300ms ease,
+      border-color 300ms ease,
+      box-shadow 300ms ease;
+  }
+
+  nav.nav-scrolled > div > div:first-child {
+    border-color: rgba(255, 255, 255, 0.14);
+    box-shadow:
+      0 12px 50px rgba(0, 0, 0, 0.35),
+      0 0 50px rgba(217, 70, 239, 0.06);
+  }
+
+  .menu-line {
+    position: absolute;
+    left: 0;
+    height: 1.5px;
+    width: 16px;
+    border-radius: 999px;
+    background: currentColor;
+    transition:
+      transform 250ms ease,
+      opacity 200ms ease;
+  }
+
+  .line-one {
+    transform: translateY(-3px);
+  }
+
+  .line-two {
+    transform: translateY(3px);
+  }
+
+  nav.menu-open .line-one {
+    transform: rotate(45deg);
+  }
+
+  nav.menu-open .line-two {
+    transform: rotate(-45deg);
+  }
+
+  @media (max-width: 639px) {
+    nav > div {
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    nav,
+    nav > div > div:first-child,
+    .menu-line {
+      transition: none;
+    }
+  }
+</style>
