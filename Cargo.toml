@@ -3,11 +3,18 @@ name = "luma"
 version = "0.1.0"
 edition = "2024"
 description = "A lightweight AI coding agent optimized for local models and low-memory environments"
+authors = ["Mani Arasteh"]
 license = "MIT"
 repository = "https://github.com/ManiProjs/luma"
 readme = "README.md"
 keywords = ["ai", "coding-agent", "llm", "developer-tools", "rust"]
 categories = ["command-line-utilities", "development-tools"]
+
+[package.metadata.wix]
+upgrade-guid = "64608215-1097-4F96-B056-9D6A31F62AED"
+path-guid = "2F6C7A45-FDA5-4DB6-85A8-47FA2EB747FA"
+license = false
+eula = false
 
 [dependencies]
 anyhow = "1.0.104"
@@ -32,3 +39,8 @@ tokio-stream = "0.1.19"
 tokio-util = "0.7.19"
 toml = "1.1.4"
 unicode-width = "0.2.2"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
