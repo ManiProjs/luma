@@ -14,7 +14,7 @@ use crate::{
 pub enum PlanAction {
     Tool { name: String, input: String },
 
-    Answer { content: String },
+    Answer,
 
     Multi { actions: Vec<PlanAction> },
 
@@ -31,7 +31,7 @@ enum PlannerResponse {
     Multi { actions: Vec<PlannerResponse> },
 
     #[serde(rename = "answer")]
-    Answer { content: String },
+    Answer,
 
     #[serde(rename = "plan")]
     Plan { content: String },
@@ -389,7 +389,7 @@ Return JSON only.
                             return Err(anyhow!("Nested multi actions are not allowed"));
                         }
 
-                        PlannerResponse::Answer { .. } => {
+                        PlannerResponse::Answer => {
                             return Err(anyhow!("Answer actions are not allowed inside multi"));
                         }
 
@@ -402,13 +402,7 @@ Return JSON only.
                 Ok(())
             }
 
-            PlannerResponse::Answer { content } => {
-                if content.trim().is_empty() {
-                    return Err(anyhow!("Planner returned an empty answer"));
-                }
-
-                Ok(())
-            }
+            PlannerResponse::Answer => Ok(()),
 
             PlannerResponse::Plan { content } => {
                 if content.trim().is_empty() {
@@ -440,7 +434,7 @@ fn convert_response(response: PlannerResponse) -> PlanAction {
             actions: actions.into_iter().map(convert_response).collect(),
         },
 
-        PlannerResponse::Answer { content } => PlanAction::Answer { content },
+        PlannerResponse::Answer => PlanAction::Answer,
 
         PlannerResponse::Plan { content } => PlanAction::Plan { content },
     }

@@ -1,4 +1,4 @@
-use ratatui::prelude::{Color, Modifier, Style};
+use ratatui::prelude::{Color, Style};
 
 pub struct LumaTheme {
     pub star: Color,
@@ -17,27 +17,11 @@ impl LumaTheme {
         }
     }
 
-    pub fn heading_style(&self) -> Style {
-        Style::default()
-            .fg(self.accent)
-            .add_modifier(Modifier::BOLD)
-    }
-
     pub fn code_style(&self) -> Style {
         Style::default().fg(self.glow)
     }
 
-    pub fn quote_style(&self) -> Style {
-        Style::default()
-            .fg(self.accent)
-            .add_modifier(Modifier::ITALIC)
-    }
-
     pub fn code_block_border_style(&self) -> Style {
         Style::default().fg(self.space)
-    }
-
-    pub fn bold_style(&self) -> Style {
-        Style::default().add_modifier(Modifier::BOLD)
     }
 }

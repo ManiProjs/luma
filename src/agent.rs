@@ -358,7 +358,7 @@ or tool results.
                         .await?;
                 }
 
-                PlanAction::Answer { .. } => {
+                PlanAction::Answer => {
                     self.run_conversation(tx, cancel).await?;
                     return Ok(());
                 }

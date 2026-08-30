@@ -18,25 +18,25 @@ pub enum ProgrammingLanguage {
 }
 
 impl ProgrammingLanguage {
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Rust => "Rust",
-            Self::Python => "Python",
-            Self::JavaScript => "JavaScript",
-            Self::TypeScript => "TypeScript",
-            Self::C => "C",
-            Self::Cpp => "C++",
-            Self::Go => "Go",
-            Self::Java => "Java",
-            Self::Kotlin => "Kotlin",
-            Self::Swift => "Swift",
-            Self::Dart => "Dart",
-            Self::CSharp => "C#",
-            Self::Ruby => "Ruby",
-            Self::Php => "PHP",
-            Self::Unknown => "Unknown",
-        }
-    }
+    // pub fn name(&self) -> &'static str {
+    //     match self {
+    //         Self::Rust => "Rust",
+    //         Self::Python => "Python",
+    //         Self::JavaScript => "JavaScript",
+    //         Self::TypeScript => "TypeScript",
+    //         Self::C => "C",
+    //         Self::Cpp => "C++",
+    //         Self::Go => "Go",
+    //         Self::Java => "Java",
+    //         Self::Kotlin => "Kotlin",
+    //         Self::Swift => "Swift",
+    //         Self::Dart => "Dart",
+    //         Self::CSharp => "C#",
+    //         Self::Ruby => "Ruby",
+    //         Self::Php => "PHP",
+    //         Self::Unknown => "Unknown",
+    //     }
+    // }
 }
 
 pub fn detect_from_file(path: &str) -> ProgrammingLanguage {

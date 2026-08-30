@@ -8,7 +8,10 @@ use ratatui::{
 
 use crate::{
     theme::LumaTheme,
-    tui::app::{App, MessageLine, MessageRole, ToolStatus},
+    tui::{
+        app::{App, MessageLine, MessageRole, ToolStatus},
+        markdown::MarkdownRenderer,
+    },
 };
 
 pub struct ChatView<'a> {
@@ -31,10 +34,6 @@ impl<'a> ChatView<'a> {
             _ => "◒",
         };
 
-        // Chat occupies the entire area given to it.
-        //
-        // There is intentionally NO status/header layout here.
-        // The global status bar is rendered by ui.rs at the bottom.
         self.render_chat(frame, area, spinner, animation);
     }
 
@@ -473,13 +472,12 @@ impl<'a> ChatView<'a> {
         message: &MessageLine,
         animation: usize,
     ) {
-        let (title, title_style, body_style) = match message.role {
+        let (title, title_style) = match message.role {
             MessageRole::User => (
                 " YOU ",
                 Style::default()
                     .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
-                Style::default(),
             ),
 
             MessageRole::Assistant => (
@@ -487,7 +485,6 @@ impl<'a> ChatView<'a> {
                 Style::default()
                     .fg(self.theme.glow)
                     .add_modifier(Modifier::BOLD),
-                Style::default(),
             ),
 
             MessageRole::System => (
@@ -495,7 +492,6 @@ impl<'a> ChatView<'a> {
                 Style::default()
                     .fg(self.theme.star)
                     .add_modifier(Modifier::BOLD),
-                Style::default(),
             ),
 
             MessageRole::Plan => (
@@ -503,7 +499,6 @@ impl<'a> ChatView<'a> {
                 Style::default()
                     .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
-                Style::default(),
             ),
 
             MessageRole::Error => (
@@ -511,7 +506,6 @@ impl<'a> ChatView<'a> {
                 Style::default()
                     .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
-                Style::default(),
             ),
 
             MessageRole::Tool => (
@@ -519,7 +513,6 @@ impl<'a> ChatView<'a> {
                 Style::default()
                     .fg(self.theme.space)
                     .add_modifier(Modifier::BOLD),
-                Style::default(),
             ),
         };
 
@@ -533,12 +526,29 @@ impl<'a> ChatView<'a> {
             ),
         ]));
 
-        // Body
-        self.render_markdown_with_base(lines, &message.content, body_style);
+        // ========================================================
+        // Markdown
+        // ========================================================
+
+        let renderer = MarkdownRenderer::new(self.theme);
+
+        for line in renderer.render(&message.content) {
+            let mut spans = Vec::with_capacity(line.spans.len() + 1);
+
+            spans.push(Span::styled("│ ", Style::default().fg(self.theme.space)));
+
+            spans.extend(line.spans);
+
+            lines.push(Line::from(spans));
+        }
 
         // Streaming cursor
         if message.role == MessageRole::Assistant && self.app.thinking {
-            let cursor = if animation % 2 == 0 { "▌" } else { " " };
+            let cursor = if animation.is_multiple_of(2) {
+                "▌"
+            } else {
+                " "
+            };
 
             lines.push(Line::from(vec![
                 Span::styled("│ ", Style::default().fg(self.theme.space)),
@@ -551,359 +561,6 @@ impl<'a> ChatView<'a> {
             "╰────────────────────────",
             Style::default().fg(self.theme.space),
         )));
-    }
-
-    // ============================================================
-    // Markdown renderer
-    // ============================================================
-
-    fn render_markdown_with_base(
-        &self,
-        output: &mut Vec<Line<'static>>,
-        markdown: &str,
-        base_style: Style,
-    ) {
-        let mut in_code_block = false;
-
-        for raw_line in markdown.lines() {
-            let line = raw_line.trim_end();
-
-            // Fenced code block
-            if line.trim_start().starts_with("```") {
-                in_code_block = !in_code_block;
-
-                if in_code_block {
-                    output.push(Line::from(Span::styled(
-                        "│ ┌────────────────────────────────",
-                        self.theme.code_block_border_style(),
-                    )));
-                } else {
-                    output.push(Line::from(Span::styled(
-                        "│ └────────────────────────────────",
-                        self.theme.code_block_border_style(),
-                    )));
-                }
-
-                continue;
-            }
-
-            if in_code_block {
-                output.push(Line::from(vec![
-                    Span::styled("│ │ ", self.theme.code_block_border_style()),
-                    Span::styled(line.to_string(), self.theme.code_style()),
-                ]));
-
-                continue;
-            }
-
-            // Empty line
-            if line.trim().is_empty() {
-                output.push(Line::from(Span::styled(
-                    "│",
-                    Style::default().fg(self.theme.space),
-                )));
-
-                continue;
-            }
-
-            // Headings
-            if let Some(heading) = line.strip_prefix("### ") {
-                output.push(self.markdown_line(
-                    "│ ",
-                    heading,
-                    self.theme.heading_style().add_modifier(Modifier::BOLD),
-                ));
-
-                continue;
-            }
-
-            if let Some(heading) = line.strip_prefix("## ") {
-                output.push(self.markdown_line(
-                    "│ ",
-                    heading,
-                    self.theme.heading_style().add_modifier(Modifier::BOLD),
-                ));
-
-                continue;
-            }
-
-            if let Some(heading) = line.strip_prefix("# ") {
-                output.push(self.markdown_line(
-                    "│ ",
-                    heading,
-                    self.theme.heading_style().add_modifier(Modifier::BOLD),
-                ));
-
-                continue;
-            }
-
-            // Blockquote
-            if let Some(quote) = line.strip_prefix("> ") {
-                let quote_style = self.theme.quote_style();
-
-                let mut spans = vec![
-                    Span::styled("│ ", Style::default().fg(self.theme.space)),
-                    Span::styled("│ ", quote_style),
-                ];
-
-                spans.extend(self.inline_markdown(quote, quote_style));
-
-                output.push(Line::from(spans));
-
-                continue;
-            }
-
-            // Unordered list
-            if let Some(item) = line.strip_prefix("- ") {
-                let mut spans = vec![
-                    Span::styled("│ ", Style::default().fg(self.theme.space)),
-                    Span::styled(
-                        "• ",
-                        Style::default()
-                            .fg(self.theme.accent)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ];
-
-                spans.extend(self.inline_markdown(item, base_style));
-
-                output.push(Line::from(spans));
-
-                continue;
-            }
-
-            if let Some(item) = line.strip_prefix("* ") {
-                let mut spans = vec![
-                    Span::styled("│ ", Style::default().fg(self.theme.space)),
-                    Span::styled(
-                        "• ",
-                        Style::default()
-                            .fg(self.theme.accent)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ];
-
-                spans.extend(self.inline_markdown(item, base_style));
-
-                output.push(Line::from(spans));
-
-                continue;
-            }
-
-            // Ordered lists
-            if let Some((number, item)) = Self::ordered_list(line) {
-                let mut spans = vec![
-                    Span::styled("│ ", Style::default().fg(self.theme.space)),
-                    Span::styled(
-                        format!("{} ", number),
-                        Style::default()
-                            .fg(self.theme.accent)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ];
-
-                spans.extend(self.inline_markdown(item, base_style));
-
-                output.push(Line::from(spans));
-
-                continue;
-            }
-
-            // Horizontal rule
-            if Self::is_horizontal_rule(line) {
-                output.push(Line::from(Span::styled(
-                    "│ ────────────────────────────────",
-                    Style::default().fg(self.theme.space),
-                )));
-
-                continue;
-            }
-
-            // Normal paragraph
-            let mut spans = vec![Span::styled("│ ", Style::default().fg(self.theme.space))];
-
-            spans.extend(self.inline_markdown(line, base_style));
-
-            output.push(Line::from(spans));
-        }
-    }
-
-    // ============================================================
-    // Inline Markdown
-    // ============================================================
-
-    fn inline_markdown(&self, text: &str, base_style: Style) -> Vec<Span<'static>> {
-        let mut spans = Vec::new();
-        let mut current = String::new();
-
-        let chars: Vec<char> = text.chars().collect();
-        let mut i = 0;
-
-        while i < chars.len() {
-            // Inline code
-            if chars[i] == '`' {
-                if !current.is_empty() {
-                    spans.push(Span::styled(std::mem::take(&mut current), base_style));
-                }
-
-                i += 1;
-
-                let start = i;
-
-                while i < chars.len() && chars[i] != '`' {
-                    i += 1;
-                }
-
-                let code: String = chars[start..i].iter().collect();
-
-                spans.push(Span::styled(code, self.theme.code_style()));
-
-                if i < chars.len() {
-                    i += 1;
-                }
-
-                continue;
-            }
-
-            // Bold
-            if i + 1 < chars.len() && chars[i] == '*' && chars[i + 1] == '*' {
-                if !current.is_empty() {
-                    spans.push(Span::styled(std::mem::take(&mut current), base_style));
-                }
-
-                i += 2;
-
-                let start = i;
-
-                while i + 1 < chars.len() && !(chars[i] == '*' && chars[i + 1] == '*') {
-                    i += 1;
-                }
-
-                let bold: String = chars[start..i].iter().collect();
-
-                spans.push(Span::styled(bold, base_style.add_modifier(Modifier::BOLD)));
-
-                if i + 1 < chars.len() {
-                    i += 2;
-                }
-
-                continue;
-            }
-
-            // Italic
-            if chars[i] == '*' && (i + 1 >= chars.len() || chars[i + 1] != '*') {
-                if !current.is_empty() {
-                    spans.push(Span::styled(std::mem::take(&mut current), base_style));
-                }
-
-                i += 1;
-
-                let start = i;
-
-                while i < chars.len() && chars[i] != '*' {
-                    i += 1;
-                }
-
-                let italic: String = chars[start..i].iter().collect();
-
-                spans.push(Span::styled(
-                    italic,
-                    base_style.add_modifier(Modifier::ITALIC),
-                ));
-
-                if i < chars.len() {
-                    i += 1;
-                }
-
-                continue;
-            }
-
-            // Strikethrough
-            if i + 1 < chars.len() && chars[i] == '~' && chars[i + 1] == '~' {
-                if !current.is_empty() {
-                    spans.push(Span::styled(std::mem::take(&mut current), base_style));
-                }
-
-                i += 2;
-
-                let start = i;
-
-                while i + 1 < chars.len() && !(chars[i] == '~' && chars[i + 1] == '~') {
-                    i += 1;
-                }
-
-                let strike: String = chars[start..i].iter().collect();
-
-                spans.push(Span::styled(
-                    strike,
-                    base_style.add_modifier(Modifier::CROSSED_OUT),
-                ));
-
-                if i + 1 < chars.len() {
-                    i += 2;
-                }
-
-                continue;
-            }
-
-            current.push(chars[i]);
-            i += 1;
-        }
-
-        if !current.is_empty() {
-            spans.push(Span::styled(current, base_style));
-        }
-
-        spans
-    }
-
-    // ============================================================
-    // Helpers
-    // ============================================================
-
-    fn markdown_line(&self, prefix: &str, text: &str, style: Style) -> Line<'static> {
-        let mut spans = vec![Span::styled(
-            prefix.to_owned(),
-            Style::default().fg(self.theme.space),
-        )];
-
-        spans.extend(self.inline_markdown(text, style));
-
-        Line::from(spans)
-    }
-
-    fn ordered_list(line: &str) -> Option<(u32, &str)> {
-        let mut end = 0;
-
-        for (index, c) in line.char_indices() {
-            if c.is_ascii_digit() {
-                end = index + c.len_utf8();
-            } else {
-                break;
-            }
-        }
-
-        if end == 0 {
-            return None;
-        }
-
-        let rest = &line[end..];
-
-        let rest = rest.strip_prefix(". ")?;
-
-        let number = line[..end].parse().ok()?;
-
-        Some((number, rest))
-    }
-
-    fn is_horizontal_rule(line: &str) -> bool {
-        let trimmed = line.trim();
-
-        if trimmed.len() < 3 {
-            return false;
-        }
-
-        trimmed.chars().all(|c| c == '-' || c == '*' || c == '_')
     }
 
     // ============================================================

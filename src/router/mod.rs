@@ -1,6 +1,3 @@
-use crate::tools::ToolRegistry;
-use anyhow::Result;
-
 #[derive(Debug)]
 pub enum RoutedAction {
     Tool { name: String, input: String },

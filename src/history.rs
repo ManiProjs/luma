@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct History {
     pub messages: Vec<HistoryMessage>,
 }
@@ -15,22 +15,19 @@ pub struct HistoryMessage {
 
 impl History {
     fn path() -> PathBuf {
-        let home = dirs::home_dir().expect("No home directory");
-
-        home.join(".config").join("luma").join("history.json")
+        dirs::home_dir()
+            .expect("could not determine home directory")
+            .join(".config")
+            .join("luma")
+            .join("history.json")
     }
 
     pub fn load() -> Self {
         let path = Self::path();
 
-        if let Ok(data) = fs::read_to_string(path) {
-            if let Ok(history) = serde_json::from_str(&data) {
-                return history;
-            }
-        }
-
-        Self {
-            messages: Vec::new(),
+        match fs::read_to_string(path) {
+            Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+            Err(_) => Self::default(),
         }
     }
 
@@ -41,7 +38,8 @@ impl History {
             fs::create_dir_all(parent)?;
         }
 
-        fs::write(path, serde_json::to_string_pretty(self)?)?;
+        let data = serde_json::to_string_pretty(self)?;
+        fs::write(path, data)?;
 
         Ok(())
     }

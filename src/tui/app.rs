@@ -1,4 +1,7 @@
-use crate::event::AgentEvent;
+use crate::{
+    event::AgentEvent,
+    tui::status::{error_status, finished_status, thinking_status, tool_status},
+};
 
 #[derive(Debug)]
 pub struct App {
@@ -9,9 +12,10 @@ pub struct App {
     pub thinking: bool,
     pub current_tool: Option<ToolState>,
 
+    pub status: String,
+
     pub scroll: usize,
     pub auto_scroll: bool,
-    pub running: bool,
 
     pub logo_frame: usize,
 
@@ -48,13 +52,13 @@ pub enum ToolStatus {
 }
 
 impl ToolStatus {
-    pub fn symbol(self) -> &'static str {
-        match self {
-            Self::Running => "◇",
-            Self::Success => "✓",
-            Self::Failed => "✗",
-        }
-    }
+    // pub fn symbol(self) -> &'static str {
+    //     match self {
+    //         Self::Running => "◇",
+    //         Self::Success => "✓",
+    //         Self::Failed => "✗",
+    //     }
+    // }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -112,9 +116,11 @@ impl TextBuffer {
             cursor
         } else {
             let mut pos = cursor;
+
             while pos > 0 && !line.is_char_boundary(pos) {
                 pos -= 1;
             }
+
             pos
         };
 
@@ -219,11 +225,12 @@ impl App {
 
             current_tool: None,
 
+            status: "Ready".into(),
+
             confirmation: None,
 
             scroll: 0,
             auto_scroll: true,
-            running: true,
 
             logo_frame: 0,
 
@@ -233,6 +240,18 @@ impl App {
             suggestions: Vec::new(),
             selected_suggestion: 0,
         }
+    }
+
+    // ─────────────────────────────────────────────
+    // Status
+    // ─────────────────────────────────────────────
+
+    // pub fn set_status(&mut self, status: impl Into<String>) {
+    //     self.status = status.into();
+    // }
+
+    pub fn reset_status(&mut self) {
+        self.status = "Ready".into();
     }
 
     // ─────────────────────────────────────────────
@@ -367,10 +386,13 @@ impl App {
         // A confirmation is an active UI state, not a chat message.
         self.welcome_visible = false;
         self.auto_scroll = true;
+
+        self.status = "Waiting for confirmation".into();
     }
 
     pub fn clear_confirmation(&mut self) {
         self.confirmation = None;
+        self.reset_status();
     }
 
     pub fn confirmation_pending(&self) -> bool {
@@ -385,10 +407,7 @@ impl App {
         match event {
             AgentEvent::Thinking => {
                 self.thinking = true;
-            }
-
-            AgentEvent::Planning => {
-                self.thinking = true;
+                self.status = thinking_status().to_string();
             }
 
             AgentEvent::PlanGenerated(content) => {
@@ -398,6 +417,7 @@ impl App {
                 });
 
                 self.thinking = false;
+                self.status = thinking_status().to_string();
 
                 if self.auto_scroll {
                     self.scroll_to_bottom();
@@ -414,6 +434,8 @@ impl App {
 
                 self.thinking = false;
 
+                self.status = format!("{} {}", tool_status(&name), display_input);
+
                 self.current_tool = Some(ToolState {
                     name,
                     input: display_input,
@@ -426,10 +448,10 @@ impl App {
             }
 
             AgentEvent::ToolFinished { name, duration_ms } => {
-                if let Some(tool) = self.current_tool.as_mut() {
-                    if tool.name == name {
-                        tool.status = ToolStatus::Success;
-                    }
+                if let Some(tool) = self.current_tool.as_mut()
+                    && tool.name == name
+                {
+                    tool.status = ToolStatus::Success;
                 }
 
                 if let Some(message) = self.messages.iter_mut().rev().find(|message| {
@@ -439,6 +461,7 @@ impl App {
                 }
 
                 self.current_tool = None;
+                self.status = finished_status().to_string();
 
                 if self.auto_scroll {
                     self.scroll_to_bottom();
@@ -452,16 +475,16 @@ impl App {
             AgentEvent::TextDelta(text) => {
                 self.thinking = false;
 
-                if let Some(last) = self.messages.last_mut() {
-                    if last.role == MessageRole::Assistant {
-                        last.content.push_str(&text);
+                if let Some(last) = self.messages.last_mut()
+                    && last.role == MessageRole::Assistant
+                {
+                    last.content.push_str(&text);
 
-                        if self.auto_scroll {
-                            self.scroll_to_bottom();
-                        }
-
-                        return;
+                    if self.auto_scroll {
+                        self.scroll_to_bottom();
                     }
+
+                    return;
                 }
 
                 self.messages.push(MessageLine {
@@ -482,6 +505,7 @@ impl App {
 
                 self.thinking = false;
                 self.current_tool = None;
+                self.status = "Ready".into();
 
                 if self.auto_scroll {
                     self.scroll_to_bottom();
@@ -491,17 +515,13 @@ impl App {
             AgentEvent::Finished => {
                 self.thinking = false;
                 self.current_tool = None;
+                self.status = finished_status().to_string();
 
-                // IMPORTANT:
-                //
                 // Do NOT blindly clear confirmation here.
                 //
-                // A confirmation request means the agent is waiting for
-                // the user. If another Finished event arrives while the
-                // confirmation UI is still active, we must preserve it.
-                //
-                // Normally Finished should happen after the confirmation
-                // has already been answered.
+                // A confirmation request means the agent is waiting
+                // for the user. If another Finished event arrives while
+                // the confirmation UI is still active, preserve it.
             }
 
             AgentEvent::Error(error) => {
@@ -517,17 +537,10 @@ impl App {
                 }
 
                 self.current_tool = None;
+                self.status = error_status().to_string();
 
                 // Keep an explicit confirmation visible until the user
                 // answers it. Errors should not unexpectedly erase it.
-            }
-
-            AgentEvent::Debug(text) => {
-                self.messages.push(MessageLine {
-                    role: MessageRole::System,
-                    content: text,
-                });
-
                 if self.auto_scroll {
                     self.scroll_to_bottom();
                 }
@@ -583,14 +596,14 @@ impl App {
     // System messages
     // ─────────────────────────────────────────────
 
-    pub fn add_system_message(&mut self, text: impl Into<String>) {
-        self.messages.push(MessageLine {
-            role: MessageRole::System,
-            content: text.into(),
-        });
+    // pub fn add_system_message(&mut self, text: impl Into<String>) {
+    //     self.messages.push(MessageLine {
+    //         role: MessageRole::System,
+    //         content: text.into(),
+    //     });
 
-        if self.auto_scroll {
-            self.scroll_to_bottom();
-        }
-    }
+    //     if self.auto_scroll {
+    //         self.scroll_to_bottom();
+    //     }
+    // }
 }

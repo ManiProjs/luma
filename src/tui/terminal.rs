@@ -72,10 +72,6 @@ pub async fn run(
                     info.set_status("Thinking");
                 }
 
-                AgentEvent::Planning => {
-                    info.set_status("Planning");
-                }
-
                 AgentEvent::PlanGenerated(_) => {
                     info.set_status("Thinking");
                 }
@@ -106,10 +102,6 @@ pub async fn run(
 
                 AgentEvent::SystemMessage(_) => {
                     info.set_status("Ready");
-                }
-
-                AgentEvent::Debug(_) => {
-                    // Keep the existing status unchanged.
                 }
             }
 

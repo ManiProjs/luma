@@ -44,10 +44,6 @@ impl ToolRegistry {
         names
     }
 
-    pub fn count(&self) -> usize {
-        self.tools.len()
-    }
-
     pub fn descriptions(&self) -> Vec<String> {
         self.tools
             .values()

@@ -145,7 +145,7 @@ fn render_status_bar(frame: &mut Frame, area: Rect, theme: &LumaTheme, info: &Lu
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         )
-    } else if let Some(_) = &app.current_tool {
+    } else if app.current_tool.is_some() {
         (
             "●",
             "WORKING",

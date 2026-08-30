@@ -3,7 +3,7 @@ pub enum MessageRole {
     System,
     User,
     Assistant,
-    Tool,
+    // Tool,
     Observation,
 }
 

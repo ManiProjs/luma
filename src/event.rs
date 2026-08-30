@@ -4,8 +4,6 @@ pub enum AgentEvent {
 
     Thinking,
 
-    Planning,
-
     PlanGenerated(String),
 
     ToolStarted { name: String, input: String },
@@ -19,6 +17,4 @@ pub enum AgentEvent {
     Error(String),
 
     Finished,
-
-    Debug(String),
 }
