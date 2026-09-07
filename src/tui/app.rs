@@ -12,6 +12,8 @@ pub struct App {
     pub thinking: bool,
     pub current_tool: Option<ToolState>,
 
+    pub more_mode: bool,
+
     pub status: String,
 
     pub scroll: usize,
@@ -225,6 +227,8 @@ impl App {
 
             current_tool: None,
 
+            more_mode: false,
+
             status: "Ready".into(),
 
             confirmation: None,
@@ -240,6 +244,10 @@ impl App {
             suggestions: Vec::new(),
             selected_suggestion: 0,
         }
+    }
+
+    pub fn toggle_more_mode(&mut self) {
+        self.more_mode = !self.more_mode;
     }
 
     // ─────────────────────────────────────────────

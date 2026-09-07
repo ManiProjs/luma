@@ -15,6 +15,192 @@ use crate::{
     },
 };
 
+fn render_more_panel(frame: &mut Frame, area: Rect, theme: &LumaTheme, info: &LumaInfo, app: &App) {
+    let block = Block::default()
+        .title(Line::from(vec![
+            Span::styled(
+                " MORE ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("• ACTIVITY ", Style::default().fg(theme.space)),
+        ]))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.accent));
+
+    let inner = block.inner(area);
+
+    frame.render_widget(block, area);
+
+    if inner.width < 12 || inner.height < 5 {
+        return;
+    }
+
+    let status = if app.confirmation_pending() {
+        "waiting"
+    } else if app.current_tool.is_some() {
+        "working"
+    } else if app.thinking {
+        "thinking"
+    } else {
+        "ready"
+    };
+
+    let mut lines = Vec::new();
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            "MODE  ",
+            Style::default()
+                .fg(theme.space)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "MORE",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(vec![
+        Span::styled(
+            "STATUS  ",
+            Style::default()
+                .fg(theme.space)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(status, Style::default().fg(theme.glow)),
+    ]));
+
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(Span::styled(
+        "MODEL",
+        Style::default()
+            .fg(theme.space)
+            .add_modifier(Modifier::BOLD),
+    )));
+
+    lines.push(Line::from(vec![
+        Span::styled("Provider  ", Style::default().fg(theme.space)),
+        Span::styled(
+            &info.provider,
+            Style::default().fg(theme.glow).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled("Model     ", Style::default().fg(theme.space)),
+        Span::styled(
+            &info.model,
+            Style::default().fg(theme.glow).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(Span::styled(
+        "SESSION",
+        Style::default()
+            .fg(theme.space)
+            .add_modifier(Modifier::BOLD),
+    )));
+
+    lines.push(Line::from(vec![
+        Span::styled("Messages  ", Style::default().fg(theme.space)),
+        Span::styled(
+            app.messages.len().to_string(),
+            Style::default().fg(theme.glow).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled("Thinking  ", Style::default().fg(theme.space)),
+        Span::styled(
+            if app.thinking { "yes" } else { "no" },
+            Style::default().fg(theme.glow),
+        ),
+    ]));
+
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(Span::styled(
+        "ACTIVE TOOL",
+        Style::default()
+            .fg(theme.space)
+            .add_modifier(Modifier::BOLD),
+    )));
+
+    if let Some(tool) = &app.current_tool {
+        lines.push(Line::from(vec![
+            Span::styled(
+                "◇ ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                &tool.name,
+                Style::default().fg(theme.glow).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+
+        if !tool.input.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("  ", Style::default().fg(theme.space)),
+                Span::styled(&tool.input, Style::default().fg(theme.space)),
+            ]));
+        }
+
+        lines.push(Line::from(vec![
+            Span::styled("  State     ", Style::default().fg(theme.space)),
+            Span::styled(tool.status.label(), Style::default().fg(theme.glow)),
+        ]));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "None",
+            Style::default().fg(theme.space),
+        )));
+    }
+
+    lines.push(Line::from(""));
+
+    lines.push(Line::from(Span::styled(
+        "TOOLS",
+        Style::default()
+            .fg(theme.space)
+            .add_modifier(Modifier::BOLD),
+    )));
+
+    lines.push(Line::from(vec![
+        Span::styled("Available  ", Style::default().fg(theme.space)),
+        Span::styled(
+            info.tools.len().to_string(),
+            Style::default().fg(theme.glow),
+        ),
+    ]));
+
+    lines.push(Line::from(""));
+
+    for tool in &info.tools {
+        lines.push(Line::from(vec![
+            Span::styled(
+                "◇ ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(tool, Style::default().fg(theme.space)),
+        ]));
+    }
+
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
 pub fn draw(frame: &mut Frame, app: &App, theme: &LumaTheme, info: &LumaInfo, _confirm_exit: bool) {
     let area = frame.area().inner(Margin {
         vertical: 0,
@@ -63,7 +249,11 @@ pub fn draw(frame: &mut Frame, app: &App, theme: &LumaTheme, info: &LumaInfo, _c
         let chat = ChatView::new(theme, app);
         chat.render(frame, content[0]);
 
-        render_info_panel(frame, content[1], theme, info, app);
+        if app.more_mode {
+            render_more_panel(frame, content[1], theme, info, app);
+        } else {
+            render_info_panel(frame, content[1], theme, info, app);
+        }
     }
 
     // ------------------------------------------------------------
