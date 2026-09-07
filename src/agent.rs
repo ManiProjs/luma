@@ -68,6 +68,10 @@ pub struct Agent<M, P> {
     inspection: InspectionState,
     language: ProgrammingLanguage,
     planning_state: PlanningState,
+
+    // The current request is kept separately so the planner does not need
+    // the entire conversational history on every planning turn.
+    current_request: String,
 }
 
 impl<M, P> Agent<M, P>
@@ -88,19 +92,9 @@ where
             context.add(
                 MessageRole::System,
                 format!(
-                    "\
-# Luma Workspace Memory
-
-The following information comes from GALAXY.md.
-
-Treat it as project memory.
-
----
-
-{}
-
----
-",
+                    "# Luma Workspace Memory\n\n\
+                     The following information comes from GALAXY.md.\n\
+                     Treat it as project memory.\n\n---\n\n{}\n\n---",
                     galaxy
                 ),
             );
@@ -116,6 +110,7 @@ Treat it as project memory.
             inspection: InspectionState::default(),
             language: ProgrammingLanguage::Unknown,
             planning_state: PlanningState::Exploring,
+            current_request: String::new(),
         }
     }
 
@@ -201,6 +196,7 @@ Treat it as project memory.
         self.inspection = InspectionState::default();
         self.inspected_files.clear();
         self.planning_state = PlanningState::Exploring;
+        self.current_request = input.to_owned();
 
         self.context.add(MessageRole::User, input.to_owned());
 
@@ -258,6 +254,9 @@ Treat it as project memory.
             content: self.answer_system_prompt(),
         }];
 
+        // The answer model gets the conversation context, but the planner
+        // does not. This keeps the planning request small without sacrificing
+        // conversational continuity for the final response.
         messages.extend(self.context.messages().iter().cloned());
 
         let mut stream = self.model.stream(CompletionRequest { messages }).await?;
@@ -295,21 +294,13 @@ Treat it as project memory.
 
     fn answer_system_prompt(&self) -> String {
         "\
-You are Luma.
-You are running inside the Luma coding agent.
-The underlying model is not the assistant's identity.
-
-You are a local-first AI coding agent.
+You are Luma, a local-first coding agent.
 
 Be concise, technical, and practical.
 
-Do not claim workspace facts without tool observations.
-
-When the user asks about the workspace, use the available tools
-rather than guessing.
-
-Do not invent files, commands, project structure, dependencies,
-or tool results.
+Use workspace observations when answering workspace questions.
+Never invent files, commands, project structure, dependencies,
+or test results.
 "
         .into()
     }
@@ -331,8 +322,19 @@ or tool results.
         for step in 0..MAX_STEPS {
             if cancel.is_cancelled() {
                 tx.send(AgentEvent::Error("Interrupted.".into())).await?;
-
                 return Ok(());
+            }
+
+            // Handle the most obvious first inspection locally. This avoids
+            // spending a model round deciding to perform the same trivial
+            // directory inspection on every new workspace request.
+            if step == 0 {
+                if let Some((name, input)) = self.deterministic_first_action() {
+                    self.execute_tool(&name, &input, tx, cancel, confirmation_rx)
+                        .await?;
+
+                    continue;
+                }
             }
 
             let plan = match self.create_plan(cancel).await {
@@ -400,6 +402,73 @@ or tool results.
         Ok(())
     }
 
+    // ========================================================================
+    // Deterministic obvious actions
+    // ========================================================================
+
+    fn deterministic_first_action(&self) -> Option<(String, String)> {
+        if self.inspection.directory {
+            return None;
+        }
+
+        let input = self.current_request.trim().to_lowercase();
+
+        // If the user explicitly asks for the project/file tree, there is no
+        // useful reason to spend a planner generation deciding to list it.
+        const DIRECTORY_REQUESTS: &[&str] = &[
+            "show me the files",
+            "show the files",
+            "show files",
+            "list the files",
+            "list files",
+            "list the directory",
+            "list directory",
+            "show the directory",
+            "show directory",
+            "file tree",
+            "project tree",
+            "project structure",
+            "directory structure",
+            "project layout",
+        ];
+
+        if DIRECTORY_REQUESTS.iter().any(|term| input.contains(term)) {
+            return Some(("list_directory".into(), ".".into()));
+        }
+
+        // A request containing an explicit source/config path is also
+        // unambiguous when the path is clearly a single file.
+        if let Some(path) = Self::extract_explicit_file_path(&input) {
+            if !path.is_empty() && !path.ends_with('/') {
+                return Some(("read_file".into(), path));
+            }
+        }
+
+        None
+    }
+
+    fn extract_explicit_file_path(input: &str) -> Option<String> {
+        const EXTENSIONS: &[&str] = &[
+            ".rs", ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".java", ".kt", ".swift", ".c",
+            ".h", ".cpp", ".hpp", ".cc", ".zig", ".lua", ".rb", ".php", ".cs", ".fs", ".fsx",
+            ".dart", ".vue", ".svelte", ".html", ".css", ".scss", ".json", ".toml", ".yaml",
+            ".yml", ".xml", ".md", ".txt", ".lock",
+        ];
+
+        input
+            .split_whitespace()
+            .map(|word| {
+                word.trim_matches(|c: char| {
+                    matches!(
+                        c,
+                        '"' | '\'' | '`' | '(' | ')' | '[' | ']' | '{' | '}' | ',' | ':'
+                    )
+                })
+            })
+            .find(|word| EXTENSIONS.iter().any(|ext| word.ends_with(ext)))
+            .map(ToOwned::to_owned)
+    }
+
     async fn execute_actions(
         &mut self,
         actions: Vec<PlanAction>,
@@ -443,14 +512,143 @@ or tool results.
     }
 
     async fn create_plan(&self, cancel: &CancellationToken) -> Result<PlanAction> {
-        let mut messages = vec![Message {
+        // IMPORTANT: do not send the complete Context here.
+        //
+        // The planner only needs:
+        //   1. the current request
+        //   2. compact workspace state
+        //   3. observations produced during this request
+        //
+        // This prevents the planner from repeatedly processing the full
+        // conversational history and previous assistant responses.
+        let mut messages = Vec::with_capacity(3);
+
+        messages.push(Message {
             role: MessageRole::System,
             content: self.planner_system_prompt(),
-        }];
+        });
 
-        messages.extend(self.context.messages().iter().cloned());
+        messages.push(Message {
+            role: MessageRole::User,
+            content: self.current_request.clone(),
+        });
+
+        let observations = self.planner_observations();
+
+        if !observations.is_empty() {
+            messages.push(Message {
+                role: MessageRole::Observation,
+                content: observations,
+            });
+        }
 
         self.planner.plan(messages, cancel.clone()).await
+    }
+
+    fn planner_system_prompt(&self) -> String {
+        let tools = self.tools.descriptions().join("\n");
+
+        format!(
+            "\
+You are Luma's internal planner.
+
+Choose ONLY the NEXT action. Do not explain your reasoning.
+Return exactly one valid JSON object and nothing else.
+
+AVAILABLE TOOLS:
+{tools}
+
+VALID OUTPUTS:
+
+{{\"type\":\"tool\",\"name\":\"TOOL_NAME\",\"input\":INPUT}}
+
+{{\"type\":\"multi\",\"actions\":[
+  {{\"type\":\"tool\",\"name\":\"TOOL_NAME\",\"input\":INPUT}}
+]}}
+
+{{\"type\":\"answer\"}}
+
+{{\"type\":\"plan\",\"content\":\"short implementation plan\"}}
+
+RULES:
+- Use exact registered tool names.
+- Never invent workspace facts.
+- Inspect before modifying an existing file.
+- Use patch_file for precise edits.
+- Use write_file for new files or full replacements.
+- Verify modifications when appropriate.
+- Use multi only for independent tool actions.
+- multi may contain ONLY tool actions.
+- Do not repeat an inspection whose result is already present.
+- Return answer for ordinary conversation.
+- Return plan only when enough information is known and approval is useful.
+- Keep plan content short.
+- Never output Markdown or reasoning.
+"
+        )
+    }
+
+    fn planner_observations(&self) -> String {
+        let mut output = String::new();
+
+        output.push_str("WORKSPACE STATE:\n");
+
+        if self.inspection.directory {
+            output.push_str("- directory: inspected\n");
+        } else {
+            output.push_str("- directory: unknown\n");
+        }
+
+        if self.inspection.config {
+            output.push_str("- config: inspected\n");
+        }
+
+        if self.inspection.readme {
+            output.push_str("- README: inspected\n");
+        }
+
+        if self.inspection.source {
+            output.push_str("- source: inspected\n");
+        }
+
+        if self.inspection.galaxy {
+            output.push_str("- GALAXY.md: inspected\n");
+        }
+
+        if self.language != ProgrammingLanguage::Unknown {
+            output.push_str(&format!("- language: {:?}\n", self.language));
+        }
+
+        if !self.inspected_files.is_empty() {
+            output.push_str("\nINSPECTED FILES:\n");
+
+            for file in &self.inspected_files {
+                output.push_str("- ");
+                output.push_str(file);
+                output.push('\n');
+            }
+        }
+
+        // Context stores the full observation strings, but the planner gets
+        // only the observation messages generated during this request.
+        let observations = self
+            .context
+            .messages()
+            .iter()
+            .filter(|message| message.role == MessageRole::Observation)
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>();
+
+        if !observations.is_empty() {
+            output.push_str("\nOBSERVATIONS:\n");
+
+            for observation in observations {
+                output.push_str(observation);
+                output.push_str("\n---\n");
+            }
+        }
+
+        output
     }
 
     // ========================================================================
@@ -616,22 +814,13 @@ or tool results.
             return false;
         }
 
-        // ------------------------------------------------------------------------
-        // Explicit filesystem references
-        // ------------------------------------------------------------------------
-
         if Self::contains_path_reference(&input) {
             return true;
         }
 
-        // ------------------------------------------------------------------------
-        // File operations
-        // ------------------------------------------------------------------------
-
         const FILE_ACTIONS: &[&str] = &[
             "read", "open", "edit", "modify", "change", "update", "rewrite", "refactor", "rename",
             "move", "delete", "remove", "create", "write", "patch", "fix", "replace", "add",
-            "remove",
         ];
 
         const FILE_TARGETS: &[&str] = &[
@@ -657,10 +846,6 @@ or tool results.
         if Self::contains_action_target(&input, FILE_ACTIONS, FILE_TARGETS) {
             return true;
         }
-
-        // ------------------------------------------------------------------------
-        // Workspace / repository inspection
-        // ------------------------------------------------------------------------
 
         const WORKSPACE_TERMS: &[&str] = &[
             "workspace",
@@ -689,10 +874,6 @@ or tool results.
         if Self::contains_any(&input, WORKSPACE_TERMS) {
             return true;
         }
-
-        // ------------------------------------------------------------------------
-        // Inspection verbs
-        // ------------------------------------------------------------------------
 
         const INSPECTION_PATTERNS: &[&str] = &[
             "show me the files",
@@ -733,13 +914,6 @@ or tool results.
             return true;
         }
 
-        // ------------------------------------------------------------------------
-        // Build / test / lint / debug requests
-        //
-        // These are workspace operations because the answer depends on actually
-        // running commands or inspecting the project.
-        // ------------------------------------------------------------------------
-
         const WORKSPACE_OPERATIONS: &[&str] = &[
             "build this",
             "build the project",
@@ -776,10 +950,6 @@ or tool results.
             return true;
         }
 
-        // ------------------------------------------------------------------------
-        // Explicit development-tool commands
-        // ------------------------------------------------------------------------
-
         const TOOL_COMMANDS: &[&str] = &[
             "cargo ",
             "cargo",
@@ -808,11 +978,7 @@ or tool results.
             "mvn ",
         ];
 
-        if Self::contains_any(&input, TOOL_COMMANDS) {
-            return true;
-        }
-
-        false
+        Self::contains_any(&input, TOOL_COMMANDS)
     }
 
     fn contains_any(input: &str, terms: &[&str]) -> bool {
@@ -831,17 +997,14 @@ or tool results.
     }
 
     fn contains_path_reference(input: &str) -> bool {
-        // Unix paths.
         if input.contains('/') {
             return true;
         }
 
-        // Home-relative paths.
         if input.contains("~/") {
             return true;
         }
 
-        // Common source/config extensions.
         const EXTENSIONS: &[&str] = &[
             ".rs", ".py", ".js", ".jsx", ".ts", ".tsx", ".go", ".java", ".kt", ".swift", ".c",
             ".h", ".cpp", ".hpp", ".cc", ".zig", ".lua", ".rb", ".php", ".cs", ".fs", ".fsx",
@@ -849,11 +1012,7 @@ or tool results.
             ".yml", ".xml", ".md", ".txt", ".lock",
         ];
 
-        if EXTENSIONS.iter().any(|ext| input.contains(ext)) {
-            return true;
-        }
-
-        false
+        EXTENSIONS.iter().any(|ext| input.contains(ext))
     }
 
     // ========================================================================
@@ -906,360 +1065,6 @@ or tool results.
     }
 
     // ========================================================================
-    // Planner prompt
-    // ========================================================================
-
-    fn planner_system_prompt(&self) -> String {
-        format!(
-            r#"
-You are Luma's Planner.
-
-You are NOT the assistant speaking to the user.
-You are an internal decision-making component of Luma.
-
-Your output is consumed directly by Luma.
-Therefore your response MUST be valid JSON.
-DO NOT output Markdown.
-DO NOT output explanations.
-DO NOT output conversational text.
-DO NOT identify yourself as Qwen, an AI assistant, or anything other than Luma's Planner.
-
-==================================================
-YOUR JOB
-==================================================
-
-Decide the NEXT action Luma should take to accomplish the user's request.
-
-You may return exactly ONE of these action types:
-
-- tool
-- multi
-- answer
-- plan
-
-The top-level JSON object MUST contain a "type" field.
-
-==================================================
-AVAILABLE TOOLS
-==================================================
-
-{}
-
-==================================================
-JSON SCHEMA
-==================================================
-
-------------------------------
-TOOL
-------------------------------
-
-Use this when exactly one tool should be executed.
-
-Required fields:
-
-{{
-  "type": "tool",
-  "name": "TOOL_NAME",
-  "input": TOOL_INPUT
-}}
-
-Example:
-
-{{
-  "type": "tool",
-  "name": "read_file",
-  "input": "src/main.rs"
-}}
-
-For tools requiring structured input, "input" MUST be a JSON object:
-
-{{
-  "type": "tool",
-  "name": "write_file",
-  "input": {{
-    "path": "/tmp/hello.txt",
-    "content": "Hello, Luma!"
-  }}
-}}
-
-IMPORTANT:
-
-"type" MUST be exactly "tool".
-
-"name" MUST be the tool name.
-
-"input" MUST contain the tool's actual input.
-
-NEVER return tool arguments directly at the top level.
-
-WRONG:
-
-{{
-  "content": "Hello, Luma!",
-  "path": "/tmp/hello.txt"
-}}
-
-WRONG:
-
-{{
-  "name": "write_file",
-  "path": "/tmp/hello.txt",
-  "content": "Hello, Luma!"
-}}
-
-CORRECT:
-
-{{
-  "type": "tool",
-  "name": "write_file",
-  "input": {{
-    "path": "/tmp/hello.txt",
-    "content": "Hello, Luma!"
-  }}
-}}
-
-------------------------------
-MULTI
-------------------------------
-
-Use this when multiple independent tool actions should be performed.
-
-{{
-  "type": "multi",
-  "actions": [
-    {{
-      "type": "tool",
-      "name": "read_file",
-      "input": "Cargo.toml"
-    }},
-    {{
-      "type": "tool",
-      "name": "read_file",
-      "input": "src/main.rs"
-    }}
-  ]
-}}
-
-Every item in "actions" MUST itself be a valid planner action.
-
-Do not put raw tool arguments inside "actions".
-
-------------------------------
-ANSWER
-------------------------------
-
-Use this when the user's request can be answered without workspace
-inspection or tool execution.
-
-{{
-  "type": "answer",
-  "content": "The answer..."
-}}
-
-For example, if the user says:
-
-"Hello"
-
-return something like:
-
-{{
-  "type": "answer",
-  "content": "Hello!"
-}}
-
-Do NOT use a tool for ordinary conversation.
-
-------------------------------
-PLAN
-------------------------------
-
-Use this when you have explored enough of the workspace and should
-propose an implementation plan before making modifications.
-
-{{
-  "type": "plan",
-  "content": "1. Read the relevant file. 2. Modify it. 3. Run tests."
-}}
-
-A plan is NOT a tool action.
-
-==================================================
-WORKSPACE RULES
-==================================================
-
-The filesystem is unknown unless a tool has observed it.
-
-Never invent:
-
-- files
-- folders
-- symbols
-- project structure
-- configuration
-- dependencies
-- command output
-- source code
-- test results
-
-If information is missing, inspect it.
-
-Use previous tool observations.
-
-Do not repeat inspections that already provided the required information.
-
-==================================================
-MODIFICATION WORKFLOW
-==================================================
-
-For an existing file:
-
-1. Read the file first.
-2. Understand the relevant code.
-3. Modify the file.
-4. Verify the modification.
-
-Never modify an existing file that has not been observed.
-
-Never invent old file contents.
-
-Prefer:
-
-read_file
-→ patch_file
-→ run_command
-
-Use write_file primarily when:
-
-- creating a new file
-- replacing an entire file is genuinely appropriate
-
-==================================================
-TOOL SELECTION
-==================================================
-
-list_directory
-    Understand directory structure.
-
-read_file
-    Read actual file contents.
-
-search_files
-    Locate files, symbols, or text.
-
-patch_file
-    Make precise modifications to existing files.
-
-write_file
-    Create a new file or replace a complete file.
-
-run_command
-    Build, test, format, lint, or otherwise verify the project.
-
-==================================================
-EFFICIENCY
-==================================================
-
-Choose the smallest number of actions necessary.
-
-Do not repeatedly list the same directory.
-
-Do not reread unchanged files without a reason.
-
-Do not use write_file when patch_file is sufficient.
-
-Do not run commands that cannot contribute to the task.
-
-Prefer independent reads in a "multi" action.
-
-==================================================
-DECISION RULES
-==================================================
-
-If the user asks a normal conversational question:
-
-→ answer
-
-If the user asks about the workspace but required information is unknown:
-
-→ inspect
-
-If the user asks to modify an existing file:
-
-→ read it first
-
-If the user asks to create a new file:
-
-→ use write_file
-
-If the user asks to modify an existing file after it has been inspected:
-
-→ use patch_file
-
-If code was modified:
-
-→ verify with run_command when appropriate
-
-If several independent files must be inspected:
-
-→ use multi
-
-If enough information has been gathered and a modification requires
-explicit approval:
-
-→ return plan
-
-==================================================
-CRITICAL OUTPUT RULE
-==================================================
-
-Your ENTIRE response MUST be exactly ONE valid JSON object.
-
-The object MUST contain "type".
-
-Valid top-level forms are ONLY:
-
-{{
-  "type": "tool",
-  "name": "...",
-  "input": ...
-}}
-
-or:
-
-{{
-  "type": "multi",
-  "actions": [...]
-}}
-
-or:
-
-{{
-  "type": "answer",
-  "content": "..."
-}}
-
-or:
-
-{{
-  "type": "plan",
-  "content": "..."
-}}
-
-NEVER omit "type".
-
-NEVER return raw tool arguments.
-
-NEVER wrap JSON in Markdown code fences.
-
-NEVER add text before or after the JSON.
-
-Return JSON only.
-"#,
-            self.tools.descriptions().join("\n")
-        )
-    }
-
-    // ========================================================================
     // Workspace initialization
     // ========================================================================
 
@@ -1276,33 +1081,19 @@ Return JSON only.
         let structure = self.directory_structure();
 
         let galaxy = format!(
-            "\
-# GALAXY.md
-
-Generated by Luma.
-
-## Project
-
-{}
-
-## Language
-
-{}
-
-## Important Files
-
-{}
-
-## Structure
-
-{}
-
-## Notes
-
-This file is Luma's workspace memory.
-
-Update it when major architecture changes happen.
-",
+            "# GALAXY.md\n\n\
+             Generated by Luma.\n\n\
+             ## Project\n\n\
+             {}\n\n\
+             ## Language\n\n\
+             {}\n\n\
+             ## Important Files\n\n\
+             {}\n\n\
+             ## Structure\n\n\
+             {}\n\n\
+             ## Notes\n\n\
+             This file is Luma's workspace memory.\n\n\
+             Update it when major architecture changes happen.\n",
             project,
             language,
             if important_files.is_empty() {
@@ -1351,7 +1142,6 @@ Update it when major architecture changes happen.
                     };
 
                     project = name.replace('"', "").trim().to_owned();
-
                     break;
                 }
             }

@@ -13,11 +13,8 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum PlanAction {
     Tool { name: String, input: String },
-
     Answer,
-
     Multi { actions: Vec<PlanAction> },
-
     Plan { content: String },
 }
 
@@ -44,11 +41,7 @@ pub trait PlannerTrait: Send + Sync {
 
 pub struct Planner<M> {
     model: M,
-
-    // Actual registered tool names.
     tools: Vec<String>,
-
-    // Human-readable descriptions used in the prompt.
     descriptions: Vec<String>,
 }
 
@@ -74,10 +67,6 @@ where
         }
     }
 
-    // ========================================================================
-    // System prompt
-    // ========================================================================
-
     fn system_prompt(&self) -> String {
         let tools = if self.descriptions.is_empty() {
             "No tools are currently available.".to_owned()
@@ -86,34 +75,22 @@ where
         };
 
         format!(
-            r#"
-You are Luma's Planner.
+            r#"You are Luma's internal planner.
 
-You are the decision-making system of a local-first AI coding agent.
+Your job is to decide the NEXT action required to satisfy the user's request.
 
-Your job is to decide the NEXT action required to accomplish the user's
-request.
+Return EXACTLY ONE valid JSON object.
+Never use Markdown.
+Never explain your reasoning.
+Never output conversational text.
 
-You MUST return valid JSON only.
-
-==================================================
-AVAILABLE TOOLS
-==================================================
-
+AVAILABLE TOOLS:
 {tools}
 
-IMPORTANT:
-The exact tool names are:
-
+EXACT TOOL NAMES:
 {tool_names}
 
-Use these names exactly.
-
-==================================================
-ACTION FORMAT
-==================================================
-
-Tool action:
+A tool action:
 
 {{
   "type": "tool",
@@ -121,7 +98,7 @@ Tool action:
   "input": "tool input"
 }}
 
-For tools requiring structured input, input MUST be a JSON object:
+Structured tool input:
 
 {{
   "type": "tool",
@@ -132,7 +109,7 @@ For tools requiring structured input, input MUST be a JSON object:
   }}
 }}
 
-Multiple tool actions:
+Multiple independent tool actions:
 
 {{
   "type": "multi",
@@ -140,159 +117,92 @@ Multiple tool actions:
     {{
       "type": "tool",
       "name": "read_file",
-      "input": "README.md"
+      "input": "Cargo.toml"
     }},
     {{
       "type": "tool",
       "name": "read_file",
-      "input": "Cargo.toml"
+      "input": "src/main.rs"
     }}
   ]
 }}
 
-IMPORTANT:
+Only tool actions may appear inside "multi".
+Nested multi actions are forbidden.
 
-"multi" may contain ONLY tool actions.
-
-Do not put another "multi", "answer", or "plan" inside "multi".
-
-Concise implementation plan:
+A plan:
 
 {{
   "type": "plan",
-  "content": "1. Read the relevant files. 2. Apply the change. 3. Verify."
+  "content": "1. Inspect the relevant files. 2. Modify them. 3. Verify."
 }}
 
-Use a plan only after exploring enough to know what to do.
+Use "plan" only when enough information has already been gathered to propose a concrete implementation plan requiring approval.
 
-Final answer:
+An answer:
 
 {{
-  "type": "answer",
-  "content": "The answer..."
+  "type": "answer"
 }}
 
-==================================================
-WORKSPACE RULES
-==================================================
+Use "answer" when no workspace action is necessary.
 
-The filesystem is unknown unless a tool has observed it.
+WORKSPACE RULES:
 
-Never invent:
+- Never invent files, directories, symbols, dependencies, source code, command output, or test results.
+- If information is missing, inspect the workspace.
+- Use previous observations.
+- Do not repeat an inspection unnecessarily.
+- Existing files must be read before modification.
+- Prefer patch_file for existing files.
+- Use write_file for new files or complete replacements.
+- Verify modifications with run_command when appropriate.
 
-- files
-- folders
-- symbols
-- project structure
-- configuration
-- dependencies
-- command output
-- source code
-- test results
+DECISION RULES:
 
-If information is missing, inspect it.
+User asks a normal conversational question:
+→ answer
 
-Use previous tool observations.
+Required workspace information is missing:
+→ inspect
 
-Do not repeat inspections that have already provided the
-information you need.
+Existing file must be changed and has not been inspected:
+→ read_file
 
-==================================================
-MODIFICATION RULES
-==================================================
+Existing file has already been inspected and must be changed:
+→ patch_file
 
-For an existing file:
+New file is required:
+→ write_file
 
-1. Read it first.
-2. Understand the relevant code.
-3. Modify it.
-4. Verify the modification.
+Several independent inspections are required:
+→ multi
 
-Never invent the old contents of a file.
+Implementation needs explicit approval:
+→ plan
 
-Use patch_file for precise modifications.
+After an approved plan:
+→ perform the required tool actions
 
-Use write_file primarily for new files or complete replacements.
+EFFICIENCY:
 
-==================================================
-TOOL SELECTION
-==================================================
+Choose the smallest useful action.
+Do not repeat observations.
+Do not perform unnecessary commands.
+Prefer independent reads in multi.
 
-list_directory
-    Understand directory structure.
+VALID TOP-LEVEL TYPES:
 
-read_file
-    Read actual file contents.
+tool
+multi
+answer
+plan
 
-search_files
-    Locate files, symbols, or text.
-
-patch_file
-    Make precise changes to existing files.
-
-write_file
-    Create a new file or replace a complete file.
-
-run_command
-    Build, test, format, lint, or otherwise verify the project.
-
-==================================================
-EFFICIENCY
-==================================================
-
-Choose the smallest number of actions necessary.
-
-Do not repeatedly list the same directory.
-
-Do not reread unchanged files without a reason.
-
-Do not use write_file when patch_file is sufficient.
-
-Do not run commands that cannot contribute to the task.
-
-==================================================
-DECISION PROCESS
-==================================================
-
-Think about the user's request and the observations already available.
-
-If required information is missing:
-inspect it.
-
-If the task is purely conversational:
-answer it.
-
-If implementation requires multiple independent inspections:
-use "multi".
-
-If the implementation approach is known and should be presented
-for approval:
-return "plan".
-
-After a plan is approved, continue with tool actions.
-
-When modifying code:
-
-inspect
-→ modify
-→ verify
-
-Never guess when the workspace can provide the answer.
-
-==================================================
-FINAL RULE
-==================================================
-
-Return JSON only.
-"#,
+Return JSON only."#,
             tools = tools,
             tool_names = self.tools.join(", "),
         )
     }
-
-    // ========================================================================
-    // Planning
-    // ========================================================================
 
     pub async fn create_plan(
         &self,
@@ -301,6 +211,8 @@ Return JSON only.
     ) -> Result<PlanAction> {
         let mut request_messages = Vec::with_capacity(messages.len() + 1);
 
+        // The planner owns its system prompt.
+        // Agent must NOT add another planner system prompt.
         request_messages.push(Message {
             role: MessageRole::System,
             content: self.system_prompt(),
@@ -308,13 +220,18 @@ Return JSON only.
 
         request_messages.extend(messages);
 
-        let request = CompletionRequest {
-            messages: request_messages,
-        };
+        tracing::debug!(
+            messages = request_messages.len(),
+            "Planner requesting next action"
+        );
 
-        tracing::debug!("Planner requesting next action");
-
-        let mut stream = match self.model.stream(request).await {
+        let mut stream = match self
+            .model
+            .stream(CompletionRequest {
+                messages: request_messages,
+            })
+            .await
+        {
             Ok(stream) => stream,
             Err(error) => {
                 tracing::error!(
@@ -344,6 +261,8 @@ Return JSON only.
             }
         }
 
+        tracing::debug!(response_bytes = response.len(), "Planner response received");
+
         let json = extract_json(&response)?;
 
         let planner_response: PlannerResponse =
@@ -359,10 +278,6 @@ Return JSON only.
 
         Ok(convert_response(planner_response))
     }
-
-    // ========================================================================
-    // Validation
-    // ========================================================================
 
     fn validate_response(&self, response: &PlannerResponse) -> Result<()> {
         match response {
@@ -431,10 +346,6 @@ Return JSON only.
     }
 }
 
-// ============================================================================
-// Response conversion
-// ============================================================================
-
 fn convert_response(response: PlannerResponse) -> PlanAction {
     match response {
         PlannerResponse::Tool { name, input } => PlanAction::Tool {
@@ -452,20 +363,12 @@ fn convert_response(response: PlannerResponse) -> PlanAction {
     }
 }
 
-// ============================================================================
-// Input serialization
-// ============================================================================
-
 fn serialize_input(input: Value) -> String {
     match input {
         Value::String(value) => value,
         value => value.to_string(),
     }
 }
-
-// ============================================================================
-// JSON extraction
-// ============================================================================
 
 fn extract_json(text: &str) -> Result<Value> {
     let clean = text
@@ -479,12 +382,10 @@ fn extract_json(text: &str) -> Result<Value> {
         return Err(anyhow!("Planner returned an empty response"));
     }
 
-    // Try the entire response first.
     if let Ok(value) = serde_json::from_str::<Value>(clean) {
         return Ok(value);
     }
 
-    // Fall back to the first JSON object.
     let Some(start) = clean.find('{') else {
         return Err(anyhow!("Planner returned invalid JSON:\n{}", clean));
     };

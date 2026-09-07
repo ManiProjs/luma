@@ -165,6 +165,9 @@ Examples:
 
 Model quality matters, but Luma's tool loop is designed to help smaller models stay grounded by giving them access to real workspace observations.
 
+> [!NOTE]
+> Although Luma can work with small models, it's always better to use bigger models. The bigger the model gets, the better the result will be.
+
 ---
 
 ## ⚙️ Configuration

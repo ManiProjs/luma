@@ -246,10 +246,6 @@ impl App {
         }
     }
 
-    pub fn toggle_more_mode(&mut self) {
-        self.more_mode = !self.more_mode;
-    }
-
     // ─────────────────────────────────────────────
     // Status
     // ─────────────────────────────────────────────
