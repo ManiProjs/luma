@@ -4,6 +4,7 @@ mod config;
 mod context;
 mod event;
 mod history;
+mod logging;
 mod model;
 mod planner;
 mod router;
@@ -61,6 +62,11 @@ fn confirm_setup() -> anyhow::Result<bool> {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let log_path = logging::init();
+
+    tracing::info!("Luma starting");
+    tracing::debug!(path = %log_path?.display(), "Logging initialized");
+
     let args = Args::parse();
 
     if !config::exists() && !matches!(args.command, Some(Commands::Setup)) {

@@ -312,7 +312,19 @@ Return JSON only.
             messages: request_messages,
         };
 
-        let mut stream = self.model.stream(request).await?;
+        tracing::debug!("Planner requesting next action");
+
+        let mut stream = match self.model.stream(request).await {
+            Ok(stream) => stream,
+            Err(error) => {
+                tracing::error!(
+                    error = %error,
+                    "Planner request failed"
+                );
+
+                return Err(error);
+            }
+        };
 
         let mut response = String::new();
 
