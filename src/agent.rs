@@ -48,7 +48,7 @@ struct InspectionState {
 // ============================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PlanningState {
+pub enum PlanningState {
     Exploring,
     Implementing,
 }
@@ -328,13 +328,13 @@ or test results.
             // Handle the most obvious first inspection locally. This avoids
             // spending a model round deciding to perform the same trivial
             // directory inspection on every new workspace request.
-            if step == 0 {
-                if let Some((name, input)) = self.deterministic_first_action() {
-                    self.execute_tool(&name, &input, tx, cancel, confirmation_rx)
-                        .await?;
+            if step == 0
+                && let Some((name, input)) = self.deterministic_first_action()
+            {
+                self.execute_tool(&name, &input, tx, cancel, confirmation_rx)
+                    .await?;
 
-                    continue;
-                }
+                continue;
             }
 
             let plan = match self.create_plan(cancel).await {
@@ -438,10 +438,11 @@ or test results.
 
         // A request containing an explicit source/config path is also
         // unambiguous when the path is clearly a single file.
-        if let Some(path) = Self::extract_explicit_file_path(&input) {
-            if !path.is_empty() && !path.ends_with('/') {
-                return Some(("read_file".into(), path));
-            }
+        if let Some(path) = Self::extract_explicit_file_path(&input)
+            && !path.is_empty()
+            && !path.ends_with('/')
+        {
+            return Some(("read_file".into(), path));
         }
 
         None
@@ -691,10 +692,18 @@ RULES:
 
         let started = Instant::now();
 
-        let result = self
-            .tools
-            .execute(name, input.trim())
-            .map_err(|error| anyhow!("{} failed: {}", name, error))?;
+        let result = match self.tools.execute(name, input.trim()) {
+            Ok(result) => result,
+            Err(error) => {
+                let message = format!("{} failed: {}", name, error);
+                tx.send(AgentEvent::Error(message.clone())).await?;
+                self.context.add(
+                    MessageRole::Observation,
+                    format!("Observation from `{}`:\n{}", name, message),
+                );
+                return Ok(());
+            }
+        };
 
         if cancel.is_cancelled() {
             return Ok(());

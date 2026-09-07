@@ -167,10 +167,10 @@ async fn fetch_models(base_url: &str, api_key: Option<&str>) -> Result<Vec<Strin
 
     let mut request = client.get(&url);
 
-    if let Some(key) = api_key {
-        if !key.trim().is_empty() {
-            request = request.bearer_auth(key);
-        }
+    if let Some(key) = api_key
+        && !key.trim().is_empty()
+    {
+        request = request.bearer_auth(key);
     }
 
     let response = request
@@ -223,10 +223,10 @@ async fn test_openai_compatible_endpoint(
 
     let mut request = client.post(&endpoint).json(&body);
 
-    if let Some(key) = api_key {
-        if !key.trim().is_empty() {
-            request = request.bearer_auth(key);
-        }
+    if let Some(key) = api_key
+        && !key.trim().is_empty()
+    {
+        request = request.bearer_auth(key);
     }
 
     let response = request

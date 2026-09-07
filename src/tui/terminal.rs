@@ -142,18 +142,17 @@ async fn run_loop(
             }
 
             Event::Key(key) => {
-                handle_key(
-                    &mut app,
-                    key.code,
-                    key.modifiers,
+                let mut key_ctx = KeyContext {
+                    app: &mut app,
                     input_tx,
                     cancel,
                     confirmation_tx,
                     info,
-                    &mut confirm_exit,
-                    &mut last_ctrl_c,
-                )
-                .await?
+                    confirm_exit: &mut confirm_exit,
+                    last_ctrl_c: &mut last_ctrl_c,
+                };
+
+                handle_key(&mut key_ctx, key.code, key.modifiers).await?
             }
 
             _ => false,
@@ -269,31 +268,41 @@ fn handle_mouse(app: &mut App, kind: MouseEventKind) {
 // Keyboard
 // ============================================================
 
+struct KeyContext<'a> {
+    app: &'a mut App,
+    input_tx: &'a Sender<String>,
+    cancel: &'a CancellationToken,
+    confirmation_tx: &'a Sender<Confirmation>,
+    info: &'a mut LumaInfo,
+    confirm_exit: &'a mut bool,
+    last_ctrl_c: &'a mut Instant,
+}
+
 async fn handle_key(
-    app: &mut App,
+    ctx: &mut KeyContext<'_>,
     code: KeyCode,
     modifiers: KeyModifiers,
-    input_tx: &Sender<String>,
-    cancel: &CancellationToken,
-    confirmation_tx: &Sender<Confirmation>,
-    info: &mut LumaInfo,
-    confirm_exit: &mut bool,
-    last_ctrl_c: &mut Instant,
 ) -> Result<bool> {
     // --------------------------------------------------------
     // Ctrl+C
     // --------------------------------------------------------
 
     if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('c') {
-        return handle_ctrl_c(app, cancel, info, confirm_exit, last_ctrl_c);
+        return handle_ctrl_c(
+            ctx.app,
+            ctx.cancel,
+            ctx.info,
+            ctx.confirm_exit,
+            ctx.last_ctrl_c,
+        );
     }
 
     // --------------------------------------------------------
     // Confirmation mode
     // --------------------------------------------------------
 
-    if app.confirmation_pending() {
-        return handle_confirmation(app, code, confirmation_tx, info).await;
+    if ctx.app.confirmation_pending() {
+        return handle_confirmation(ctx.app, code, ctx.confirmation_tx, ctx.info).await;
     }
 
     // --------------------------------------------------------
@@ -302,65 +311,65 @@ async fn handle_key(
 
     match code {
         KeyCode::Char(c) => {
-            app.input.insert(c);
-            app.history_index = None;
-            app.update_suggestions();
+            ctx.app.input.insert(c);
+            ctx.app.history_index = None;
+            ctx.app.update_suggestions();
         }
 
         KeyCode::Backspace => {
-            app.input.backspace();
-            app.history_index = None;
-            app.update_suggestions();
+            ctx.app.input.backspace();
+            ctx.app.history_index = None;
+            ctx.app.update_suggestions();
         }
 
         KeyCode::Tab => {
-            if !app.suggestions.is_empty() {
-                app.accept_suggestion();
+            if !ctx.app.suggestions.is_empty() {
+                ctx.app.accept_suggestion();
             }
         }
 
         KeyCode::Up => {
-            if app.suggestions.is_empty() {
-                app.history_up();
+            if ctx.app.suggestions.is_empty() {
+                ctx.app.history_up();
             } else {
-                app.suggestion_up();
+                ctx.app.suggestion_up();
             }
         }
 
         KeyCode::Down => {
-            if app.suggestions.is_empty() {
-                app.history_down();
+            if ctx.app.suggestions.is_empty() {
+                ctx.app.history_down();
             } else {
-                app.suggestion_down();
+                ctx.app.suggestion_down();
             }
         }
 
         KeyCode::Enter => {
-            return handle_enter(app, modifiers, input_tx, info).await;
+            return handle_enter(ctx.app, modifiers, ctx.input_tx, ctx.info).await;
         }
 
         KeyCode::Left => {
-            move_cursor_left(app);
+            move_cursor_left(ctx.app);
         }
 
         KeyCode::Right => {
-            move_cursor_right(app);
+            move_cursor_right(ctx.app);
         }
 
         KeyCode::Home => {
-            app.input.cursor_x = 0;
+            ctx.app.input.cursor_x = 0;
         }
 
         KeyCode::End => {
-            move_cursor_end(app);
+            move_cursor_end(ctx.app);
         }
 
         KeyCode::PageUp => {
-            app.scroll_up();
+            ctx.app.scroll_up();
         }
 
         KeyCode::PageDown => {
-            app.scroll_down();
+            ctx.app.scroll_down();
         }
 
         _ => {}

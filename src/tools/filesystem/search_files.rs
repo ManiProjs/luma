@@ -149,4 +149,71 @@ mod tests {
     fn rejects_empty_pattern() {
         assert!(SearchFiles.execute(r#"{"pattern":"  "}"#).is_err());
     }
+
+    #[test]
+    fn finds_pattern_in_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("target_file.txt");
+        std::fs::write(&file_path, "needle in a haystack").unwrap();
+
+        let input = serde_json::json!({
+            "pattern": "needle",
+            "path": dir.path().to_str().unwrap()
+        })
+        .to_string();
+
+        let out = SearchFiles.execute(&input).unwrap();
+        assert!(out.contains("needle in a haystack"));
+        assert!(out.contains("target_file.txt"));
+    }
+
+    #[test]
+    fn respects_glob_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("match.rs"), "fn main() {}").unwrap();
+        std::fs::write(dir.path().join("match.txt"), "fn main() {}").unwrap();
+
+        let input = serde_json::json!({
+            "pattern": "fn main",
+            "path": dir.path().to_str().unwrap(),
+            "glob": "*.rs"
+        })
+        .to_string();
+
+        let out = SearchFiles.execute(&input).unwrap();
+        assert!(out.contains("match.rs"));
+        assert!(!out.contains("match.txt"));
+    }
+
+    #[test]
+    fn reports_no_matches() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "some content").unwrap();
+
+        let input = serde_json::json!({
+            "pattern": "definitely_not_present",
+            "path": dir.path().to_str().unwrap()
+        })
+        .to_string();
+
+        let out = SearchFiles.execute(&input).unwrap();
+        assert!(out.contains("No matches found"));
+    }
+
+    #[test]
+    fn caps_output_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        // Write 100 lines that all match the pattern.
+        let content: String = (0..100).map(|i| format!("match line {}\n", i)).collect();
+        std::fs::write(dir.path().join("big.txt"), content).unwrap();
+
+        let input = serde_json::json!({
+            "pattern": "match line",
+            "path": dir.path().to_str().unwrap()
+        })
+        .to_string();
+
+        let out = SearchFiles.execute(&input).unwrap();
+        assert!(out.contains("search capped at 50 matching lines"));
+    }
 }

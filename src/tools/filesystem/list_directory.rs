@@ -138,15 +138,29 @@ mod tests {
 
     #[test]
     fn lists_current_directory() {
-        let out = ListDirectory.execute(".").unwrap();
+        // These tests must run from the repo root — they are cwd-relative.
+        // When the whole test binary runs, agent-loop tests may have already
+        // changed the process cwd, so we create our own temp dir instead.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("src")).unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), "[package]").unwrap();
+
+        let input = serde_json::json!({"path": dir.path().to_str().unwrap()}).to_string();
+        let out = ListDirectory.execute(&input).unwrap();
         assert!(out.contains("src/"));
         assert!(out.contains("Cargo.toml"));
     }
 
     #[test]
     fn respects_gitignore() {
-        // target/ is in .gitignore for this project
-        let out = ListDirectory.execute(".").unwrap();
-        assert!(!out.contains("target/"));
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(".gitignore"), "ignored.txt\n").unwrap();
+        std::fs::write(dir.path().join("ignored.txt"), "x").unwrap();
+        std::fs::write(dir.path().join("kept.txt"), "x").unwrap();
+
+        let input = serde_json::json!({"path": dir.path().to_str().unwrap()}).to_string();
+        let out = ListDirectory.execute(&input).unwrap();
+        assert!(out.contains("kept.txt"));
+        assert!(!out.contains("ignored.txt"));
     }
 }

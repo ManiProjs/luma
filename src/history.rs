@@ -32,15 +32,24 @@ impl History {
     }
 
     pub fn save(&self) -> Result<()> {
-        let path = Self::path();
-
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+        // In tests, never write to the user's real history file.
+        #[cfg(test)]
+        {
+            return Ok(());
         }
 
-        let data = serde_json::to_string_pretty(self)?;
-        fs::write(path, data)?;
+        #[cfg(not(test))]
+        {
+            let path = Self::path();
 
-        Ok(())
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+
+            let data = serde_json::to_string_pretty(self)?;
+            fs::write(path, data)?;
+
+            Ok(())
+        }
     }
 }

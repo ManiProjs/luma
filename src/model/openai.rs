@@ -158,10 +158,10 @@ impl Model for OpenAICompatibleModel {
 
         let mut request = self.client.post(&self.endpoint).json(&body);
 
-        if let Some(key) = &self.api_key {
-            if !key.trim().is_empty() {
-                request = request.bearer_auth(key);
-            }
+        if let Some(key) = &self.api_key
+            && !key.trim().is_empty()
+        {
+            request = request.bearer_auth(key);
         }
 
         let response = request

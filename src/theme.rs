@@ -7,8 +7,8 @@ pub struct LumaTheme {
     pub accent: Color,
 }
 
-impl LumaTheme {
-    pub fn default() -> Self {
+impl Default for LumaTheme {
+    fn default() -> Self {
         Self {
             star: Color::Yellow,
             glow: Color::LightYellow,
@@ -16,7 +16,9 @@ impl LumaTheme {
             accent: Color::Cyan,
         }
     }
+}
 
+impl LumaTheme {
     pub fn code_style(&self) -> Style {
         Style::default().fg(self.glow)
     }

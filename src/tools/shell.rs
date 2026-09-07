@@ -58,7 +58,7 @@ impl Tool for RunCommand {
     }
 }
 
-async fn run_process(command: String) -> String {
+pub(crate) async fn run_process(command: String) -> String {
     tokio::process::Command::new("sh")
         .arg("-c")
         .arg(&command)
@@ -81,7 +81,12 @@ async fn run_process(command: String) -> String {
         })
 }
 
-fn format_output(command: &str, stdout: &[u8], stderr: &[u8], exit_code: Option<i32>) -> String {
+pub(crate) fn format_output(
+    command: &str,
+    stdout: &[u8],
+    stderr: &[u8],
+    exit_code: Option<i32>,
+) -> String {
     let stdout_text = truncate_output(stdout);
     let stderr_text = truncate_output(stderr);
 
@@ -102,7 +107,7 @@ fn format_output(command: &str, stdout: &[u8], stderr: &[u8], exit_code: Option<
     result
 }
 
-fn truncate_output(bytes: &[u8]) -> String {
+pub(crate) fn truncate_output(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
 
     if text.len() <= MAX_OUTPUT_BYTES {
@@ -133,6 +138,49 @@ fn truncate_output(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_run_process_success() {
+        let out = run_process("echo hello".to_string()).await;
+        assert!(out.contains("exit code: 0 (success)"));
+        assert!(out.contains("hello"));
+    }
+
+    #[tokio::test]
+    async fn test_run_process_failure() {
+        let out = run_process("echo 'boom' >&2; exit 3".to_string()).await;
+        assert!(out.contains("exit code: 3 (FAILED"));
+        assert!(out.contains("boom"));
+    }
+
+    #[test]
+    fn test_format_output_success() {
+        let out = format_output("cmd", b"hello", b"", Some(0));
+        assert!(out.contains("exit code: 0 (success)"));
+        assert!(out.contains("stdout:\nhello"));
+        assert!(out.contains("stderr:\n"));
+    }
+
+    #[test]
+    fn test_format_output_failure() {
+        let out = format_output("cmd", b"", b"error", Some(1));
+        assert!(out.contains("exit code: 1 (FAILED"));
+        assert!(out.contains("stdout:\n"));
+        assert!(out.contains("stderr:\nerror"));
+    }
+
+    #[test]
+    fn test_format_output_timeout() {
+        let out = format_output("cmd", b"", b"", None);
+        assert!(out.contains("exit code: unknown (process terminated by signal)"));
+    }
+
+    #[test]
+    fn test_truncate_output() {
+        let large_input = "a".repeat(30_000);
+        let out = truncate_output(large_input.as_bytes());
+        assert!(out.contains("[output truncated: 20000 of 30000 bytes shown]"));
+    }
 
     #[test]
     fn reports_success() {

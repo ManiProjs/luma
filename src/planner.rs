@@ -20,7 +20,7 @@ pub enum PlanAction {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
-enum PlannerResponse {
+pub enum PlannerResponse {
     #[serde(rename = "tool")]
     Tool { name: String, input: Value },
 
@@ -346,7 +346,7 @@ Return JSON only."#,
     }
 }
 
-fn convert_response(response: PlannerResponse) -> PlanAction {
+pub fn convert_response(response: PlannerResponse) -> PlanAction {
     match response {
         PlannerResponse::Tool { name, input } => PlanAction::Tool {
             name,
@@ -407,4 +407,208 @@ fn extract_json(text: &str) -> Result<Value> {
             clean
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ModelStream;
+
+    // ── extract_json ────────────────────────────────────────────────────────
+
+    #[test]
+    fn extracts_clean_tool_json() {
+        let value =
+            extract_json(r#"{"type":"tool","name":"read_file","input":"src/main.rs"}"#).unwrap();
+        assert_eq!(value["type"], "tool");
+        assert_eq!(value["name"], "read_file");
+    }
+
+    #[test]
+    fn extracts_answer_json() {
+        let value = extract_json(r#"{"type":"answer"}"#).unwrap();
+        assert_eq!(value["type"], "answer");
+    }
+
+    #[test]
+    fn strips_markdown_code_fence() {
+        let value = extract_json("```json\n{\"type\":\"answer\"}\n```").unwrap();
+        assert_eq!(value["type"], "answer");
+    }
+
+    #[test]
+    fn extracts_json_surrounded_by_text() {
+        let value = extract_json(
+            "Here is my decision:\n{\"type\":\"tool\",\"name\":\"read_file\",\"input\":\"a.rs\"}\nDone.",
+        )
+        .unwrap();
+        assert_eq!(value["name"], "read_file");
+    }
+
+    #[test]
+    fn rejects_empty_response() {
+        assert!(extract_json("   ").is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_json() {
+        assert!(extract_json("{not valid json at all").is_err());
+    }
+
+    #[test]
+    fn rejects_text_without_json() {
+        assert!(extract_json("I have no idea what to do").is_err());
+    }
+
+    // ── validate_response ───────────────────────────────────────────────────
+
+    fn planner_with_tools(names: &[&str]) -> Planner<MockModel> {
+        let mut registry = ToolRegistry::new();
+        for name in names {
+            registry.register(DummyTool {
+                name: name.to_string(),
+            });
+        }
+        Planner::new(MockModel, &registry)
+    }
+
+    struct MockModel;
+
+    #[async_trait::async_trait]
+    impl Model for MockModel {
+        async fn stream(&self, _request: CompletionRequest) -> Result<ModelStream> {
+            unimplemented!("not needed for validation tests")
+        }
+    }
+
+    struct DummyTool {
+        name: String,
+    }
+
+    impl crate::tools::Tool for DummyTool {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn description(&self) -> &str {
+            "dummy"
+        }
+        fn execute(&self, _input: &str) -> Result<String> {
+            Ok(String::new())
+        }
+    }
+
+    #[test]
+    fn validates_known_tool() {
+        let planner = planner_with_tools(&["read_file", "write_file"]);
+        let response = PlannerResponse::Tool {
+            name: "read_file".into(),
+            input: Value::String("src/main.rs".into()),
+        };
+        assert!(planner.validate_response(&response).is_ok());
+    }
+
+    #[test]
+    fn rejects_unknown_tool() {
+        let planner = planner_with_tools(&["read_file"]);
+        let response = PlannerResponse::Tool {
+            name: "delete_everything".into(),
+            input: Value::String(".".into()),
+        };
+        let error = planner.validate_response(&response).unwrap_err();
+        assert!(error.to_string().contains("unknown tool"));
+    }
+
+    #[test]
+    fn rejects_null_tool_input() {
+        let planner = planner_with_tools(&["read_file"]);
+        let response = PlannerResponse::Tool {
+            name: "read_file".into(),
+            input: Value::Null,
+        };
+        assert!(planner.validate_response(&response).is_err());
+    }
+
+    #[test]
+    fn rejects_nested_multi() {
+        let planner = planner_with_tools(&["read_file"]);
+        let response = PlannerResponse::Multi {
+            actions: vec![PlannerResponse::Multi {
+                actions: vec![PlannerResponse::Tool {
+                    name: "read_file".into(),
+                    input: Value::String("a".into()),
+                }],
+            }],
+        };
+        let error = planner.validate_response(&response).unwrap_err();
+        assert!(error.to_string().contains("Nested multi"));
+    }
+
+    #[test]
+    fn rejects_answer_inside_multi() {
+        let planner = planner_with_tools(&["read_file"]);
+        let response = PlannerResponse::Multi {
+            actions: vec![PlannerResponse::Answer],
+        };
+        assert!(planner.validate_response(&response).is_err());
+    }
+
+    #[test]
+    fn rejects_empty_plan() {
+        let planner = planner_with_tools(&[]);
+        let response = PlannerResponse::Plan {
+            content: "   ".into(),
+        };
+        assert!(planner.validate_response(&response).is_err());
+    }
+
+    #[test]
+    fn accepts_valid_multi() {
+        let planner = planner_with_tools(&["read_file", "search_files"]);
+        let response = PlannerResponse::Multi {
+            actions: vec![
+                PlannerResponse::Tool {
+                    name: "read_file".into(),
+                    input: Value::String("a.rs".into()),
+                },
+                PlannerResponse::Tool {
+                    name: "search_files".into(),
+                    input: Value::String("pattern".into()),
+                },
+            ],
+        };
+        assert!(planner.validate_response(&response).is_ok());
+    }
+
+    // ── full response parsing (JSON → validated PlanAction) ─────────────────
+
+    #[test]
+    fn parses_full_tool_response() {
+        let json =
+            extract_json(r#"{"type":"tool","name":"read_file","input":"src/lib.rs"}"#).unwrap();
+        let response: PlannerResponse = serde_json::from_value(json).unwrap();
+        match convert_response(response) {
+            PlanAction::Tool { name, input } => {
+                assert_eq!(name, "read_file");
+                assert_eq!(input, "src/lib.rs");
+            }
+            _ => panic!("expected Tool action"),
+        }
+    }
+
+    #[test]
+    fn parses_structured_tool_input() {
+        let json = extract_json(
+            r#"{"type":"tool","name":"write_file","input":{"path":"a.txt","content":"hi"}}"#,
+        )
+        .unwrap();
+        let response: PlannerResponse = serde_json::from_value(json).unwrap();
+        match convert_response(response) {
+            PlanAction::Tool { name, input } => {
+                assert_eq!(name, "write_file");
+                let parsed: Value = serde_json::from_str(&input).unwrap();
+                assert_eq!(parsed["path"], "a.txt");
+            }
+            _ => panic!("expected Tool action"),
+        }
+    }
 }
