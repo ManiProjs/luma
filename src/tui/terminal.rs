@@ -243,6 +243,15 @@ fn update_info_status(info: &mut LumaInfo, event: &AgentEvent) {
         AgentEvent::Error(_) => {
             info.set_status("Error");
         }
+
+        AgentEvent::Usage {
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            cost_usd,
+        } => {
+            info.add_usage(*prompt_tokens, *completion_tokens, *total_tokens, *cost_usd);
+        }
     }
 }
 

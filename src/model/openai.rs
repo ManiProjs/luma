@@ -6,9 +6,11 @@ use serde::Serialize;
 use serde_json::Value;
 use tracing::{debug, error, info};
 
+use std::sync::{Arc, Mutex};
+
 use crate::{
     context::MessageRole,
-    model::{CompletionRequest, Model, ModelStream},
+    model::{CompletionRequest, Model, ModelStream, Usage},
 };
 
 #[derive(Clone)]
@@ -17,6 +19,7 @@ pub struct OpenAICompatibleModel {
     endpoint: String,
     model: String,
     api_key: Option<String>,
+    usage: Arc<Mutex<Usage>>,
 }
 
 impl OpenAICompatibleModel {
@@ -32,6 +35,7 @@ impl OpenAICompatibleModel {
             endpoint,
             model: model.into(),
             api_key,
+            usage: Arc::new(Mutex::new(Usage::default())),
         }
     }
 }
@@ -128,6 +132,53 @@ fn parse_sse_event(event: &str) -> Option<String> {
     None
 }
 
+/// Extract token usage from an SSE event, if present.
+fn parse_usage_event(event: &str) -> Option<Usage> {
+    for line in event.lines() {
+        let line = line.trim();
+
+        if !line.starts_with("data:") {
+            continue;
+        }
+
+        let data = line.trim_start_matches("data:").trim();
+
+        if data.is_empty() || data == "[DONE]" {
+            continue;
+        }
+
+        let json: Value = match serde_json::from_str(data) {
+            Ok(value) => value,
+            Err(_) => continue,
+        };
+
+        // OpenAI-style usage object:
+        //
+        // {
+        //   "usage": {
+        //     "prompt_tokens": 10,
+        //     "completion_tokens": 20,
+        //     "total_tokens": 30
+        //   }
+        // }
+        if let Some(usage) = json.get("usage") {
+            let prompt_tokens = usage["prompt_tokens"].as_u64().unwrap_or(0);
+            let completion_tokens = usage["completion_tokens"].as_u64().unwrap_or(0);
+            let total_tokens = usage["total_tokens"].as_u64().unwrap_or(0);
+
+            if prompt_tokens > 0 || completion_tokens > 0 || total_tokens > 0 {
+                return Some(Usage {
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                });
+            }
+        }
+    }
+
+    None
+}
+
 #[async_trait]
 impl Model for OpenAICompatibleModel {
     async fn stream(&self, request: CompletionRequest) -> Result<ModelStream> {
@@ -199,55 +250,72 @@ impl Model for OpenAICompatibleModel {
 
         let byte_stream = response.bytes_stream();
 
+        let usage_tracker = self.usage.clone();
+
         // SSE events are separated by a blank line.
         //
         // Network chunks are NOT guaranteed to line up with SSE events,
         // so we keep a buffer between chunks.
         let stream = futures_util::stream::unfold(
             (byte_stream, String::new()),
-            |(mut byte_stream, mut buffer)| async move {
-                loop {
-                    match byte_stream.next().await {
-                        Some(Ok(bytes)) => {
-                            buffer.push_str(&String::from_utf8_lossy(&bytes));
+            move |(mut byte_stream, mut buffer)| {
+                let usage_tracker = usage_tracker.clone();
+                async move {
+                    loop {
+                        match byte_stream.next().await {
+                            Some(Ok(bytes)) => {
+                                buffer.push_str(&String::from_utf8_lossy(&bytes));
 
-                            let mut output = String::new();
+                                let mut output = String::new();
 
-                            // Process complete SSE events.
-                            while let Some(position) = buffer.find("\n\n") {
-                                let event = buffer[..position].to_string();
+                                // Process complete SSE events.
+                                while let Some(position) = buffer.find("\n\n") {
+                                    let event = buffer[..position].to_string();
 
-                                buffer.drain(..position + 2);
+                                    buffer.drain(..position + 2);
 
-                                if let Some(text) = parse_sse_event(&event) {
-                                    output.push_str(&text);
+                                    if let Some(usage) = parse_usage_event(&event)
+                                        && let Ok(mut guard) = usage_tracker.lock()
+                                    {
+                                        *guard = usage;
+                                    }
+
+                                    if let Some(text) = parse_sse_event(&event) {
+                                        output.push_str(&text);
+                                    }
                                 }
+
+                                if !output.is_empty() {
+                                    return Some((Ok(output), (byte_stream, buffer)));
+                                }
+
+                                // We received only a partial event.
+                                // Keep buffering.
                             }
 
-                            if !output.is_empty() {
-                                return Some((Ok(output), (byte_stream, buffer)));
+                            Some(Err(error)) => {
+                                return Some((Err(error.into()), (byte_stream, buffer)));
                             }
 
-                            // We received only a partial event.
-                            // Keep buffering.
-                        }
+                            None => {
+                                // Process a final event that may not have
+                                // ended with \n\n.
+                                if let Some(usage) = parse_usage_event(&buffer)
+                                    && let Ok(mut guard) = usage_tracker.lock()
+                                {
+                                    *guard = usage;
+                                }
 
-                        Some(Err(error)) => {
-                            return Some((Err(error.into()), (byte_stream, buffer)));
-                        }
+                                let output = parse_sse_event(&buffer).unwrap_or_default();
 
-                        None => {
-                            // Process a final event that may not have
-                            // ended with \n\n.
-                            let output = parse_sse_event(&buffer).unwrap_or_default();
+                                if !output.is_empty() {
+                                    buffer.clear();
 
-                            if !output.is_empty() {
-                                buffer.clear();
+                                    return Some((Ok(output), (byte_stream, buffer)));
+                                }
 
-                                return Some((Ok(output), (byte_stream, buffer)));
+                                return None;
                             }
-
-                            return None;
                         }
                     }
                 }
@@ -255,5 +323,9 @@ impl Model for OpenAICompatibleModel {
         );
 
         Ok(Box::pin(stream))
+    }
+
+    fn usage(&self) -> Option<Usage> {
+        self.usage.lock().ok().map(|u| u.clone())
     }
 }

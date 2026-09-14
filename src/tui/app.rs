@@ -555,6 +555,10 @@ impl App {
                     self.scroll_to_bottom();
                 }
             }
+
+            AgentEvent::Usage { .. } => {
+                // Usage is handled by updating info in terminal.rs
+            }
         }
     }
 

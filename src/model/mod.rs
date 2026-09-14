@@ -16,9 +16,20 @@ pub struct CompletionRequest {
     pub messages: Vec<Message>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct Usage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+}
+
 #[async_trait]
 pub trait Model: Send + Sync {
     async fn stream(&self, request: CompletionRequest) -> Result<ModelStream>;
+
+    fn usage(&self) -> Option<Usage> {
+        None
+    }
 }
 
 pub fn create_model(config: &ModelConfig) -> Box<dyn Model> {
@@ -42,5 +53,9 @@ where
 {
     async fn stream(&self, request: CompletionRequest) -> Result<ModelStream> {
         (**self).stream(request).await
+    }
+
+    fn usage(&self) -> Option<Usage> {
+        (**self).usage()
     }
 }

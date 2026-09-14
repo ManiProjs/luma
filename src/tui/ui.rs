@@ -570,6 +570,61 @@ fn render_info_panel(frame: &mut Frame, area: Rect, theme: &LumaTheme, info: &Lu
     lines.push(Line::from(""));
 
     // --------------------------------------------------------
+    // Usage
+    // --------------------------------------------------------
+
+    lines.push(Line::from(vec![Span::styled(
+        "USAGE",
+        Style::default()
+            .fg(theme.space)
+            .add_modifier(Modifier::BOLD),
+    )]));
+
+    lines.push(Line::from(vec![
+        Span::styled("Prompt     ", Style::default().fg(theme.space)),
+        Span::styled(
+            format!("{} tokens", info.usage.prompt_tokens),
+            Style::default().fg(theme.glow).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled("Completion ", Style::default().fg(theme.space)),
+        Span::styled(
+            format!("{} tokens", info.usage.completion_tokens),
+            Style::default().fg(theme.glow).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled("Total      ", Style::default().fg(theme.space)),
+        Span::styled(
+            format!("{} tokens", info.usage.total_tokens),
+            Style::default().fg(theme.glow).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled("Context    ", Style::default().fg(theme.space)),
+        Span::styled(
+            format!("{} tokens", info.usage.prompt_tokens),
+            Style::default().fg(theme.glow).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    lines.push(Line::from(vec![
+        Span::styled("Cost       ", Style::default().fg(theme.space)),
+        Span::styled(
+            format!("${:.6}", info.usage.cost_usd),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    lines.push(Line::from(""));
+
+    // --------------------------------------------------------
     // Active tool
     // --------------------------------------------------------
 
@@ -605,38 +660,6 @@ fn render_info_panel(frame: &mut Frame, area: Rect, theme: &LumaTheme, info: &Lu
             "None",
             Style::default().fg(theme.space),
         )));
-    }
-
-    lines.push(Line::from(""));
-
-    // --------------------------------------------------------
-    // Tools
-    // --------------------------------------------------------
-
-    lines.push(Line::from(vec![Span::styled(
-        "TOOLS",
-        Style::default()
-            .fg(theme.space)
-            .add_modifier(Modifier::BOLD),
-    )]));
-
-    lines.push(Line::from(vec![Span::styled(
-        format!("{} available", info.tools.len()),
-        Style::default().fg(theme.glow),
-    )]));
-
-    lines.push(Line::from(""));
-
-    for tool in &info.tools {
-        lines.push(Line::from(vec![
-            Span::styled(
-                "◇ ",
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(tool, Style::default().fg(theme.space)),
-        ]));
     }
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);

@@ -17,6 +17,19 @@ use crate::{
 };
 
 // ============================================================================
+// Pricing
+// ============================================================================
+
+/// Cost per 1M tokens in USD. Adjust as needed for your providers.
+const INPUT_COST_PER_MILLION: f64 = 3.0;
+const OUTPUT_COST_PER_MILLION: f64 = 15.0;
+
+fn calculate_cost(prompt_tokens: u64, completion_tokens: u64) -> f64 {
+    (prompt_tokens as f64 / 1_000_000.0) * INPUT_COST_PER_MILLION
+        + (completion_tokens as f64 / 1_000_000.0) * OUTPUT_COST_PER_MILLION
+}
+
+// ============================================================================
 // Confirmation
 // ============================================================================
 
@@ -287,6 +300,18 @@ where
                         .await?;
                 }
             }
+        }
+
+        // Emit usage after generation completes.
+        if let Some(usage) = self.model.usage() {
+            let cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens);
+            tx.send(AgentEvent::Usage {
+                prompt_tokens: usage.prompt_tokens,
+                completion_tokens: usage.completion_tokens,
+                total_tokens: usage.total_tokens,
+                cost_usd: cost,
+            })
+            .await?;
         }
 
         Ok(response)
