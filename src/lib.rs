@@ -2,6 +2,7 @@ pub mod agent;
 pub mod commands;
 pub mod config;
 pub mod context;
+pub mod dashboard;
 pub mod event;
 pub mod history;
 pub mod logging;
@@ -12,7 +13,6 @@ pub mod theme;
 pub mod tools;
 pub mod tui;
 pub mod workspace;
-pub mod dashboard;
 
 #[cfg(test)]
 pub mod tests;
