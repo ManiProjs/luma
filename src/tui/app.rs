@@ -559,6 +559,8 @@ impl App {
             AgentEvent::Usage { .. } => {
                 // Usage is handled by updating info in terminal.rs
             }
+
+            AgentEvent::Status { .. } => {}
         }
     }
 

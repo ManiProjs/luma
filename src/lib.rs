@@ -12,6 +12,7 @@ pub mod theme;
 pub mod tools;
 pub mod tui;
 pub mod workspace;
+pub mod dashboard;
 
 #[cfg(test)]
 pub mod tests;

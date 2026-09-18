@@ -2,6 +2,7 @@ mod agent;
 mod commands;
 mod config;
 mod context;
+mod dashboard;
 mod event;
 mod history;
 mod logging;
@@ -13,26 +14,25 @@ mod tools;
 mod tui;
 mod workspace;
 
+use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use agent::Agent;
+use dashboard::{DashboardCommand, DashboardServer};
 use event::AgentEvent;
+use history::History;
+use tokio_util::sync::CancellationToken;
 
 use tools::{
     ToolRegistry,
-    filesystem::{list_directory::ListDirectory, read_file::ReadFile, search_files::SearchFiles},
+    filesystem::{
+        list_directory::ListDirectory, patch_file::PatchFile, read_file::ReadFile,
+        search_files::SearchFiles, write_file::WriteFile,
+    },
     shell::RunCommand,
 };
 
-use history::History;
-
-use tokio_util::sync::CancellationToken;
-
-use crate::{
-    model::create_model,
-    tools::filesystem::{patch_file::PatchFile, write_file::WriteFile},
-    tui::info::LumaInfo,
-};
+use crate::{model::create_model, tui::info::LumaInfo};
 
 use dialoguer::Confirm;
 
@@ -42,18 +42,24 @@ struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Normal prompt
     #[arg(trailing_var_arg = true)]
     prompt: Vec<String>,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Configure Luma
     Setup,
+
+    Dashboard {
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+
+        #[arg(long, default_value_t = 3000)]
+        port: u16,
+    },
 }
 
-fn confirm_setup() -> anyhow::Result<bool> {
+fn confirm_setup() -> Result<bool> {
     Ok(Confirm::new()
         .with_prompt("Luma is not configured yet. Run setup?")
         .default(true)
@@ -61,65 +67,91 @@ fn confirm_setup() -> anyhow::Result<bool> {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
+    // ========================================================
+    // Logging
+    // ========================================================
+
     let log_path = logging::init();
 
     tracing::info!("Luma starting");
-    tracing::debug!(path = %log_path?.display(), "Logging initialized");
+
+    tracing::debug!(
+        path = %log_path?.display(),
+        "Logging initialized"
+    );
+
+    // ========================================================
+    // CLI
+    // ========================================================
 
     let args = Args::parse();
+
+    // ========================================================
+    // Setup
+    // ========================================================
 
     if !config::exists() && !matches!(args.command, Some(Commands::Setup)) {
         if confirm_setup()? {
             config::setup::run().await?;
-
-            return Ok(());
-        } else {
-            println!("Luma cannot start without configuration.");
-
-            return Ok(());
-        }
-    }
-
-    match args.command {
-        Some(Commands::Setup) => {
-            config::setup::run().await?;
-
             return Ok(());
         }
 
-        None => {}
+        println!("Luma cannot start without configuration.");
+        return Ok(());
     }
 
-    let cli_prompt = if args.prompt.is_empty() {
-        None
-    } else {
-        Some(args.prompt.join(" "))
+    if let Some(Commands::Setup) = args.command {
+        config::setup::run().await?;
+        return Ok(());
+    }
+
+    // ========================================================
+    // Mode
+    // ========================================================
+
+    let dashboard_requested = matches!(args.command, Some(Commands::Dashboard { .. }));
+
+    let (dashboard_host, dashboard_port) = match args.command {
+        Some(Commands::Dashboard { host, port }) => (host, port),
+
+        _ => ("127.0.0.1".to_string(), 3000),
     };
 
+    // ========================================================
+    // Configuration
+    // ========================================================
+
     let config = config::load()?;
+
+    // ========================================================
+    // Tools
+    // ========================================================
 
     let mut tools = ToolRegistry::new();
 
     let model = create_model(&config.model);
 
     tools.register(ReadFile);
-
     tools.register(ListDirectory);
-
     tools.register(RunCommand);
-
     tools.register(SearchFiles);
-
     tools.register(WriteFile);
-
     tools.register(PatchFile);
 
     let tool_names = tools.names();
 
+    // ========================================================
+    // Planner
+    // ========================================================
+
     let planner_model = create_model(&config.planner);
 
     let planner = planner::Planner::new(planner_model, &tools);
+
+    // ========================================================
+    // History / Workspace
+    // ========================================================
 
     let history = History::load();
 
@@ -127,7 +159,15 @@ async fn main() -> anyhow::Result<()> {
 
     let galaxy = workspace::bootstrap::WorkspaceBootstrap::load()?;
 
+    // ========================================================
+    // Agent
+    // ========================================================
+
     let mut agent = Agent::new(model, planner, tools, history, galaxy);
+
+    // ========================================================
+    // Channels
+    // ========================================================
 
     let (event_tx, event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(100);
 
@@ -135,33 +175,179 @@ async fn main() -> anyhow::Result<()> {
 
     let (confirmation_tx, confirmation_rx) = tokio::sync::mpsc::channel::<agent::Confirmation>(16);
 
-    let cancel: CancellationToken = CancellationToken::new();
+    let cancel = CancellationToken::new();
 
-    let agent_cancel: CancellationToken = cancel.clone();
+    // ========================================================
+    // Dashboard
+    // ========================================================
+
+    let (dashboard, mut dashboard_commands) = DashboardServer::new("dashboard", 256);
+
+    // --------------------------------------------------------
+    // Dashboard commands -> Agent
+    // --------------------------------------------------------
+
+    let dashboard_input_tx = input_tx.clone();
+    let dashboard_confirmation_tx = confirmation_tx.clone();
 
     tokio::spawn(async move {
-        if let Err(error) = agent
-            .run(input_rx, event_tx.clone(), cancel.clone(), confirmation_rx)
-            .await
-        {
-            let _ = event_tx.send(AgentEvent::Error(error.to_string())).await;
+        while let Some(command) = dashboard_commands.recv().await {
+            match command {
+                DashboardCommand::Chat(text) => {
+                    if dashboard_input_tx.send(text).await.is_err() {
+                        break;
+                    }
+                }
+
+                DashboardCommand::Confirm { allowed } => {
+                    let confirmation = if allowed {
+                        agent::Confirmation::Allow
+                    } else {
+                        agent::Confirmation::Deny
+                    };
+
+                    if dashboard_confirmation_tx.send(confirmation).await.is_err() {
+                        break;
+                    }
+                }
+            }
         }
     });
-    // Send CLI prompt as first message
+
+    // ========================================================
+    // Agent events -> Dashboard broadcast
+    // ========================================================
+
+    let dashboard_events = dashboard.events.clone();
+
+    tokio::spawn(async move {
+        let mut event_rx = event_rx;
+
+        while let Some(event) = event_rx.recv().await {
+            let _ = dashboard_events.send(event);
+        }
+    });
+
+    // ========================================================
+    // Dashboard server
+    // ========================================================
+
+    if dashboard_requested {
+        let addr = format!("{}:{}", dashboard_host, dashboard_port);
+
+        let dashboard_server = dashboard.clone();
+
+        let value = addr.clone();
+
+        tokio::spawn(async move {
+            if let Err(error) = dashboard_server.run(&value).await {
+                tracing::error!("Dashboard failed: {}", error);
+            }
+        });
+
+        println!("Luma Dashboard: http://{}", addr);
+    }
+
+    // ========================================================
+    // Agent
+    // ========================================================
+
+    tokio::spawn(async move {
+        if let Err(error) = agent.run(input_rx, event_tx, cancel, confirmation_rx).await {
+            tracing::error!("Agent stopped: {}", error);
+        }
+    });
+
+    // ========================================================
+    // CLI prompt
+    // ========================================================
+
+    let cli_prompt = if args.prompt.is_empty() {
+        None
+    } else {
+        Some(args.prompt.join(" "))
+    };
 
     if let Some(prompt) = cli_prompt {
         input_tx.send(prompt).await?;
     }
 
-    let mut info = LumaInfo::new(
-        config.model.provider.clone(),
-        config.model.name.clone(),
-        tool_names,
-    );
+    // ========================================================
+    // Dashboard mode
+    // ========================================================
 
-    info.workspace = Some(std::env::current_dir()?.display().to_string());
+    if dashboard_requested {
+        tokio::signal::ctrl_c().await?;
+        return Ok(());
+    }
 
-    tui::terminal::run(event_rx, input_tx, agent_cancel, confirmation_tx, info).await?;
+    // ========================================================
+    // TUI mode
+    // ========================================================
+
+    let info = {
+        let mut info = LumaInfo::new(
+            config.model.provider.clone(),
+            config.model.name.clone(),
+            tool_names,
+        );
+
+        info.workspace = Some(std::env::current_dir()?.display().to_string());
+
+        info
+    };
+
+    // --------------------------------------------------------
+    // Subscribe to the dashboard event bus.
+    //
+    // The dashboard bridge receives AgentEvent from the
+    // original mpsc channel and publishes every event into
+    // dashboard.events.
+    //
+    // The TUI gets its own broadcast subscription here.
+    // --------------------------------------------------------
+
+    let mut tui_event_rx = dashboard.events.subscribe();
+
+    // --------------------------------------------------------
+    // Convert broadcast::Receiver<AgentEvent> into the
+    // mpsc::Receiver<AgentEvent> expected by terminal::run().
+    // --------------------------------------------------------
+
+    let (tui_tx, tui_rx) = tokio::sync::mpsc::channel::<AgentEvent>(100);
+
+    tokio::spawn(async move {
+        loop {
+            match tui_event_rx.recv().await {
+                Ok(event) => {
+                    if tui_tx.send(event).await.is_err() {
+                        break;
+                    }
+                }
+
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    tracing::warn!("TUI event receiver lagged; skipped {} events", skipped);
+                }
+
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    });
+
+    // --------------------------------------------------------
+    // Run the actual TUI.
+    // --------------------------------------------------------
+
+    tui::terminal::run(
+        tui_rx,
+        input_tx,
+        CancellationToken::new(),
+        confirmation_tx,
+        info,
+    )
+    .await?;
 
     Ok(())
 }

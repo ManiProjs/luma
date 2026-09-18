@@ -252,6 +252,8 @@ fn update_info_status(info: &mut LumaInfo, event: &AgentEvent) {
         } => {
             info.add_usage(*prompt_tokens, *completion_tokens, *total_tokens, *cost_usd);
         }
+
+        AgentEvent::Status { .. } => {}
     }
 }
 

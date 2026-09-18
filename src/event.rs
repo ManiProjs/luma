@@ -1,5 +1,12 @@
-#[derive(Debug, Clone)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
 pub enum AgentEvent {
+    Status {
+        state: AgentStatus,
+    },
+
     TextDelta(String),
 
     Thinking,
@@ -33,4 +40,15 @@ pub enum AgentEvent {
     },
 
     Finished,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AgentStatus {
+    Idle,
+    Thinking,
+    Doing,
+    Talking,
+    Waiting,
+    Error,
 }

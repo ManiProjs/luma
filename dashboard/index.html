@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Luma</title>
+
+    <link rel="stylesheet" href="/assets/style.css" />
+  </head>
+
+  <body>
+    <div class="app">
+      <!-- ================================================================
+           Sidebar
+           ================================================================ -->
+
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">L</div>
+
+          <div>
+            <div class="brand-name">Luma</div>
+            <div class="brand-subtitle">Development Agent</div>
+          </div>
+        </div>
+
+        <div class="workspace-label">WORKSPACE</div>
+
+        <div class="workspace">
+          <span class="workspace-icon">⌘</span>
+
+          <span id="workspace-name"> Workspace </span>
+        </div>
+
+        <div class="section-label">EXPLORER</div>
+
+        <div id="explorer" class="explorer">
+          <div class="empty">Loading workspace…</div>
+        </div>
+
+        <div class="sidebar-bottom">
+          <button id="new-file" class="sidebar-action">
+            <span>＋</span>
+            New File
+          </button>
+
+          <button id="new-folder" class="sidebar-action">
+            <span>＋</span>
+            New Folder
+          </button>
+
+          <div class="connection">
+            <span id="connection-dot" class="connection-dot"></span>
+
+            <span id="connection-text"> Connecting </span>
+          </div>
+        </div>
+      </aside>
+
+      <!-- ================================================================
+           Main
+           ================================================================ -->
+
+      <main class="main">
+        <!-- Top bar -->
+
+        <header class="topbar">
+          <div class="breadcrumbs">
+            <span>Luma</span>
+
+            <span class="breadcrumb-separator"> / </span>
+
+            <span id="current-file"> Agent </span>
+          </div>
+
+          <div class="topbar-actions">
+            <button
+              id="toggle-ide"
+              class="ide-toggle"
+              title="Open the optional IDE"
+            >
+              Open IDE
+            </button>
+
+            <button
+              id="refresh-tree"
+              class="icon-button"
+              title="Refresh workspace"
+            >
+              ↻
+            </button>
+
+            <button id="theme-toggle" class="icon-button" title="Theme">
+              ☾
+            </button>
+          </div>
+        </header>
+
+        <!-- ================================================================
+             Workspace
+             ================================================================ -->
+
+        <div class="workspace-layout" id="workspace-layout">
+          <!-- ============================================================
+               Optional IDE
+               ============================================================ -->
+
+          <section id="ide" class="editor-area hidden">
+            <div id="tabs" class="tabs"></div>
+
+            <div class="editor-toolbar">
+              <div id="editor-path">No file open</div>
+
+              <div class="editor-actions">
+                <button id="save-file" disabled>
+                  Save
+                  <kbd>⌘S</kbd>
+                </button>
+
+                <button id="show-diff" disabled>Diff</button>
+              </div>
+            </div>
+
+            <div class="editor-container">
+              <div id="line-numbers" class="line-numbers"></div>
+
+              <div id="editor"></div>
+            </div>
+
+            <div class="editor-statusbar">
+              <span id="editor-language"> Plain Text </span>
+
+              <span id="editor-position"> Ln 1, Col 1 </span>
+
+              <span id="editor-state"> No file </span>
+            </div>
+          </section>
+
+          <!-- ============================================================
+               Agent
+               ============================================================ -->
+
+          <aside class="agent-panel">
+            <div class="agent-header">
+              <div>
+                <div class="agent-title">
+                  <span id="agent-status-dot" class="agent-dot"></span>
+
+                  Luma Agent
+                </div>
+
+                <div id="agent-status-detail" class="agent-detail">Ready</div>
+              </div>
+
+              <div id="model-name" class="model-name">—</div>
+            </div>
+
+            <div id="agent-content" class="agent-content">
+              <div id="messages" class="messages">
+                <div id="chat-empty" class="chat-empty">
+                  <div class="empty-orb">L</div>
+
+                  <h2>Build with Luma</h2>
+
+                  <p>
+                    Ask Luma to inspect, modify, test, or explain your
+                    workspace.
+                  </p>
+
+                  <div class="suggestions">
+                    <button data-prompt="Explain this project.">
+                      Explain this project
+                    </button>
+
+                    <button data-prompt="Find the main entry point.">
+                      Find the entry point
+                    </button>
+
+                    <button data-prompt="Check the project for errors.">
+                      Check for errors
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Plan -->
+
+            <div id="plan-panel" class="plan-panel hidden">
+              <div class="panel-title">
+                <span>Plan</span>
+
+                <span id="plan-count"> 0 steps </span>
+              </div>
+
+              <div id="plan"></div>
+            </div>
+
+            <!-- Confirmation -->
+
+            <div id="confirmation" class="confirmation hidden">
+              <div class="confirmation-title">
+                Luma wants to perform an action
+              </div>
+
+              <div id="confirmation-name" class="confirmation-name"></div>
+
+              <pre id="confirmation-input"></pre>
+
+              <div class="confirmation-actions">
+                <button id="deny" class="secondary">Deny</button>
+
+                <button id="allow" class="primary">Allow</button>
+              </div>
+            </div>
+
+            <!-- Composer -->
+
+            <form id="chat-form" class="composer">
+              <textarea
+                id="chat-input"
+                rows="1"
+                placeholder="Ask Luma anything…"
+              ></textarea>
+
+              <button type="submit" id="send-button">↑</button>
+            </form>
+          </aside>
+        </div>
+
+        <!-- ================================================================
+             Terminal
+             ================================================================ -->
+
+        <section class="terminal-panel">
+          <div class="terminal-header">
+            <div class="terminal-title">TERMINAL</div>
+
+            <button id="clear-terminal">Clear</button>
+          </div>
+
+          <div id="terminal-output" class="terminal-output">
+            <div class="terminal-line muted">Luma terminal ready.</div>
+          </div>
+
+          <form id="terminal-form" class="terminal-input">
+            <span>$</span>
+
+            <input
+              id="terminal-command"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Run a command…"
+            />
+          </form>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- Monaco -->
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs/loader.min.js"></script>
+
+    <script>
+      require.config({
+        paths: {
+          vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.52.2/min/vs",
+        },
+      });
+    </script>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>
