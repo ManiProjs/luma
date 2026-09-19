@@ -3,6 +3,7 @@ mod commands;
 mod config;
 mod context;
 mod dashboard;
+mod desktop;
 mod event;
 mod history;
 mod logging;
@@ -57,6 +58,8 @@ enum Commands {
         #[arg(long, default_value_t = 3000)]
         port: u16,
     },
+
+    DesktopServer,
 }
 
 fn confirm_setup() -> Result<bool> {
@@ -98,12 +101,21 @@ async fn main() -> Result<()> {
         }
 
         println!("Luma cannot start without configuration.");
+
         return Ok(());
     }
 
     if let Some(Commands::Setup) = args.command {
         config::setup::run().await?;
         return Ok(());
+    }
+
+    // ========================================================
+    // Desktop server
+    // ========================================================
+
+    if matches!(args.command, Some(Commands::DesktopServer)) {
+        return run_desktop_server().await;
     }
 
     // ========================================================
@@ -188,6 +200,7 @@ async fn main() -> Result<()> {
     // --------------------------------------------------------
 
     let dashboard_input_tx = input_tx.clone();
+
     let dashboard_confirmation_tx = confirmation_tx.clone();
 
     tokio::spawn(async move {
@@ -348,6 +361,92 @@ async fn main() -> Result<()> {
         info,
     )
     .await?;
+
+    Ok(())
+}
+
+// ============================================================
+// Desktop server
+// ============================================================
+
+async fn run_desktop_server() -> Result<()> {
+    // ========================================================
+    // Configuration
+    // ========================================================
+
+    let config = config::load()?;
+
+    // ========================================================
+    // Tools
+    // ========================================================
+
+    let mut tools = ToolRegistry::new();
+
+    let model = create_model(&config.model);
+
+    tools.register(ReadFile);
+    tools.register(ListDirectory);
+    tools.register(RunCommand);
+    tools.register(SearchFiles);
+    tools.register(WriteFile);
+    tools.register(PatchFile);
+
+    // ========================================================
+    // Planner
+    // ========================================================
+
+    let planner_model = create_model(&config.planner);
+
+    let planner = planner::Planner::new(planner_model, &tools);
+
+    // ========================================================
+    // History / Workspace
+    // ========================================================
+
+    let history = History::load();
+
+    workspace::bootstrap::WorkspaceBootstrap::initialize()?;
+
+    let galaxy = workspace::bootstrap::WorkspaceBootstrap::load()?;
+
+    // ========================================================
+    // Agent
+    // ========================================================
+
+    let mut agent = Agent::new(model, planner, tools, history, galaxy);
+
+    // ========================================================
+    // Channels
+    // ========================================================
+
+    let (event_tx, event_rx) = tokio::sync::mpsc::channel::<AgentEvent>(100);
+
+    let (input_tx, input_rx) = tokio::sync::mpsc::channel::<String>(100);
+
+    let (confirmation_tx, confirmation_rx) = tokio::sync::mpsc::channel::<agent::Confirmation>(16);
+
+    let cancel = CancellationToken::new();
+
+    // ========================================================
+    // Agent
+    // ========================================================
+
+    let agent_cancel = cancel.clone();
+
+    tokio::spawn(async move {
+        if let Err(error) = agent
+            .run(input_rx, event_tx, agent_cancel, confirmation_rx)
+            .await
+        {
+            tracing::error!("Desktop agent stopped: {}", error);
+        }
+    });
+
+    // ========================================================
+    // Desktop protocol
+    // ========================================================
+
+    desktop::run(event_rx, input_tx, confirmation_tx, cancel).await?;
 
     Ok(())
 }

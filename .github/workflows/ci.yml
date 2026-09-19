@@ -21,6 +21,9 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Install required dependencies
+        run: apt install ripgrep
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 

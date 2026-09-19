@@ -1,76 +1,212 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import ModeBar, { type AppMode } from "./components/ModeBar";
+import Editor from "@monaco-editor/react";
 
-type FileItem = {
-  name: string;
-  type: "file" | "folder";
-  children?: FileItem[];
-};
+import { themes, useTheme, type ThemeId } from "./renderer/Theme";
 
-const workspace: FileItem[] = [
+import { useLuma } from "./renderer/hooks/useLuma";
+
+type AppMode = "agent" | "ide" | "changes";
+
+type WorkspaceNode =
+  | {
+      type: "folder";
+      name: string;
+      children: WorkspaceNode[];
+    }
+  | {
+      type: "file";
+      name: string;
+      path: string;
+    };
+
+const workspace: WorkspaceNode[] = [
   {
-    name: "src",
     type: "folder",
+    name: "src",
     children: [
-      { name: "agent", type: "folder" },
-      { name: "commands", type: "folder" },
-      { name: "context", type: "folder" },
-      { name: "planner", type: "folder" },
-      { name: "tools", type: "folder" },
-      { name: "event.rs", type: "file" },
-      { name: "main.rs", type: "file" },
+      {
+        type: "folder",
+        name: "agent",
+        children: [
+          {
+            type: "file",
+            name: "mod.rs",
+            path: "src/agent/mod.rs",
+          },
+          {
+            type: "file",
+            name: "runner.rs",
+            path: "src/agent/runner.rs",
+          },
+        ],
+      },
+      {
+        type: "folder",
+        name: "workspace",
+        children: [
+          {
+            type: "file",
+            name: "mod.rs",
+            path: "src/workspace/mod.rs",
+          },
+          {
+            type: "file",
+            name: "bootstrap.rs",
+            path: "src/workspace/bootstrap.rs",
+          },
+        ],
+      },
+      {
+        type: "file",
+        name: "main.rs",
+        path: "src/main.rs",
+      },
+      {
+        type: "file",
+        name: "event.rs",
+        path: "src/event.rs",
+      },
+      {
+        type: "file",
+        name: "desktop.rs",
+        path: "src/desktop.rs",
+      },
     ],
   },
   {
-    name: "tests",
     type: "folder",
+    name: "tests",
+    children: [
+      {
+        type: "file",
+        name: "agent.rs",
+        path: "tests/agent.rs",
+      },
+    ],
   },
   {
+    type: "file",
     name: "Cargo.toml",
-    type: "file",
+    path: "Cargo.toml",
   },
   {
-    name: "GALAXY.md",
     type: "file",
+    name: "GALAXY.md",
+    path: "GALAXY.md",
+  },
+  {
+    type: "file",
+    name: "README.md",
+    path: "README.md",
   },
 ];
 
-function FileIcon({ name }: { name: string }) {
-  const extension = name.split(".").pop()?.toLowerCase();
-
-  if (extension === "rs") {
-    return (
-      <span className="flex h-4 w-4 items-center justify-center text-[9px] font-semibold text-orange-400/70">
-        R
-      </span>
-    );
-  }
-
-  if (extension === "toml") {
-    return (
-      <span className="flex h-4 w-4 items-center justify-center text-[9px] font-semibold text-zinc-500">
-        T
-      </span>
-    );
-  }
-
-  if (extension === "md") {
-    return (
-      <span className="flex h-4 w-4 items-center justify-center text-[9px] font-semibold text-blue-400/60">
-        M
-      </span>
-    );
-  }
-
+function SparkIcon() {
   return (
-    <span className="flex h-4 w-4 items-center justify-center text-[10px] text-zinc-600">
-      ·
-    </span>
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7L12 2z" />
+      <path d="M19 16l.7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7L19 16z" />
+    </svg>
   );
 }
 
-function FolderIcon({ open }: { open: boolean }) {
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`transition-transform ${open ? "rotate-90" : ""}`}
+    >
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
+function FolderIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4H10l2 2h6.5A2.5 2.5 0 0 1 21 8.5v9A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5v-11z" />
+    </svg>
+  );
+}
+
+function FileIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M6 3h8l4 4v14H6z" />
+      <path d="M14 3v5h5" />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+    >
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m16 16 5 5" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+    >
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function SettingsIcon() {
   return (
     <svg
       width="14"
@@ -81,326 +217,1279 @@ function FolderIcon({ open }: { open: boolean }) {
       strokeWidth="1.6"
       strokeLinecap="round"
       strokeLinejoin="round"
-      className={open ? "text-zinc-400" : "text-zinc-600"}
     >
-      {open ? (
-        <>
-          <path d="M3.5 6.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v1H3.5v-3z" />
-          <path d="M3.5 9.5h17l-1.5 8.5a2 2 0 0 1-2 1.7H6a2 2 0 0 1-2-1.7L3.5 9.5z" />
-        </>
-      ) : (
-        <path d="M3.5 6.5a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-11z" />
-      )}
+      <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.64 5.64l1.42 1.42M16.94 16.94l1.42 1.42M18.36 5.64l-1.42 1.42M7.06 16.94l-1.42 1.42" />
+      <circle cx="12" cy="12" r="3.5" />
     </svg>
   );
 }
 
-function FileTreeItem({ item, depth = 0 }: { item: FileItem; depth?: number }) {
-  const [open, setOpen] = useState(true);
-
-  if (item.type === "file") {
-    return (
-      <button
-        type="button"
-        className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-[12px] text-zinc-500 transition-colors hover:bg-white/[0.035] hover:text-zinc-200"
-        style={{ paddingLeft: `${8 + depth * 12}px` }}
-      >
-        <FileIcon name={item.name} />
-
-        <span className="truncate">{item.name}</span>
-      </button>
-    );
-  }
-
+function StopIcon() {
   return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-[12px] text-zinc-400 transition-colors hover:bg-white/[0.035] hover:text-zinc-200"
-        style={{ paddingLeft: `${8 + depth * 12}px` }}
-      >
-        <span className="flex h-4 w-4 items-center justify-center">
-          <svg
-            width="10"
-            height="10"
-            viewBox="0 0 10 10"
-            fill="none"
-            className={[
-              "transition-transform duration-150",
-              open ? "rotate-90" : "",
-            ].join(" ")}
-          >
-            <path
-              d="M3.5 2L6.5 5L3.5 8"
-              stroke="currentColor"
-              strokeWidth="1.2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </span>
-
-        <FolderIcon open={open} />
-
-        <span className="truncate">{item.name}</span>
-      </button>
-
-      {open && item.children && (
-        <div>
-          {item.children.map((child) => (
-            <FileTreeItem key={child.name} item={child} depth={depth + 1} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Sidebar() {
-  return (
-    <aside className="flex w-[250px] shrink-0 flex-col border-r border-white/[0.06] bg-[#0a0a0c]">
-      <div className="flex h-11 shrink-0 items-center border-b border-white/[0.05] px-4">
-        <span className="text-[10px] font-semibold tracking-[0.14em] text-zinc-600">
-          WORKSPACE
-        </span>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-        {workspace.map((item) => (
-          <FileTreeItem key={item.name} item={item} />
-        ))}
-      </div>
-
-      <div className="border-t border-white/[0.05] p-2">
-        <button
-          type="button"
-          className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-[11px] text-zinc-600 transition-colors hover:bg-white/[0.035] hover:text-zinc-300"
-        >
-          <span className="flex h-5 w-5 items-center justify-center rounded border border-white/[0.06] text-[10px] text-zinc-600">
-            ⌘
-          </span>
-
-          <span>Command Palette</span>
-
-          <span className="ml-auto text-[10px] text-zinc-700">⌘K</span>
-        </button>
-      </div>
-    </aside>
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+    </svg>
   );
 }
 
 function SendIcon() {
   return (
     <svg
-      width="14"
-      height="14"
+      width="13"
+      height="13"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2"
+      strokeWidth="1.8"
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      <path d="M12 19V5" />
-      <path d="M6 11l6-6 6 6" />
+      <path d="M4 12h15" />
+      <path d="m13 6 6 6-6 6" />
     </svg>
   );
 }
 
-function Composer() {
-  const [value, setValue] = useState("");
+function TopBar({
+  mode,
+  setMode,
+  connected,
+  onSettings,
+}: {
+  mode: AppMode;
+  setMode: (mode: AppMode) => void;
+  connected: boolean;
+  onSettings: () => void;
+}) {
+  return (
+    <header
+      className="
+        drag-region
+        flex h-[44px] shrink-0 items-center
+        border-b border-[var(--luma-border)]
+        bg-[var(--luma-surface)]
+      "
+    >
+      <div
+        className="
+          no-drag
+          flex h-full w-full items-center
+          pl-[82px] pr-3
+        "
+      >
+        <div className="flex items-center gap-2">
+          <div
+            className="
+              flex h-6 w-6 items-center justify-center
+              rounded-md
+              bg-[var(--luma-accent-soft)]
+              text-[var(--luma-accent)]
+            "
+          >
+            <SparkIcon />
+          </div>
 
-  const canSend = value.trim().length > 0;
+          <span className="text-[12px] font-medium tracking-tight">Luma</span>
+        </div>
+
+        <div className="ml-6 flex h-full items-center gap-0.5">
+          <ModeButton
+            active={mode === "agent"}
+            onClick={() => setMode("agent")}
+          >
+            Agent
+          </ModeButton>
+
+          <ModeButton active={mode === "ide"} onClick={() => setMode("ide")}>
+            IDE
+          </ModeButton>
+
+          <ModeButton
+            active={mode === "changes"}
+            onClick={() => setMode("changes")}
+          >
+            Changes
+          </ModeButton>
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          <div
+            className="
+              flex items-center gap-1.5
+              text-[10px]
+              text-[var(--luma-text-muted)]
+            "
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                connected
+                  ? "bg-[var(--luma-success)]"
+                  : "bg-[var(--luma-danger)]"
+              }`}
+            />
+
+            {connected ? "Connected" : "Disconnected"}
+          </div>
+
+          <button
+            type="button"
+            onClick={onSettings}
+            aria-label="Settings"
+            className="
+              flex h-7 w-7 items-center justify-center
+              rounded-md
+              text-[var(--luma-text-muted)]
+              transition-colors
+              hover:bg-[var(--luma-surface-hover)]
+              hover:text-[var(--luma-text-secondary)]
+            "
+          >
+            <SettingsIcon />
+          </button>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+function ModeButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`
+        h-7 rounded-md px-2.5
+        text-[11px] font-medium
+        transition-colors
+        ${
+          active
+            ? `
+              bg-[var(--luma-surface-hover)]
+              text-[var(--luma-text)]
+            `
+            : `
+              text-[var(--luma-text-muted)]
+              hover:text-[var(--luma-text-secondary)]
+            `
+        }
+      `}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SettingsPanel({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const { theme, setTheme, definition } = useTheme();
+
+  const [section, setSection] = useState<"appearance" | "general">(
+    "appearance",
+  );
+
+  if (!open) {
+    return null;
+  }
 
   return (
-    <div className="shrink-0 px-6 pb-5 pt-3">
-      <div className="mx-auto max-w-[820px] overflow-hidden rounded-xl border border-white/[0.07] bg-[#101012] shadow-[0_16px_50px_rgba(0,0,0,0.28)] transition-colors focus-within:border-white/[0.12]">
+    <>
+      <button
+        type="button"
+        aria-label="Close settings"
+        onClick={onClose}
+        className="fixed inset-0 z-30 cursor-default"
+      />
+
+      <div
+        className="
+          no-drag
+          absolute right-3 top-[49px] z-40
+          flex w-[540px]
+          overflow-hidden
+          rounded-lg
+          border border-[var(--luma-border-strong)]
+          bg-[var(--luma-surface-raised)]
+          shadow-2xl
+        "
+      >
+        <div
+          className="
+            w-[140px] shrink-0
+            border-r border-[var(--luma-border)]
+            bg-[var(--luma-surface)]
+            p-2
+          "
+        >
+          <div className="mb-1 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">
+            Settings
+          </div>
+
+          <SettingsNavButton
+            active={section === "appearance"}
+            onClick={() => setSection("appearance")}
+          >
+            Appearance
+          </SettingsNavButton>
+
+          <SettingsNavButton
+            active={section === "general"}
+            onClick={() => setSection("general")}
+          >
+            General
+          </SettingsNavButton>
+        </div>
+
+        <div className="min-w-0 flex-1 p-4">
+          {section === "appearance" && (
+            <>
+              <div className="mb-3">
+                <h2 className="text-[13px] font-medium">Appearance</h2>
+
+                <p className="mt-0.5 text-[10px] text-[var(--luma-text-muted)]">
+                  Customize the visual appearance of Luma.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                {themes.map((item) => (
+                  <ThemeCard
+                    key={item.id}
+                    theme={item}
+                    selected={theme === item.id}
+                    onClick={() => setTheme(item.id)}
+                  />
+                ))}
+              </div>
+
+              <div
+                className="
+                  mt-3 rounded-md
+                  border border-[var(--luma-border)]
+                  bg-[var(--luma-surface)]
+                  p-3
+                "
+              >
+                <div className="mb-2 text-[9px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">
+                  Preview
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div
+                    className="
+                      h-7 w-7 rounded-md
+                      bg-[var(--luma-accent-soft)]
+                    "
+                  />
+
+                  <div>
+                    <div className="text-[11px] font-medium">
+                      {definition.name}
+                    </div>
+
+                    <div className="text-[9px] text-[var(--luma-text-muted)]">
+                      {definition.description}
+                    </div>
+                  </div>
+
+                  <div
+                    className="
+                      ml-auto h-2 w-2 rounded-full
+                      bg-[var(--luma-accent)]
+                    "
+                  />
+                </div>
+              </div>
+            </>
+          )}
+
+          {section === "general" && (
+            <>
+              <div className="mb-3">
+                <h2 className="text-[13px] font-medium">General</h2>
+
+                <p className="mt-0.5 text-[10px] text-[var(--luma-text-muted)]">
+                  Configure how Luma behaves.
+                </p>
+              </div>
+
+              <SettingsRow
+                title="Workspace"
+                description="Current workspace configuration"
+                value="Coming soon"
+              />
+
+              <SettingsRow
+                title="Agent behavior"
+                description="Planning and execution preferences"
+                value="Coming soon"
+              />
+
+              <SettingsRow
+                title="Confirmations"
+                description="Control when Luma asks before actions"
+                value="Coming soon"
+              />
+
+              <SettingsRow
+                title="Model"
+                description="Configure the active model provider"
+                value="Coming soon"
+              />
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function SettingsNavButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`
+        mb-0.5 flex w-full items-center
+        rounded-md px-2 py-1.5
+        text-left text-[10px]
+        transition-colors
+        ${
+          active
+            ? `
+              bg-[var(--luma-accent-soft)]
+              text-[var(--luma-text)]
+            `
+            : `
+              text-[var(--luma-text-muted)]
+              hover:bg-[var(--luma-surface-hover)]
+              hover:text-[var(--luma-text-secondary)]
+            `
+        }
+      `}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SettingsRow({
+  title,
+  description,
+  value,
+}: {
+  title: string;
+  description: string;
+  value: string;
+}) {
+  return (
+    <div
+      className="
+        mb-2 flex items-center
+        rounded-md
+        border border-[var(--luma-border)]
+        bg-[var(--luma-surface)]
+        px-3 py-2.5
+      "
+    >
+      <div className="min-w-0">
+        <div className="text-[10px] font-medium">{title}</div>
+
+        <div className="mt-0.5 text-[9px] text-[var(--luma-text-muted)]">
+          {description}
+        </div>
+      </div>
+
+      <span className="ml-auto text-[9px] text-[var(--luma-text-muted)]">
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function ThemeCard({
+  theme,
+  selected,
+  onClick,
+}: {
+  theme: (typeof themes)[number];
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`
+        text-left
+        rounded-md
+        border
+        p-2.5
+        transition-colors
+        ${
+          selected
+            ? `
+              border-[var(--luma-accent)]
+              bg-[var(--luma-accent-soft)]
+            `
+            : `
+              border-[var(--luma-border)]
+              bg-[var(--luma-surface)]
+              hover:bg-[var(--luma-surface-hover)]
+            `
+        }
+      `}
+    >
+      <div className="mb-2 flex items-center gap-1.5">
+        <span
+          className="h-2 w-2 rounded-full"
+          style={{
+            backgroundColor: theme.accent,
+          }}
+        />
+
+        <span className="text-[10px] font-medium">{theme.name}</span>
+      </div>
+
+      <div className="text-[9px] leading-4 text-[var(--luma-text-muted)]">
+        {theme.description}
+      </div>
+    </button>
+  );
+}
+
+function Sidebar({
+  selectedFile,
+  onFileSelect,
+}: {
+  selectedFile: string | null;
+  onFileSelect: (path: string) => void;
+}) {
+  return (
+    <aside
+      className="
+        flex w-[220px] shrink-0 flex-col
+        border-r border-[var(--luma-border)]
+        bg-[var(--luma-surface)]
+      "
+    >
+      <div className="flex h-9 items-center px-2.5">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">
+          Workspace
+        </span>
+
+        <div className="ml-auto flex items-center">
+          <button
+            type="button"
+            className="
+              flex h-6 w-6 items-center justify-center
+              rounded-md
+              text-[var(--luma-text-muted)]
+              hover:bg-[var(--luma-surface-hover)]
+              hover:text-[var(--luma-text-secondary)]
+            "
+            aria-label="Search workspace"
+          >
+            <SearchIcon />
+          </button>
+
+          <button
+            type="button"
+            className="
+              flex h-6 w-6 items-center justify-center
+              rounded-md
+              text-[var(--luma-text-muted)]
+              hover:bg-[var(--luma-surface-hover)]
+              hover:text-[var(--luma-text-secondary)]
+            "
+            aria-label="Add"
+          >
+            <PlusIcon />
+          </button>
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto px-1.5 pb-2">
+        <WorkspaceTree
+          nodes={workspace}
+          selectedFile={selectedFile}
+          onFileSelect={onFileSelect}
+        />
+      </div>
+
+      <div
+        className="
+          flex h-8 shrink-0 items-center
+          border-t border-[var(--luma-border)]
+          px-2.5
+          text-[9px]
+          text-[var(--luma-text-muted)]
+        "
+      >
+        <span className="truncate">~/projs/luma</span>
+      </div>
+    </aside>
+  );
+}
+
+function WorkspaceTree({
+  nodes,
+  selectedFile,
+  onFileSelect,
+  depth = 0,
+}: {
+  nodes: WorkspaceNode[];
+  selectedFile: string | null;
+  onFileSelect: (path: string) => void;
+  depth?: number;
+}) {
+  return (
+    <>
+      {nodes.map((node) => {
+        if (node.type === "folder") {
+          return (
+            <FolderRow
+              key={`${depth}-${node.name}`}
+              node={node}
+              selectedFile={selectedFile}
+              onFileSelect={onFileSelect}
+              depth={depth}
+            />
+          );
+        }
+
+        return (
+          <button
+            key={node.path}
+            type="button"
+            onClick={() => onFileSelect(node.path)}
+            className={`
+              flex h-7 w-full items-center gap-1.5
+              rounded-md pr-2
+              text-left text-[10px]
+              ${
+                selectedFile === node.path
+                  ? `
+                    bg-[var(--luma-accent-soft)]
+                    text-[var(--luma-text)]
+                  `
+                  : `
+                    text-[var(--luma-text-secondary)]
+                    hover:bg-[var(--luma-surface-hover)]
+                  `
+              }
+            `}
+            style={{
+              paddingLeft: 8 + depth * 14,
+            }}
+          >
+            <FileIcon />
+
+            <span className="truncate">{node.name}</span>
+          </button>
+        );
+      })}
+    </>
+  );
+}
+
+function FolderRow({
+  node,
+  selectedFile,
+  onFileSelect,
+  depth,
+}: {
+  node: Extract<WorkspaceNode, { type: "folder" }>;
+  selectedFile: string | null;
+  onFileSelect: (path: string) => void;
+  depth: number;
+}) {
+  const [open, setOpen] = useState(depth < 1);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="
+          flex h-7 w-full items-center gap-1
+          rounded-md pr-2
+          text-left text-[10px]
+          text-[var(--luma-text-secondary)]
+          hover:bg-[var(--luma-surface-hover)]
+        "
+        style={{
+          paddingLeft: 6 + depth * 14,
+        }}
+      >
+        <ChevronIcon open={open} />
+
+        <FolderIcon />
+
+        <span className="truncate">{node.name}</span>
+      </button>
+
+      {open && (
+        <WorkspaceTree
+          nodes={node.children}
+          selectedFile={selectedFile}
+          onFileSelect={onFileSelect}
+          depth={depth + 1}
+        />
+      )}
+    </>
+  );
+}
+
+function GalaxyField() {
+  return (
+    <div className="pointer-events-none absolute inset-0 overflow-hidden opacity-40">
+      <div
+        className="
+          absolute left-[15%] top-[20%]
+          h-px w-[35%]
+          bg-gradient-to-r
+          from-transparent
+          via-[var(--luma-border-strong)]
+          to-transparent
+        "
+      />
+
+      <div
+        className="
+          absolute right-[10%] top-[48%]
+          h-px w-[28%]
+          bg-gradient-to-r
+          from-transparent
+          via-[var(--luma-border)]
+          to-transparent
+        "
+      />
+
+      <div
+        className="
+          absolute left-[40%] bottom-[24%]
+          h-px w-[25%]
+          bg-gradient-to-r
+          from-transparent
+          via-[var(--luma-border)]
+          to-transparent
+        "
+      />
+    </div>
+  );
+}
+
+function EmptyAgentState() {
+  return (
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+      <div className="mb-20 text-center">
+        <div
+          className="
+            mx-auto mb-3
+            flex h-9 w-9 items-center justify-center
+            rounded-lg
+            bg-[var(--luma-accent-soft)]
+            text-[var(--luma-accent)]
+          "
+        >
+          <SparkIcon />
+        </div>
+
+        <h1 className="text-[15px] font-medium tracking-tight">
+          What are we building?
+        </h1>
+
+        <p className="mt-1 text-[10px] text-[var(--luma-text-muted)]">
+          Ask Luma to inspect, change, or explain your code.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function AgentMessageView({
+  role,
+  content,
+}: {
+  role: "user" | "assistant";
+  content: string;
+}) {
+  return (
+    <div
+      className={`
+        flex gap-3
+        ${role === "user" ? "justify-end" : "justify-start"}
+      `}
+    >
+      {role === "assistant" && (
+        <div
+          className="
+            mt-0.5 flex h-5 w-5 shrink-0
+            items-center justify-center
+            rounded-md
+            bg-[var(--luma-accent-soft)]
+            text-[var(--luma-accent)]
+          "
+        >
+          <SparkIcon />
+        </div>
+      )}
+
+      <div
+        className={`
+          max-w-[760px]
+          whitespace-pre-wrap
+          text-[12px]
+          leading-5
+          ${
+            role === "user"
+              ? `
+                rounded-lg
+                bg-[var(--luma-surface-raised)]
+                px-3 py-2
+                text-[var(--luma-text)]
+              `
+              : "text-[var(--luma-text-secondary)]"
+          }
+        `}
+      >
+        {content}
+      </div>
+    </div>
+  );
+}
+
+function ToolActivity({
+  tools,
+}: {
+  tools: ReturnType<typeof useLuma>["tools"];
+}) {
+  if (tools.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-2 space-y-1">
+      {tools.map((tool) => (
+        <div
+          key={tool.id}
+          className="
+            flex items-center gap-2
+            rounded-md
+            border border-[var(--luma-border)]
+            bg-[var(--luma-surface)]
+            px-2.5 py-1.5
+          "
+        >
+          <span
+            className={`
+              h-1.5 w-1.5 rounded-full
+              ${
+                tool.finished
+                  ? "bg-[var(--luma-success)]"
+                  : "animate-pulse bg-[var(--luma-accent)]"
+              }
+            `}
+          />
+
+          <span className="text-[10px] text-[var(--luma-text-secondary)]">
+            {tool.name}
+          </span>
+
+          {tool.durationMs !== undefined && (
+            <span className="ml-auto text-[9px] text-[var(--luma-text-muted)]">
+              {tool.durationMs}ms
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ThinkingIndicator() {
+  return (
+    <div className="flex items-center gap-2">
+      <div
+        className="
+          flex h-5 w-5 shrink-0
+          items-center justify-center
+          rounded-md
+          bg-[var(--luma-accent-soft)]
+          text-[var(--luma-accent)]
+        "
+      >
+        <SparkIcon />
+      </div>
+
+      <div className="flex items-center gap-1">
+        <span className="h-1 w-1 animate-pulse rounded-full bg-[var(--luma-text-muted)]" />
+        <span className="h-1 w-1 animate-pulse rounded-full bg-[var(--luma-text-muted)] [animation-delay:120ms]" />
+        <span className="h-1 w-1 animate-pulse rounded-full bg-[var(--luma-text-muted)] [animation-delay:240ms]" />
+      </div>
+    </div>
+  );
+}
+
+function ConfirmationCard({
+  confirmation,
+  onConfirm,
+}: {
+  confirmation: {
+    name: string;
+    input: string;
+  };
+  onConfirm: (allowed: boolean) => void;
+}) {
+  return (
+    <div
+      className="
+        rounded-lg
+        border border-[var(--luma-border-strong)]
+        bg-[var(--luma-surface-raised)]
+        p-3
+      "
+    >
+      <div className="text-[11px] font-medium">Luma needs confirmation</div>
+
+      <div className="mt-1 text-[10px] text-[var(--luma-text-muted)]">
+        {confirmation.name}
+      </div>
+
+      {confirmation.input && (
+        <pre
+          className="
+            mt-2 max-h-28 overflow-auto
+            rounded-md
+            bg-[var(--luma-bg)]
+            p-2
+            font-mono text-[9px]
+            leading-4
+            text-[var(--luma-text-secondary)]
+          "
+        >
+          {confirmation.input}
+        </pre>
+      )}
+
+      <div className="mt-2 flex gap-1.5">
+        <button
+          type="button"
+          onClick={() => onConfirm(true)}
+          className="
+            rounded-md
+            bg-[var(--luma-accent)]
+            px-2.5 py-1.5
+            text-[10px] font-medium
+            text-black
+          "
+        >
+          Allow
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onConfirm(false)}
+          className="
+            rounded-md
+            border border-[var(--luma-border)]
+            px-2.5 py-1.5
+            text-[10px]
+            text-[var(--luma-text-secondary)]
+            hover:bg-[var(--luma-surface-hover)]
+          "
+        >
+          Deny
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ErrorMessage({ error }: { error: string }) {
+  return (
+    <div
+      className="
+        rounded-md
+        border border-[var(--luma-danger)]
+        bg-[var(--luma-danger)]/5
+        px-3 py-2
+        text-[10px]
+        text-[var(--luma-danger)]
+      "
+    >
+      {error}
+    </div>
+  );
+}
+
+function Composer({
+  thinking,
+  onSend,
+  onCancel,
+}: {
+  thinking: boolean;
+  onSend: (text: string) => void;
+  onCancel: () => void;
+}) {
+  const [value, setValue] = useState("");
+
+  function submit() {
+    const text = value.trim();
+
+    if (!text) {
+      return;
+    }
+
+    onSend(text);
+    setValue("");
+  }
+
+  return (
+    <div className="border-t border-[var(--luma-border)] p-3">
+      <div
+        className="
+          mx-auto flex max-w-[820px]
+          items-end gap-2
+          rounded-lg
+          border border-[var(--luma-border-strong)]
+          bg-[var(--luma-surface-raised)]
+          px-3 py-2
+          shadow-lg
+        "
+      >
         <textarea
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+            if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-
-              if (value.trim()) {
-                // Agent connection will be wired here.
-              }
+              submit();
             }
           }}
-          placeholder="Ask Luma..."
-          rows={3}
-          className="block w-full resize-none bg-transparent px-4 py-3.5 text-[13px] leading-6 text-zinc-200 outline-none placeholder:text-zinc-600"
+          rows={1}
+          placeholder={thinking ? "Luma is working..." : "Ask Luma anything..."}
+          disabled={thinking}
+          className="
+            min-h-[26px] max-h-28 flex-1
+            resize-none
+            bg-transparent
+            py-1
+            text-[11px]
+            leading-5
+            text-[var(--luma-text)]
+            outline-none
+            placeholder:text-[var(--luma-text-muted)]
+            disabled:opacity-50
+          "
         />
 
-        <div className="flex items-center justify-between px-3 pb-2.5">
-          <div className="flex items-center gap-0.5">
-            <button
-              type="button"
-              className="flex h-7 items-center gap-1.5 rounded-md px-2 text-[11px] text-zinc-600 transition-colors hover:bg-white/[0.05] hover:text-zinc-300"
-            >
-              <span className="text-[14px] leading-none">+</span>
-              Context
-            </button>
-
-            <button
-              type="button"
-              className="flex h-7 items-center rounded-md px-2 text-[11px] text-zinc-600 transition-colors hover:bg-white/[0.05] hover:text-zinc-300"
-            >
-              Tools
-            </button>
-          </div>
-
+        {thinking ? (
           <button
             type="button"
-            disabled={!canSend}
-            className="flex h-7 items-center gap-1.5 rounded-md bg-zinc-100 px-2.5 text-[11px] font-medium text-zinc-900 transition-all hover:bg-white disabled:cursor-default disabled:opacity-15"
+            onClick={onCancel}
+            className="
+              flex h-7 w-7 shrink-0
+              items-center justify-center
+              rounded-md
+              bg-[var(--luma-surface-hover)]
+              text-[var(--luma-text-secondary)]
+              hover:text-[var(--luma-text)]
+            "
+            aria-label="Stop"
           >
-            Send
+            <StopIcon />
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={submit}
+            disabled={!value.trim()}
+            className="
+              flex h-7 w-7 shrink-0
+              items-center justify-center
+              rounded-md
+              bg-[var(--luma-accent)]
+              text-black
+              disabled:cursor-default
+              disabled:opacity-30
+            "
+            aria-label="Send"
+          >
             <SendIcon />
           </button>
-        </div>
+        )}
       </div>
 
-      <p className="mt-2 text-center text-[10px] text-zinc-700">
-        Luma can read, modify, and run code in your workspace.
-      </p>
+      <div className="mt-1.5 text-center text-[9px] text-[var(--luma-text-muted)]">
+        Enter to send · Shift+Enter for a new line
+      </div>
     </div>
-  );
-}
-
-function AgentIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M12 2.8l1.5 6.2L19.7 10.5l-6.2 1.5L12 18.2l-1.5-6.2-6.2-1.5 6.2-1.5L12 2.8z" />
-    </svg>
-  );
-}
-
-function IDEIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="3.5" y="4" width="17" height="16" rx="2.5" />
-
-      <path d="M8 8.5l-2 2 2 2" />
-      <path d="M11 13h5" />
-    </svg>
-  );
-}
-
-function ChangesIcon() {
-  return (
-    <svg
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M6 4v11" />
-      <path d="M6 15l-2.5-2.5" />
-      <path d="M6 15l2.5-2.5" />
-
-      <path d="M18 20V9" />
-      <path d="M18 9l-2.5 2.5" />
-      <path d="M18 9l2.5 2.5" />
-    </svg>
   );
 }
 
 function AgentView() {
-  return (
-    <div className="flex min-w-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto pb-4">
-        <div className="flex min-h-full items-center justify-center px-6">
-          <div className="flex max-w-[440px] flex-col items-center text-center">
-            <div className="mb-5 flex h-12 w-12 items-center justify-center rounded-xl border border-white/[0.07] bg-white/[0.025]">
-              <span className="text-[17px] font-semibold text-zinc-400">L</span>
-            </div>
+  const {
+    messages,
+    tools,
+    thinking,
+    error,
+    confirmation,
+    sendPrompt,
+    respondToConfirmation,
+    cancel,
+  } = useLuma();
 
-            <h1 className="text-[20px] font-medium tracking-tight text-zinc-200">
-              What are we building?
-            </h1>
-
-            <p className="mt-2 text-[13px] leading-5 text-zinc-600">
-              Ask Luma to explore your codebase, implement a feature, fix a bug,
-              or work through a task.
-            </p>
-          </div>
-        </div>
-      </div>
-
-      <Composer />
-    </div>
-  );
-}
-
-function IDEView() {
-  const [open, setOpen] = useState(true);
+  const hasContent =
+    messages.length > 0 ||
+    tools.length > 0 ||
+    thinking ||
+    error !== null ||
+    confirmation !== null;
 
   return (
-    <div className="flex min-w-0 flex-1">
-      <div className="flex w-[230px] shrink-0 flex-col border-r border-white/[0.06] bg-[#0a0a0c]">
-        <div className="flex h-11 items-center justify-between border-b border-white/[0.05] px-4">
-          <span className="text-[10px] font-semibold tracking-[0.14em] text-zinc-600">
-            EXPLORER
-          </span>
+    <div className="relative flex h-full flex-col">
+      <div className="min-h-0 flex-1 overflow-auto">
+        {!hasContent && (
+          <>
+            <GalaxyField />
+            <EmptyAgentState />
+          </>
+        )}
 
-          <button
-            type="button"
-            onClick={() => setOpen((value) => !value)}
-            className="text-[11px] text-zinc-700 transition-colors hover:text-zinc-400"
-          >
-            {open ? "−" : "+"}
-          </button>
-        </div>
-
-        {open && (
-          <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-            {workspace.map((item) => (
-              <FileTreeItem key={item.name} item={item} />
+        {hasContent && (
+          <div className="mx-auto max-w-[900px] space-y-4 px-6 py-5">
+            {messages.map((message) => (
+              <AgentMessageView
+                key={message.id}
+                role={message.role}
+                content={message.content}
+              />
             ))}
+
+            <ToolActivity tools={tools} />
+
+            {thinking && <ThinkingIndicator />}
+
+            {confirmation && (
+              <ConfirmationCard
+                confirmation={confirmation}
+                onConfirm={respondToConfirmation}
+              />
+            )}
+
+            {error && <ErrorMessage error={error} />}
           </div>
         )}
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-10 shrink-0 items-center border-b border-white/[0.05] bg-[#0b0b0d] px-4">
-          <span className="text-[11px] text-zinc-600">No file open</span>
+      <Composer thinking={thinking} onSend={sendPrompt} onCancel={cancel} />
+    </div>
+  );
+}
+
+function getLanguage(file: string | null) {
+  if (!file) {
+    return "plaintext";
+  }
+
+  if (file.endsWith(".rs")) {
+    return "rust";
+  }
+
+  if (file.endsWith(".ts") || file.endsWith(".tsx")) {
+    return "typescript";
+  }
+
+  if (file.endsWith(".js") || file.endsWith(".jsx")) {
+    return "javascript";
+  }
+
+  if (file.endsWith(".json")) {
+    return "json";
+  }
+
+  if (file.endsWith(".css")) {
+    return "css";
+  }
+
+  if (file.endsWith(".html")) {
+    return "html";
+  }
+
+  if (file.endsWith(".md")) {
+    return "markdown";
+  }
+
+  if (file.endsWith(".toml")) {
+    return "ini";
+  }
+
+  if (file.endsWith(".yml") || file.endsWith(".yaml")) {
+    return "yaml";
+  }
+
+  return "plaintext";
+}
+
+function IDEView({ selectedFile }: { selectedFile: string | null }) {
+  const { theme } = useTheme();
+
+  const fileName = selectedFile
+    ? (selectedFile.split("/").pop() ?? selectedFile)
+    : "untitled";
+
+  const language = getLanguage(selectedFile);
+
+  const monacoTheme = theme === "solarized" ? "vs-dark" : "vs-dark";
+
+  return (
+    <div className="flex h-full min-w-0 flex-col bg-[var(--luma-bg)]">
+      <div
+        className="
+          flex h-9 shrink-0 items-center
+          border-b border-[var(--luma-border)]
+          bg-[var(--luma-surface)]
+        "
+      >
+        <div
+          className="
+            flex h-full items-center
+            border-r border-[var(--luma-border)]
+            px-3
+            text-[10px]
+            text-[var(--luma-text-secondary)]
+          "
+        >
+          <FileIcon />
+
+          <span className="ml-1.5">{fileName}</span>
         </div>
 
-        <div className="flex min-h-0 flex-1 items-center justify-center">
-          <div className="text-center">
-            <div className="mb-2 text-[13px] text-zinc-600">
-              Select a file to start editing
-            </div>
+        {selectedFile && (
+          <span className="ml-3 truncate text-[9px] text-[var(--luma-text-muted)]">
+            {selectedFile}
+          </span>
+        )}
 
-            <div className="text-[11px] text-zinc-800">
-              Monaco Editor will appear here
-            </div>
-          </div>
+        <div className="ml-auto px-3 text-[9px] text-[var(--luma-text-muted)]">
+          {language}
         </div>
+      </div>
+
+      <div className="min-h-0 flex-1">
+        <Editor
+          height="100%"
+          language={language}
+          theme={monacoTheme}
+          defaultValue={
+            selectedFile
+              ? `// ${selectedFile}\n\n`
+              : "// Select a file from the workspace\n"
+          }
+          options={{
+            automaticLayout: true,
+
+            minimap: {
+              enabled: false,
+            },
+
+            fontSize: 12,
+            lineHeight: 19,
+
+            fontFamily: "SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+
+            padding: {
+              top: 10,
+              bottom: 10,
+            },
+
+            scrollBeyondLastLine: false,
+            smoothScrolling: true,
+
+            cursorBlinking: "smooth",
+
+            renderWhitespace: "selection",
+
+            roundedSelection: false,
+
+            overviewRulerBorder: false,
+            hideCursorInOverviewRuler: true,
+
+            folding: true,
+            glyphMargin: false,
+
+            lineNumbersMinChars: 3,
+
+            tabSize: 2,
+
+            wordWrap: "off",
+
+            scrollbar: {
+              verticalScrollbarSize: 8,
+              horizontalScrollbarSize: 8,
+            },
+
+            suggest: {
+              showMethods: true,
+              showFunctions: true,
+              showVariables: true,
+            },
+
+            bracketPairColorization: {
+              enabled: true,
+            },
+
+            guides: {
+              bracketPairs: true,
+              indentation: true,
+            },
+          }}
+        />
+      </div>
+
+      <div
+        className="
+          flex h-6 shrink-0 items-center
+          border-t border-[var(--luma-border)]
+          bg-[var(--luma-surface)]
+          px-3
+          text-[9px]
+          text-[var(--luma-text-muted)]
+        "
+      >
+        <span>{language}</span>
+
+        <span className="mx-2 opacity-40">•</span>
+
+        <span>UTF-8</span>
+
+        <span className="mx-2 opacity-40">•</span>
+
+        <span>Spaces: 2</span>
+
+        <span className="ml-auto">Luma Editor</span>
       </div>
     </div>
   );
@@ -408,28 +1497,12 @@ function IDEView() {
 
 function ChangesView() {
   return (
-    <div className="flex min-w-0 flex-1 flex-col">
-      <div className="flex h-12 shrink-0 items-center border-b border-white/[0.05] px-5">
-        <div>
-          <h2 className="text-[13px] font-medium text-zinc-300">Changes</h2>
+    <div className="flex h-full items-center justify-center">
+      <div className="text-center">
+        <div className="text-[12px] font-medium">No changes</div>
 
-          <p className="mt-0.5 text-[11px] text-zinc-600">
-            Review changes made by Luma
-          </p>
-        </div>
-      </div>
-
-      <div className="flex min-h-0 flex-1 items-center justify-center">
-        <div className="text-center">
-          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-lg border border-white/[0.06] bg-white/[0.02]">
-            <ChangesIcon />
-          </div>
-
-          <h2 className="text-[15px] font-medium text-zinc-300">No changes</h2>
-
-          <p className="mt-1.5 text-[12px] text-zinc-600">
-            Changes made by Luma will appear here.
-          </p>
+        <div className="mt-1 text-[10px] text-[var(--luma-text-muted)]">
+          Changes and diffs will appear here.
         </div>
       </div>
     </div>
@@ -439,79 +1512,88 @@ function ChangesView() {
 export default function App() {
   const [mode, setMode] = useState<AppMode>("agent");
 
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const [connected, setConnected] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    window.luma
+      .status()
+      .then((status) => {
+        if (mounted) {
+          setConnected(status.connected);
+        }
+      })
+      .catch(() => {
+        if (mounted) {
+          setConnected(false);
+        }
+      });
+
+    const unsubscribe = window.luma.onEvent((event) => {
+      if (!mounted) {
+        return;
+      }
+
+      if (event.type === "Ready") {
+        setConnected(true);
+      }
+
+      if (event.type === "ProcessExited") {
+        setConnected(false);
+      }
+
+      if (event.type === "Error") {
+        setConnected(false);
+      }
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
   return (
-    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#09090b] text-zinc-100">
-      <header className="flex h-12 shrink-0 items-center border-b border-white/[0.06] bg-[#0b0b0d] px-4">
-        <div className="flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center rounded-md border border-white/[0.07] bg-white/[0.025]">
-            <span className="text-[10px] font-semibold text-zinc-300">L</span>
-          </div>
+    <div
+      className="
+        flex h-screen w-screen
+        flex-col overflow-hidden
+        bg-[var(--luma-bg)]
+        text-[var(--luma-text)]
+      "
+    >
+      <TopBar
+        mode={mode}
+        setMode={setMode}
+        connected={connected}
+        onSettings={() => setSettingsOpen((current) => !current)}
+      />
 
-          <span className="text-[13px] font-semibold tracking-tight text-zinc-200">
-            Luma
-          </span>
-        </div>
-
-        <div className="ml-auto flex items-center gap-1">
-          <div className="mr-1 flex items-center gap-1.5 rounded-md px-2 py-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-
-            <span className="text-[10px] text-zinc-600">Ready</span>
-          </div>
-
-          <button
-            type="button"
-            className="flex h-7 items-center rounded-md px-2 text-[11px] text-zinc-600 transition-colors hover:bg-white/[0.04] hover:text-zinc-300"
-          >
-            ⌘K
-          </button>
-
-          <button
-            type="button"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-600 transition-colors hover:bg-white/[0.04] hover:text-zinc-300"
-            aria-label="Settings"
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
-              <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-1.7 1.7-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.2h-2.4v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1L8 17l.1-.1A1.7 1.7 0 0 0 8.4 15a1.7 1.7 0 0 0-1.5-1H6.7v-2.4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9L8 8.6l1.7-1.7.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5v-.2h2.4v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1 1.7 1.7-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.2V14h-.2a1.7 1.7 0 0 0-1.5 1z" />
-            </svg>
-          </button>
-        </div>
-      </header>
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
 
       <div className="flex min-h-0 flex-1">
-        <Sidebar />
+        <Sidebar
+          selectedFile={selectedFile}
+          onFileSelect={(file) => {
+            setSelectedFile(file);
+            setMode("ide");
+          }}
+        />
 
-        <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="min-h-0 flex-1 overflow-hidden">
-            {mode === "agent" && <AgentView />}
+        <main className="min-w-0 flex-1 overflow-hidden">
+          {mode === "agent" && <AgentView />}
 
-            {mode === "ide" && <IDEView />}
+          {mode === "ide" && <IDEView selectedFile={selectedFile} />}
 
-            {mode === "changes" && <ChangesView />}
-          </div>
-
-          {/* Dedicated navigation layer */}
-          <div
-            className="
-      flex
-      h-[86px]
-      shrink-0
-      items-center
-      justify-center
-    "
-          >
-            <ModeBar mode={mode} onModeChange={setMode} />
-          </div>
+          {mode === "changes" && <ChangesView />}
         </main>
       </div>
     </div>
