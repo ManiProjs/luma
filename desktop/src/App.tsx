@@ -6,6 +6,8 @@ import { themes, useTheme, type ThemeId } from "./renderer/Theme";
 
 import { useLuma } from "./renderer/hooks/useLuma";
 
+import SetupWizard from "./setup/SetupWizard";
+
 type AppMode = "agent" | "ide" | "changes";
 
 type WorkspaceNode =
@@ -420,7 +422,7 @@ function SettingsPanel({
           flex w-[540px]
           overflow-hidden
           rounded-lg
-          border border-[var(--luma-border-strong)]
+          border border-[var(---border-strong)]
           bg-[var(--luma-surface-raised)]
           shadow-2xl
         "
@@ -1518,12 +1520,14 @@ export default function App() {
 
   const [connected, setConnected] = useState(false);
 
+  const [setupComplete, setSetupComplete] = useState(false);
+
   useEffect(() => {
     let mounted = true;
 
     window.luma
-      .status()
-      .then((status) => {
+      .getStatus()
+      .then((status: { connected: boolean }) => {
         if (mounted) {
           setConnected(status.connected);
         }
@@ -1534,22 +1538,17 @@ export default function App() {
         }
       });
 
-    const unsubscribe = window.luma.onEvent((event) => {
-      if (!mounted) {
+    const unsubscribe = window.luma.onEvent((event: unknown) => {
+      if (typeof event !== "object" || event === null) {
         return;
       }
 
-      if (event.type === "Ready") {
-        setConnected(true);
-      }
+      const message = event as {
+        type?: string;
+        data?: unknown;
+      };
 
-      if (event.type === "ProcessExited") {
-        setConnected(false);
-      }
-
-      if (event.type === "Error") {
-        setConnected(false);
-      }
+      console.log("Luma event:", message);
     });
 
     return () => {
@@ -1557,6 +1556,16 @@ export default function App() {
       unsubscribe();
     };
   }, []);
+
+  if (!setupComplete) {
+    return (
+      <SetupWizard
+        onComplete={() => {
+          setSetupComplete(true);
+        }}
+      />
+    );
+  }
 
   return (
     <div

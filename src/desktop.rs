@@ -5,22 +5,88 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent::Confirmation;
+use crate::config::Config;
 use crate::event::AgentEvent;
+use crate::provider::{
+    ModelRequest, SupportedModel, SupportedProvider, provider_for, supported_providers,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", content = "data")]
 pub enum DesktopMessage {
-    Prompt { text: String },
+    Prompt {
+        text: String,
+    },
+
     Cancel,
-    Confirm { allowed: bool },
+
+    Confirm {
+        allowed: bool,
+    },
+
+    GetSetupConfig {
+        request_id: String,
+    },
+
+    SaveSetupConfig {
+        request_id: String,
+        config: Config,
+    },
+
+    GetProviders {
+        request_id: String,
+    },
+
+    GetModels {
+        request_id: String,
+        provider: SupportedProvider,
+        api_key: Option<String>,
+        endpoint: Option<String>,
+    },
+
+    TestProvider {
+        request_id: String,
+        provider: SupportedProvider,
+        api_key: Option<String>,
+        endpoint: Option<String>,
+        model: String,
+    },
 }
 
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", content = "data")]
 pub enum DesktopEvent {
     Agent(AgentEvent),
+
     Ready,
-    Error { message: String },
+
+    Error {
+        request_id: Option<String>,
+        message: String,
+    },
+
+    SetupConfig {
+        request_id: String,
+        config: Config,
+    },
+
+    SetupSaved {
+        request_id: String,
+    },
+
+    Providers {
+        request_id: String,
+        providers: Vec<SupportedProvider>,
+    },
+
+    Models {
+        request_id: String,
+        models: Vec<SupportedModel>,
+    },
+
+    ProviderTested {
+        request_id: String,
+    },
 }
 
 pub async fn run(
@@ -30,19 +96,17 @@ pub async fn run(
     cancel: CancellationToken,
 ) -> Result<()> {
     let stdout = tokio::io::stdout();
+
     let mut stdout = tokio::io::BufWriter::new(stdout);
 
     let mut stdin = BufReader::new(tokio::io::stdin());
+
     let mut line = String::new();
 
     write_event(&mut stdout, DesktopEvent::Ready).await?;
 
     loop {
         tokio::select! {
-            // ------------------------------------------------
-            // Messages coming from Electron
-            // ------------------------------------------------
-
             result = stdin.read_line(&mut line) => {
                 let bytes = result?;
 
@@ -71,14 +135,174 @@ pub async fn run(
                             }
 
                             DesktopMessage::Confirm { allowed } => {
-                                let confirmation = if allowed {
-                                    Confirmation::Allow
-                                } else {
-                                    Confirmation::Deny
+                                let confirmation =
+                                    if allowed {
+                                        Confirmation::Allow
+                                    } else {
+                                        Confirmation::Deny
+                                    };
+
+                                if confirmation_tx
+                                    .send(confirmation)
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+
+                            DesktopMessage::GetSetupConfig {
+                                request_id,
+                            } => {
+                                match crate::config::load_or_default() {
+                                    Ok(config) => {
+                                        write_event(
+                                            &mut stdout,
+                                            DesktopEvent::SetupConfig {
+                                                request_id,
+                                                config,
+                                            },
+                                        )
+                                        .await?;
+                                    }
+
+                                    Err(error) => {
+                                        write_event(
+                                            &mut stdout,
+                                            DesktopEvent::Error {
+                                                request_id: Some(request_id),
+                                                message: error.to_string(),
+                                            },
+                                        )
+                                        .await?;
+                                    }
+                                }
+                            }
+
+                            DesktopMessage::SaveSetupConfig {
+                                request_id,
+                                config,
+                            } => {
+                                match crate::config::save(&config) {
+                                    Ok(()) => {
+                                        write_event(
+                                            &mut stdout,
+                                            DesktopEvent::SetupSaved {
+                                                request_id,
+                                            },
+                                        )
+                                        .await?;
+                                    }
+
+                                    Err(error) => {
+                                        write_event(
+                                            &mut stdout,
+                                            DesktopEvent::Error {
+                                                request_id: Some(request_id),
+                                                message: error.to_string(),
+                                            },
+                                        )
+                                        .await?;
+                                    }
+                                }
+                            }
+
+                            DesktopMessage::GetProviders {
+                                request_id,
+                            } => {
+                                let providers = supported_providers();
+
+                                write_event(
+                                    &mut stdout,
+                                    DesktopEvent::Providers {
+                                        request_id,
+                                        providers,
+                                    },
+                                )
+                                .await?;
+                            }
+
+                            DesktopMessage::GetModels {
+                                request_id,
+                                provider,
+                                api_key,
+                                endpoint,
+                            } => {
+                                let provider_impl = provider_for(&provider);
+
+                                let request = ModelRequest {
+                                    provider,
+                                    api_key,
+                                    endpoint,
                                 };
 
-                                if confirmation_tx.send(confirmation).await.is_err() {
-                                    break;
+                                match provider_impl
+                                    .list_models(&request)
+                                    .await
+                                {
+                                    Ok(models) => {
+                                        write_event(
+                                            &mut stdout,
+                                            DesktopEvent::Models {
+                                                request_id,
+                                                models,
+                                            },
+                                        )
+                                        .await?;
+                                    }
+
+                                    Err(error) => {
+                                        write_event(
+                                            &mut stdout,
+                                            DesktopEvent::Error {
+                                                request_id: Some(request_id),
+                                                message: error.to_string(),
+                                            },
+                                        )
+                                        .await?;
+                                    }
+                                }
+                            }
+
+                            DesktopMessage::TestProvider {
+                                request_id,
+                                provider,
+                                api_key,
+                                endpoint,
+                                model,
+                            } => {
+                                let provider_impl = provider_for(&provider);
+
+                                let request = ModelRequest {
+                                    provider,
+                                    api_key,
+                                    endpoint,
+                                };
+
+                                match provider_impl
+                                    .test(&request, &model)
+                                    .await
+                                {
+                                    Ok(()) => {
+                                        write_event(
+                                            &mut stdout,
+                                            DesktopEvent::ProviderTested {
+                                                request_id,
+                                            },
+                                        )
+                                        .await?;
+                                    }
+
+                                    Err(error) => {
+                                        write_event(
+                                            &mut stdout,
+                                            DesktopEvent::Error {
+                                                request_id: Some(request_id),
+                                                message: error.to_string(),
+                                            },
+                                        )
+                                        .await?;
+                                    }
                                 }
                             }
                         }
@@ -88,7 +312,10 @@ pub async fn run(
                         write_event(
                             &mut stdout,
                             DesktopEvent::Error {
-                                message: format!("Invalid desktop message: {error}"),
+                                request_id: None,
+                                message: format!(
+                                    "Invalid desktop message: {error}"
+                                ),
                             },
                         )
                         .await?;
@@ -98,10 +325,6 @@ pub async fn run(
                 line.clear();
             }
 
-            // ------------------------------------------------
-            // Agent -> Electron
-            // ------------------------------------------------
-
             Some(event) = event_rx.recv() => {
                 write_event(
                     &mut stdout,
@@ -109,10 +332,6 @@ pub async fn run(
                 )
                 .await?;
             }
-
-            // ------------------------------------------------
-            // Cancellation
-            // ------------------------------------------------
 
             _ = cancel.cancelled() => {
                 break;
@@ -130,7 +349,9 @@ where
     let json = serde_json::to_string(&event)?;
 
     writer.write_all(json.as_bytes()).await?;
+
     writer.write_all(b"\n").await?;
+
     writer.flush().await?;
 
     Ok(())

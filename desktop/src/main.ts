@@ -1,84 +1,96 @@
 import { app, BrowserWindow, ipcMain } from "electron";
+
 import path from "node:path";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+
 import readline from "node:readline";
 
-declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
-declare const MAIN_WINDOW_VITE_NAME: string;
+import { randomUUID } from "node:crypto";
+
+type PendingRequest = {
+  resolve: (value: unknown) => void;
+  reject: (reason?: unknown) => void;
+};
 
 let mainWindow: BrowserWindow | null = null;
+
 let lumaProcess: ChildProcessWithoutNullStreams | null = null;
-let lumaReady = false;
 
-const createWindow = () => {
-  mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    minWidth: 1100,
-    minHeight: 700,
-    title: "Luma",
-    titleBarStyle: "hiddenInset",
-    backgroundColor: "#09090b",
+const pendingRequests = new Map<string, PendingRequest>();
 
-    webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
-  } else {
-    mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-    );
-  }
-
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-  });
-};
-
-// ============================================================
-// Luma process
-// ============================================================
-
-const getLumaBinary = () => {
+function getLumaBinary(): string {
   return process.env.LUMA_BINARY || "luma";
-};
+}
 
-const sendToRenderer = (event: unknown) => {
-  if (!mainWindow) {
-    return;
+function sendToLuma(message: unknown) {
+  if (!lumaProcess || lumaProcess.killed) {
+    throw new Error("Luma desktop server is not running.");
   }
 
-  mainWindow.webContents.send("luma:event", event);
-};
+  lumaProcess.stdin.write(`${JSON.stringify(message)}\n`);
+}
 
-const startLuma = () => {
+function requestLuma(
+  type: string,
+  data: Record<string, unknown> = {},
+): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const requestId = randomUUID();
+
+    pendingRequests.set(requestId, {
+      resolve,
+      reject,
+    });
+
+    try {
+      sendToLuma({
+        type,
+        data: {
+          ...data,
+          request_id: requestId,
+        },
+      });
+    } catch (error) {
+      pendingRequests.delete(requestId);
+      reject(error);
+    }
+  });
+}
+
+function startLuma() {
   if (lumaProcess) {
     return;
   }
 
   const binary = getLumaBinary();
 
-  console.log(`[Luma] Starting ${binary} desktop-server`);
+  console.log(`[luma] Starting: ${binary} desktop-server`);
 
   lumaProcess = spawn(binary, ["desktop-server"], {
     cwd: process.cwd(),
-
-    env: {
-      ...process.env,
-      LUMA_DESKTOP: "1",
-    },
-
     stdio: ["pipe", "pipe", "pipe"],
   });
 
-  // ----------------------------------------------------------
-  // stdout
-  // ----------------------------------------------------------
+  lumaProcess.on("error", (error) => {
+    console.error(`[luma] Failed to start "${binary}":`, error);
+
+    for (const pending of pendingRequests.values()) {
+      pending.reject(error);
+    }
+
+    pendingRequests.clear();
+
+    if (lumaProcess) {
+      lumaProcess = null;
+    }
+
+    mainWindow?.webContents.send("luma:event", {
+      type: "Error",
+      data: {
+        message: `Failed to start Luma: ${error.message}`,
+      },
+    });
+  });
 
   const stdout = readline.createInterface({
     input: lumaProcess.stdout,
@@ -86,236 +98,248 @@ const startLuma = () => {
   });
 
   stdout.on("line", (line) => {
-    const trimmed = line.trim();
-
-    if (!trimmed) {
-      return;
-    }
-
-    console.log(`[Luma] ${trimmed}`);
-
-    try {
-      const event = JSON.parse(trimmed);
-
-      if (event.type === "Ready") {
-        lumaReady = true;
-
-        console.log("[Luma] Desktop server ready");
-      }
-
-      sendToRenderer(event);
-    } catch (error) {
-      console.error("[Luma] Invalid JSON from desktop server:", trimmed, error);
-
-      sendToRenderer({
-        type: "Error",
-        data: {
-          message: "Luma returned invalid JSON.",
-        },
-      });
-    }
-  });
-
-  // ----------------------------------------------------------
-  // stderr
-  // ----------------------------------------------------------
-
-  const stderr = readline.createInterface({
-    input: lumaProcess.stderr,
-    crlfDelay: Infinity,
-  });
-
-  stderr.on("line", (line) => {
     if (!line.trim()) {
       return;
     }
 
-    console.error(`[Luma] ${line}`);
+    let event: any;
+
+    try {
+      event = JSON.parse(line);
+    } catch {
+      console.error("[luma] Invalid JSON:", line);
+
+      return;
+    }
+
+    const requestId = event?.data?.request_id;
+
+    if (typeof requestId === "string" && pendingRequests.has(requestId)) {
+      const pending = pendingRequests.get(requestId);
+
+      pendingRequests.delete(requestId);
+
+      if (event.type === "Error") {
+        pending?.reject(
+          new Error(event.data?.message ?? "Luma request failed."),
+        );
+      } else {
+        pending?.resolve(event.data);
+      }
+
+      return;
+    }
+
+    mainWindow?.webContents.send("luma:event", event);
   });
 
-  // ----------------------------------------------------------
-  // process errors
-  // ----------------------------------------------------------
-
-  lumaProcess.on("error", (error) => {
-    console.error("[Luma] Failed to start:", error);
-
-    lumaReady = false;
-
-    sendToRenderer({
-      type: "Error",
-      data: {
-        message: `Failed to start Luma: ${error.message}`,
-      },
-    });
-
-    lumaProcess = null;
+  lumaProcess.stderr.on("data", (chunk) => {
+    console.error("[luma]", chunk.toString());
   });
-
-  // ----------------------------------------------------------
-  // process exit
-  // ----------------------------------------------------------
 
   lumaProcess.on("exit", (code, signal) => {
-    console.log(`[Luma] Process exited: code=${code} signal=${signal}`);
+    console.log(`[luma] Exited: code=${code}, signal=${signal}`);
 
-    lumaReady = false;
+    for (const pending of pendingRequests.values()) {
+      pending.reject(new Error("Luma desktop server exited."));
+    }
+
+    pendingRequests.clear();
+
     lumaProcess = null;
 
-    sendToRenderer({
-      type: "ProcessExited",
+    mainWindow?.webContents.send("luma:event", {
+      type: "Error",
       data: {
-        code,
-        signal,
+        message: "Luma desktop server exited.",
       },
     });
   });
-};
+}
 
-// ============================================================
-// Send message to Rust
-// ============================================================
-
-const sendToLuma = (message: unknown) => {
-  if (!lumaProcess) {
-    throw new Error("Luma process is not running.");
-  }
-
-  if (!lumaReady) {
-    throw new Error("Luma is not ready yet.");
-  }
-
-  const json = JSON.stringify(message) + "\n";
-
-  lumaProcess.stdin.write(json);
-};
-
-// ============================================================
-// Stop Luma
-// ============================================================
-
-const stopLuma = () => {
+function stopLuma() {
   if (!lumaProcess) {
     return;
   }
 
-  console.log("[Luma] Stopping desktop server");
-
-  lumaReady = false;
-
-  try {
-    lumaProcess.stdin.end();
-  } catch {
-    // Process may already be closed.
+  for (const pending of pendingRequests.values()) {
+    pending.reject(new Error("Luma desktop server stopped."));
   }
 
-  const processToKill = lumaProcess;
+  pendingRequests.clear();
+
+  lumaProcess.kill();
 
   lumaProcess = null;
+}
 
-  setTimeout(() => {
-    if (!processToKill.killed) {
-      processToKill.kill();
-    }
-  }, 1000);
-};
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 820,
 
-// ============================================================
-// IPC
-// ============================================================
+    minWidth: 900,
+    minHeight: 600,
 
-const registerIPC = () => {
-  // ----------------------------------------------------------
-  // Status
-  // ----------------------------------------------------------
+    title: "Luma",
 
-  ipcMain.handle("luma:status", () => {
-    return {
-      connected: lumaProcess !== null && lumaReady,
-    };
+    titleBarStyle: "hiddenInset",
+
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"),
+
+      contextIsolation: true,
+
+      nodeIntegration: false,
+    },
   });
 
-  // ----------------------------------------------------------
-  // Prompt
-  // ----------------------------------------------------------
+  if (process.env.NODE_ENV === "development") {
+    void mainWindow.loadURL("http://localhost:5173");
+  } else {
+    void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
+  }
 
-  ipcMain.handle("luma:prompt", (_event, text: unknown) => {
-    if (typeof text !== "string") {
-      throw new Error("Prompt must be a string.");
-    }
-
-    const trimmed = text.trim();
-
-    if (!trimmed) {
-      throw new Error("Prompt cannot be empty.");
-    }
-
-    sendToLuma({
-      type: "Prompt",
-      data: {
-        text: trimmed,
-      },
-    });
-
-    return {
-      ok: true,
-    };
+  mainWindow.on("closed", () => {
+    mainWindow = null;
   });
-
-  // ----------------------------------------------------------
-  // Confirmation
-  // ----------------------------------------------------------
-
-  ipcMain.handle("luma:confirm", (_event, allowed: unknown) => {
-    sendToLuma({
-      type: "Confirm",
-      data: {
-        allowed: Boolean(allowed),
-      },
-    });
-
-    return {
-      ok: true,
-    };
-  });
-
-  // ----------------------------------------------------------
-  // Cancel
-  // ----------------------------------------------------------
-
-  ipcMain.handle("luma:cancel", () => {
-    sendToLuma({
-      type: "Cancel",
-    });
-
-    return {
-      ok: true,
-    };
-  });
-};
-
-// ============================================================
-// Application lifecycle
-// ============================================================
+}
 
 app.whenReady().then(() => {
-  registerIPC();
-  createWindow();
   startLuma();
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
+  ipcMain.handle("luma:status", () => ({
+    connected: lumaProcess !== null && !lumaProcess.killed,
+  }));
+
+  ipcMain.handle("luma:get-providers", async () => {
+    const response = (await requestLuma("GetProviders")) as {
+      providers?: unknown;
+    };
+
+    return Array.isArray(response.providers) ? response.providers : [];
   });
+
+  ipcMain.handle(
+    "luma:get-models",
+    async (
+      _event,
+      provider: unknown,
+      options?: {
+        apiKey?: string;
+        endpoint?: string;
+      },
+    ) => {
+      const response = (await requestLuma("GetModels", {
+        provider,
+
+        api_key: options?.apiKey ?? null,
+
+        endpoint: options?.endpoint ?? null,
+      })) as {
+        models?: unknown;
+      };
+
+      return Array.isArray(response.models) ? response.models : [];
+    },
+  );
+
+  ipcMain.handle("luma:get-setup-config", async () => {
+    const response = (await requestLuma("GetSetupConfig")) as {
+      config?: unknown;
+    };
+
+    return response.config ?? null;
+  });
+
+  ipcMain.handle("luma:save-setup-config", async (_event, config: unknown) => {
+    await requestLuma("SaveSetupConfig", {
+      config,
+    });
+
+    return {
+      ok: true,
+    };
+  });
+
+  ipcMain.handle(
+    "luma:test-provider",
+    async (
+      _event,
+      provider: unknown,
+      options: {
+        apiKey?: string;
+        endpoint?: string;
+        model: string;
+      },
+    ) => {
+      await requestLuma("TestProvider", {
+        provider,
+
+        api_key: options.apiKey ?? null,
+
+        endpoint: options.endpoint ?? null,
+
+        model: options.model,
+      });
+
+      return {
+        ok: true,
+      };
+    },
+  );
+
+  ipcMain.handle("luma:prompt", async (_event, text: string) => {
+    sendToLuma({
+      type: "Prompt",
+
+      data: {
+        text,
+      },
+    });
+
+    return {
+      ok: true,
+    };
+  });
+
+  ipcMain.handle("luma:confirm", async (_event, allowed: boolean) => {
+    sendToLuma({
+      type: "Confirm",
+
+      data: {
+        allowed,
+      },
+    });
+
+    return {
+      ok: true,
+    };
+  });
+
+  ipcMain.handle("luma:cancel", async () => {
+    sendToLuma({
+      type: "Cancel",
+
+      data: {},
+    });
+
+    return {
+      ok: true,
+    };
+  });
+
+  createWindow();
+});
+
+app.on("window-all-closed", () => {
+  stopLuma();
+
+  if (process.platform !== "darwin") {
+    app.quit();
+  }
 });
 
 app.on("before-quit", () => {
   stopLuma();
-});
-
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
 });

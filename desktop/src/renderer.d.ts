@@ -1,19 +1,45 @@
-import type { LumaAgentEvent } from "./preload";
+import type {
+  SetupConfig,
+  SetupModel,
+  SetupProvider,
+} from "./stores/setupStore";
 
 declare global {
   interface Window {
     luma: {
-      sendPrompt(text: string): Promise<{ ok: true }>;
+      getProviders(): Promise<SetupProvider[]>;
 
-      confirm(allowed: boolean): Promise<{ ok: true }>;
+      getModels(
+        provider: SetupProvider,
+        options?: {
+          apiKey?: string;
+          endpoint?: string;
+        },
+      ): Promise<SetupModel[]>;
 
-      cancel(): Promise<{ ok: true }>;
+      getSetupConfig(): Promise<SetupConfig | null>;
 
-      status(): Promise<{
+      saveSetupConfig(config: SetupConfig): Promise<{
+        ok: boolean;
+      }>;
+
+      prompt(text: string): Promise<{
+        ok: boolean;
+      }>;
+
+      confirm(allowed: boolean): Promise<{
+        ok: boolean;
+      }>;
+
+      cancel(): Promise<{
+        ok: boolean;
+      }>;
+
+      getStatus(): Promise<{
         connected: boolean;
       }>;
 
-      onEvent(callback: (event: LumaAgentEvent) => void): () => void;
+      onEvent(callback: (event: unknown) => void): () => void;
     };
   }
 }

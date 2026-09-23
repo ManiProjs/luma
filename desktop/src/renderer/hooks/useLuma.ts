@@ -284,7 +284,7 @@ export function useLuma() {
     let mounted = true;
 
     window.luma
-      .status()
+      .getStatus()
       .then((status) => {
         if (mounted) {
           setConnected(status.connected);
@@ -331,7 +331,7 @@ export function useLuma() {
     ]);
 
     try {
-      await window.luma.sendPrompt(trimmed);
+      await window.luma.prompt(trimmed);
     } catch (error) {
       setError(
         error instanceof Error ? error.message : "Failed to send prompt.",

@@ -9,6 +9,7 @@ mod history;
 mod logging;
 mod model;
 mod planner;
+mod provider;
 mod router;
 mod theme;
 mod tools;

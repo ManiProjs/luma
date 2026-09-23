@@ -47,9 +47,11 @@
     "@tailwindcss/vite": "^4.3.3",
     "electron-squirrel-startup": "^1.0.1",
     "monaco-editor": "^0.56.0",
+    "motion": "^13.4.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "tailwindcss": "^4.3.3"
+    "tailwindcss": "^4.3.3",
+    "zustand": "^5.0.15"
   },
   "allowScripts": {
     "electron-winstaller@5.4.4": true,

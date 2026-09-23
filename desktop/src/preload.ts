@@ -1,55 +1,32 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-export type LumaAgentEvent =
-  | {
-      type: "Ready";
-    }
-  | {
-      type: "Agent";
-      data: {
-        type: string;
-        data?: unknown;
-      };
-    }
-  | {
-      type: "Error";
-      data: {
-        message: string;
-      };
-    }
-  | {
-      type: "ProcessExited";
-      data: {
-        code: number | null;
-        signal: string | null;
-      };
-    };
+contextBridge.exposeInMainWorld("luma", {
+  getProviders: () => ipcRenderer.invoke("luma:get-providers"),
 
-const luma = {
-  sendPrompt(text: string): Promise<{ ok: true }> {
-    return ipcRenderer.invoke("luma:prompt", text);
-  },
+  getModels: (
+    provider: unknown,
+    options?: {
+      apiKey?: string;
+      endpoint?: string;
+    },
+  ) => ipcRenderer.invoke("luma:get-models", provider, options),
 
-  confirm(allowed: boolean): Promise<{ ok: true }> {
-    return ipcRenderer.invoke("luma:confirm", allowed);
-  },
+  getSetupConfig: () => ipcRenderer.invoke("luma:get-setup-config"),
 
-  cancel(): Promise<{ ok: true }> {
-    return ipcRenderer.invoke("luma:cancel");
-  },
+  saveSetupConfig: (config: unknown) =>
+    ipcRenderer.invoke("luma:save-setup-config", config),
 
-  status(): Promise<{
-    connected: boolean;
-  }> {
-    return ipcRenderer.invoke("luma:status");
-  },
+  prompt: (text: string) => ipcRenderer.invoke("luma:prompt", text),
 
-  onEvent(callback: (event: LumaAgentEvent) => void) {
-    const listener = (
-      _event: Electron.IpcRendererEvent,
-      payload: LumaAgentEvent,
-    ) => {
-      callback(payload);
+  confirm: (allowed: boolean) => ipcRenderer.invoke("luma:confirm", allowed),
+
+  cancel: () => ipcRenderer.invoke("luma:cancel"),
+
+  getStatus: () => ipcRenderer.invoke("luma:status"),
+
+  onEvent: (callback: (event: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: unknown) => {
+      callback(data);
     };
 
     ipcRenderer.on("luma:event", listener);
@@ -58,6 +35,4 @@ const luma = {
       ipcRenderer.removeListener("luma:event", listener);
     };
   },
-};
-
-contextBridge.exposeInMainWorld("luma", luma);
+});
