@@ -2,11 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 
 import Editor from "@monaco-editor/react";
 
-import { themes, useTheme, type ThemeId } from "./renderer/Theme";
+import { SparkIcon } from "./components/LumaWordmark";
+import LumaWordmark from "./components/LumaWordmark";
+
+import { themes, useTheme } from "./renderer/Theme";
 
 import { useLuma } from "./renderer/hooks/useLuma";
 
 import SetupWizard from "./setup/SetupWizard";
+
+import type { SetupConfig } from "./stores/setupStore";
 
 type AppMode = "agent" | "ide" | "changes";
 
@@ -104,24 +109,6 @@ const workspace: WorkspaceNode[] = [
   },
 ];
 
-function SparkIcon() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M12 2l1.7 6.3L20 10l-6.3 1.7L12 18l-1.7-6.3L4 10l6.3-1.7L12 2z" />
-      <path d="M19 16l.7 2.3L22 19l-2.3.7L19 22l-.7-2.3L16 19l2.3-.7L19 16z" />
-    </svg>
-  );
-}
-
 function ChevronIcon({ open }: { open: boolean }) {
   return (
     <svg
@@ -188,22 +175,6 @@ function SearchIcon() {
     >
       <circle cx="11" cy="11" r="6.5" />
       <path d="m16 16 5 5" />
-    </svg>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg
-      width="13"
-      height="13"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      strokeLinecap="round"
-    >
-      <path d="M12 5v14M5 12h14" />
     </svg>
   );
 }
@@ -279,19 +250,8 @@ function TopBar({
           pointer-events-none
         "
       >
-        <div className="no-drag pointer-events-auto flex items-center gap-2">
-          <div
-            className="
-              flex h-6 w-6 items-center justify-center
-              rounded-md
-              bg-[var(--luma-accent-soft)]
-              text-[var(--luma-accent)]
-            "
-          >
-            <SparkIcon />
-          </div>
-
-          <span className="text-[12px] font-medium tracking-tight">Luma</span>
+        <div className="no-drag pointer-events-auto">
+          <LumaWordmark compact />
         </div>
 
         <div className="no-drag pointer-events-auto ml-6 flex h-full items-center gap-0.5">
@@ -318,8 +278,8 @@ function TopBar({
           <div
             className="
               flex items-center gap-1.5
-              text-[10px]
-              text-[var(--luma-text-muted)]
+              text-[12px]
+              text-[var(--luma-text-secondary)]
             "
           >
             <span
@@ -369,7 +329,7 @@ function ModeButton({
       onClick={onClick}
       className={`
         h-7 rounded-md px-2.5
-        text-[11px] font-medium
+        text-[13px] font-medium
         transition-colors
         ${
           active
@@ -392,15 +352,40 @@ function ModeButton({
 function SettingsPanel({
   open,
   onClose,
+  connected,
+  setupConfig,
+  onReconfigure,
 }: {
   open: boolean;
   onClose: () => void;
+  connected: boolean;
+  setupConfig: SetupConfig | null;
+  onReconfigure: () => void;
 }) {
   const { theme, setTheme, definition } = useTheme();
 
   const [section, setSection] = useState<"appearance" | "general">(
     "appearance",
   );
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, onClose]);
 
   if (!open) {
     return null;
@@ -412,17 +397,21 @@ function SettingsPanel({
         type="button"
         aria-label="Close settings"
         onClick={onClose}
-        className="fixed inset-0 z-30 cursor-default"
+        className="fixed inset-0 z-30 cursor-default bg-black/40"
       />
 
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="settings-title"
         className="
           no-drag
-          absolute right-3 top-[49px] z-40
-          flex w-[540px]
+          fixed left-1/2 top-1/2 z-40
+          flex h-[560px] w-[720px]
+          -translate-x-1/2 -translate-y-1/2
           overflow-hidden
-          rounded-lg
-          border border-[var(---border-strong)]
+          rounded-xl
+          border border-[var(--luma-border-strong)]
           bg-[var(--luma-surface-raised)]
           shadow-2xl
         "
@@ -435,7 +424,7 @@ function SettingsPanel({
             p-2
           "
         >
-          <div className="mb-1 px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">
+          <div id="settings-title" className="luma-kicker mb-1 px-2 py-1">
             Settings
           </div>
 
@@ -460,7 +449,7 @@ function SettingsPanel({
               <div className="mb-3">
                 <h2 className="text-[13px] font-medium">Appearance</h2>
 
-                <p className="mt-0.5 text-[10px] text-[var(--luma-text-muted)]">
+                <p className="mt-0.5 text-[12px] text-[var(--luma-text-secondary)]">
                   Customize the visual appearance of Luma.
                 </p>
               </div>
@@ -484,9 +473,7 @@ function SettingsPanel({
                   p-3
                 "
               >
-                <div className="mb-2 text-[9px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">
-                  Preview
-                </div>
+                <div className="luma-kicker mb-2">Preview</div>
 
                 <div className="flex items-center gap-2">
                   <div
@@ -497,11 +484,11 @@ function SettingsPanel({
                   />
 
                   <div>
-                    <div className="text-[11px] font-medium">
+                    <div className="text-[13px] font-medium">
                       {definition.name}
                     </div>
 
-                    <div className="text-[9px] text-[var(--luma-text-muted)]">
+                    <div className="text-[12px] text-[var(--luma-text-muted)]">
                       {definition.description}
                     </div>
                   </div>
@@ -522,33 +509,39 @@ function SettingsPanel({
               <div className="mb-3">
                 <h2 className="text-[13px] font-medium">General</h2>
 
-                <p className="mt-0.5 text-[10px] text-[var(--luma-text-muted)]">
-                  Configure how Luma behaves.
+                <p className="mt-0.5 text-[12px] text-[var(--luma-text-secondary)]">
+                  Workspace, model, and connection status for this session.
                 </p>
               </div>
 
               <SettingsRow
                 title="Workspace"
-                description="Current workspace configuration"
-                value="Coming soon"
+                description="Files shown in the sidebar"
+                value="~/projs/luma"
               />
 
               <SettingsRow
-                title="Agent behavior"
-                description="Planning and execution preferences"
-                value="Coming soon"
-              />
-
-              <SettingsRow
-                title="Confirmations"
-                description="Control when Luma asks before actions"
-                value="Coming soon"
+                title="Connection"
+                description="Desktop server status"
+                value={connected ? "Connected" : "Disconnected"}
               />
 
               <SettingsRow
                 title="Model"
-                description="Configure the active model provider"
-                value="Coming soon"
+                description={
+                  setupConfig
+                    ? setupConfig.model.provider
+                    : "No provider configured"
+                }
+                value={setupConfig?.model.name ?? "Not configured"}
+                actionLabel="Change"
+                onAction={onReconfigure}
+              />
+
+              <SettingsRow
+                title="Confirmations"
+                description="Luma asks before running tools that change files"
+                value="Required"
               />
             </>
           )}
@@ -574,7 +567,7 @@ function SettingsNavButton({
       className={`
         mb-0.5 flex w-full items-center
         rounded-md px-2 py-1.5
-        text-left text-[10px]
+        text-left text-[12px]
         transition-colors
         ${
           active
@@ -599,10 +592,14 @@ function SettingsRow({
   title,
   description,
   value,
+  actionLabel,
+  onAction,
 }: {
   title: string;
   description: string;
   value: string;
+  actionLabel?: string;
+  onAction?: () => void;
 }) {
   return (
     <div
@@ -615,16 +612,24 @@ function SettingsRow({
       "
     >
       <div className="min-w-0">
-        <div className="text-[10px] font-medium">{title}</div>
+        <div className="text-[13px] font-medium">{title}</div>
 
-        <div className="mt-0.5 text-[9px] text-[var(--luma-text-muted)]">
+        <div className="mt-0.5 text-[12px] text-[var(--luma-text-muted)]">
           {description}
         </div>
       </div>
 
-      <span className="ml-auto text-[9px] text-[var(--luma-text-muted)]">
-        {value}
-      </span>
+      <div className="ml-auto flex shrink-0 items-center gap-2">
+        <span className="text-[12px] text-[var(--luma-text-secondary)]">
+          {value}
+        </span>
+
+        {actionLabel && onAction && (
+          <button type="button" onClick={onAction} className="luma-btn-ghost h-8 px-2.5">
+            {actionLabel}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -670,14 +675,48 @@ function ThemeCard({
           }}
         />
 
-        <span className="text-[10px] font-medium">{theme.name}</span>
+        <span className="text-[12px] font-medium">{theme.name}</span>
       </div>
 
-      <div className="text-[9px] leading-4 text-[var(--luma-text-muted)]">
+      <div className="text-[12px] leading-4 text-[var(--luma-text-muted)]">
         {theme.description}
       </div>
     </button>
   );
+}
+
+function filterWorkspace(nodes: WorkspaceNode[], query: string): WorkspaceNode[] {
+  const normalized = query.trim().toLowerCase();
+
+  if (!normalized) {
+    return nodes;
+  }
+
+  const next: WorkspaceNode[] = [];
+
+  for (const node of nodes) {
+    if (node.type === "file") {
+      if (
+        node.name.toLowerCase().includes(normalized) ||
+        node.path.toLowerCase().includes(normalized)
+      ) {
+        next.push(node);
+      }
+
+      continue;
+    }
+
+    const children = filterWorkspace(node.children, query);
+
+    if (children.length > 0 || node.name.toLowerCase().includes(normalized)) {
+      next.push({
+        ...node,
+        children,
+      });
+    }
+  }
+
+  return next;
 }
 
 function Sidebar({
@@ -687,6 +726,11 @@ function Sidebar({
   selectedFile: string | null;
   onFileSelect: (path: string) => void;
 }) {
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const visible = filterWorkspace(workspace, query);
+
   return (
     <aside
       className="
@@ -696,9 +740,7 @@ function Sidebar({
       "
     >
       <div className="flex h-9 items-center px-2.5">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">
-          Workspace
-        </span>
+        <span className="luma-kicker">Workspace</span>
 
         <div className="ml-auto flex items-center">
           <button
@@ -711,29 +753,29 @@ function Sidebar({
               hover:text-[var(--luma-text-secondary)]
             "
             aria-label="Search workspace"
+            aria-pressed={searchOpen}
+            onClick={() => setSearchOpen((value) => !value)}
           >
             <SearchIcon />
-          </button>
-
-          <button
-            type="button"
-            className="
-              flex h-6 w-6 items-center justify-center
-              rounded-md
-              text-[var(--luma-text-muted)]
-              hover:bg-[var(--luma-surface-hover)]
-              hover:text-[var(--luma-text-secondary)]
-            "
-            aria-label="Add"
-          >
-            <PlusIcon />
           </button>
         </div>
       </div>
 
+      {searchOpen && (
+        <div className="px-2.5 pb-2">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter files"
+            className="luma-input h-8 w-full"
+            autoFocus
+          />
+        </div>
+      )}
+
       <div className="min-h-0 flex-1 overflow-auto px-1.5 pb-2">
         <WorkspaceTree
-          nodes={workspace}
+          nodes={visible}
           selectedFile={selectedFile}
           onFileSelect={onFileSelect}
         />
@@ -744,7 +786,7 @@ function Sidebar({
           flex h-8 shrink-0 items-center
           border-t border-[var(--luma-border)]
           px-2.5
-          text-[9px]
+          text-[12px]
           text-[var(--luma-text-muted)]
         "
       >
@@ -788,7 +830,7 @@ function WorkspaceTree({
             className={`
               flex h-7 w-full items-center gap-1.5
               rounded-md pr-2
-              text-left text-[10px]
+              text-left text-[12px]
               ${
                 selectedFile === node.path
                   ? `
@@ -836,7 +878,7 @@ function FolderRow({
         className="
           flex h-7 w-full items-center gap-1
           rounded-md pr-2
-          text-left text-[10px]
+          text-left text-[12px]
           text-[var(--luma-text-secondary)]
           hover:bg-[var(--luma-surface-hover)]
         "
@@ -922,7 +964,7 @@ function EmptyAgentState() {
           What are we building?
         </h1>
 
-        <p className="mt-1 text-[10px] text-[var(--luma-text-muted)]">
+        <p className="mt-1 text-[12px] text-[var(--luma-text-muted)]">
           Ask Luma to inspect, change, or explain your code.
         </p>
       </div>
@@ -1015,12 +1057,12 @@ function ToolActivity({
             `}
           />
 
-          <span className="text-[10px] text-[var(--luma-text-secondary)]">
+          <span className="text-[12px] text-[var(--luma-text-secondary)]">
             {tool.name}
           </span>
 
           {tool.durationMs !== undefined && (
-            <span className="ml-auto text-[9px] text-[var(--luma-text-muted)]">
+            <span className="ml-auto text-[12px] text-[var(--luma-text-muted)]">
               {tool.durationMs}ms
             </span>
           )}
@@ -1073,9 +1115,9 @@ function ConfirmationCard({
         p-3
       "
     >
-      <div className="text-[11px] font-medium">Luma needs confirmation</div>
+      <div className="text-[13px] font-medium">Luma needs confirmation</div>
 
-      <div className="mt-1 text-[10px] text-[var(--luma-text-muted)]">
+      <div className="mt-1 text-[12px] text-[var(--luma-text-muted)]">
         {confirmation.name}
       </div>
 
@@ -1086,7 +1128,7 @@ function ConfirmationCard({
             rounded-md
             bg-[var(--luma-bg)]
             p-2
-            font-mono text-[9px]
+            font-mono text-[12px]
             leading-4
             text-[var(--luma-text-secondary)]
           "
@@ -1103,7 +1145,7 @@ function ConfirmationCard({
             rounded-md
             bg-[var(--luma-accent)]
             px-2.5 py-1.5
-            text-[10px] font-medium
+            text-[12px] font-medium
             text-black
           "
         >
@@ -1117,7 +1159,7 @@ function ConfirmationCard({
             rounded-md
             border border-[var(--luma-border)]
             px-2.5 py-1.5
-            text-[10px]
+            text-[12px]
             text-[var(--luma-text-secondary)]
             hover:bg-[var(--luma-surface-hover)]
           "
@@ -1137,7 +1179,7 @@ function ErrorMessage({ error }: { error: string }) {
         border border-[var(--luma-danger)]
         bg-[var(--luma-danger)]/5
         px-3 py-2
-        text-[10px]
+        text-[12px]
         text-[var(--luma-danger)]
       "
     >
@@ -1198,7 +1240,7 @@ function Composer({
             resize-none
             bg-transparent
             py-1
-            text-[11px]
+            text-[13px]
             leading-5
             text-[var(--luma-text)]
             outline-none
@@ -1244,7 +1286,7 @@ function Composer({
         )}
       </div>
 
-      <div className="mt-1.5 text-center text-[9px] text-[var(--luma-text-muted)]">
+      <div className="mt-1.5 text-center text-[12px] text-[var(--luma-text-muted)]">
         Enter to send · Shift+Enter for a new line
       </div>
     </div>
@@ -1380,7 +1422,7 @@ function IDEView({ selectedFile }: { selectedFile: string | null }) {
             flex h-full items-center
             border-r border-[var(--luma-border)]
             px-3
-            text-[10px]
+            text-[12px]
             text-[var(--luma-text-secondary)]
           "
         >
@@ -1390,12 +1432,12 @@ function IDEView({ selectedFile }: { selectedFile: string | null }) {
         </div>
 
         {selectedFile && (
-          <span className="ml-3 truncate text-[9px] text-[var(--luma-text-muted)]">
+          <span className="ml-3 truncate text-[12px] text-[var(--luma-text-muted)]">
             {selectedFile}
           </span>
         )}
 
-        <div className="ml-auto px-3 text-[9px] text-[var(--luma-text-muted)]">
+        <div className="ml-auto px-3 text-[12px] text-[var(--luma-text-muted)]">
           {language}
         </div>
       </div>
@@ -1477,7 +1519,7 @@ function IDEView({ selectedFile }: { selectedFile: string | null }) {
           border-t border-[var(--luma-border)]
           bg-[var(--luma-surface)]
           px-3
-          text-[9px]
+          text-[12px]
           text-[var(--luma-text-muted)]
         "
       >
@@ -1503,7 +1545,7 @@ function ChangesView() {
       <div className="text-center">
         <div className="text-[12px] font-medium">No changes</div>
 
-        <div className="mt-1 text-[10px] text-[var(--luma-text-muted)]">
+        <div className="mt-1 text-[12px] text-[var(--luma-text-muted)]">
           Changes and diffs will appear here.
         </div>
       </div>
@@ -1522,9 +1564,12 @@ export default function App() {
 
   const [setupComplete, setSetupComplete] = useState(false);
 
+  const [setupConfig, setSetupConfig] = useState<SetupConfig | null>(null);
+
   useEffect(() => {
     window.luma.getSetupConfig().then((config) => {
       if (config) {
+        setSetupConfig(config);
         setSetupComplete(true);
       }
     });
@@ -1553,15 +1598,35 @@ export default function App() {
 
       const message = event as {
         type?: string;
-        data?: unknown;
       };
 
-      console.log("Luma event:", message);
+      if (message.type === "Ready") {
+        setConnected(true);
+      }
+
+      if (message.type === "ProcessExited") {
+        setConnected(false);
+      }
     });
+
+    const unsubscribeSettings = window.luma.onOpenSettings(() => {
+      setSettingsOpen(true);
+    });
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === ",") {
+        event.preventDefault();
+        setSettingsOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
 
     return () => {
       mounted = false;
       unsubscribe();
+      unsubscribeSettings();
+      window.removeEventListener("keydown", onKeyDown);
     };
   }, []);
 
@@ -1569,7 +1634,10 @@ export default function App() {
     return (
       <SetupWizard
         onComplete={() => {
-          setSetupComplete(true);
+          void window.luma.getSetupConfig().then((config) => {
+            setSetupConfig(config);
+            setSetupComplete(true);
+          });
         }}
       />
     );
@@ -1594,6 +1662,12 @@ export default function App() {
       <SettingsPanel
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
+        connected={connected}
+        setupConfig={setupConfig}
+        onReconfigure={() => {
+          setSettingsOpen(false);
+          setSetupComplete(false);
+        }}
       />
 
       <div className="flex min-h-0 flex-1">

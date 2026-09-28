@@ -39,6 +39,8 @@ declare global {
         connected: boolean;
       }>;
 
+      onOpenSettings(callback: () => void): () => void;
+
       onEvent(callback: (event: unknown) => void): () => void;
     };
   }

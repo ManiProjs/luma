@@ -2,6 +2,8 @@ import { AnimatePresence, motion } from "motion/react";
 
 import { useEffect } from "react";
 
+import LumaWordmark from "../components/LumaWordmark";
+
 import { useSetupStore } from "../stores/setupStore";
 
 import SetupWelcome from "./SetupWelcome";
@@ -12,6 +14,13 @@ import SetupComplete from "./SetupComplete";
 interface SetupWizardProps {
   onComplete: () => void;
 }
+
+const STEP_LABELS = {
+  welcome: "Step 1 of 4",
+  provider: "Step 2 of 4",
+  model: "Step 3 of 4",
+  complete: "Step 4 of 4",
+} as const;
 
 export default function SetupWizard({ onComplete }: SetupWizardProps) {
   const step = useSetupStore((state) => state.step);
@@ -42,9 +51,17 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   }, [finished, onComplete]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[#08090b] text-zinc-100">
+    <div className="h-screen w-screen overflow-hidden bg-[var(--luma-bg)] text-[var(--luma-text)]">
       <div className="flex h-full w-full flex-col">
-        <header className="flex h-12 shrink-0 items-center border-b border-white/[0.06] pl-[84px] pr-5">
+        <header
+          className="
+            drag-region
+            flex h-[44px] shrink-0 items-center
+            border-b border-[var(--luma-border)]
+            bg-[var(--luma-surface)]
+            pl-[82px] pr-5
+          "
+        >
           <motion.div
             initial={{
               opacity: 0,
@@ -57,21 +74,9 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
             transition={{
               duration: 0.25,
             }}
-            className="flex items-center gap-2.5"
+            className="pointer-events-none"
           >
-            <motion.div
-              whileHover={{
-                rotate: -4,
-                scale: 1.04,
-              }}
-              className="flex h-6 w-6 items-center justify-center rounded-md bg-zinc-100 text-[10px] font-bold text-zinc-950"
-            >
-              L
-            </motion.div>
-
-            <span className="text-[13px] font-semibold tracking-tight text-zinc-200">
-              Luma
-            </span>
+            <LumaWordmark />
           </motion.div>
 
           <motion.div
@@ -84,9 +89,9 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
             transition={{
               delay: 0.15,
             }}
-            className="ml-auto text-[11px] text-zinc-600"
+            className="ml-auto text-[12px] text-[var(--luma-text-muted)]"
           >
-            Setup
+            {finished ? "Ready" : STEP_LABELS[step]}
           </motion.div>
         </header>
 

@@ -1,3 +1,4 @@
+import { SparkIcon } from "../components/LumaWordmark";
 import { useSetupStore } from "../stores/setupStore";
 
 export default function SetupWelcome() {
@@ -8,21 +9,27 @@ export default function SetupWelcome() {
       <div className="flex min-h-0 flex-1 items-center justify-center px-6">
         <div className="w-full max-w-xl">
           <div className="mb-8 flex justify-center">
-            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.03] text-2xl font-semibold text-zinc-100 shadow-2xl shadow-black/20">
-              L
+            <div
+              className="
+                flex h-16 w-16 items-center justify-center
+                rounded-2xl
+                border border-[var(--luma-border-strong)]
+                bg-[var(--luma-accent-soft)]
+                text-[var(--luma-accent)]
+              "
+            >
+              <SparkIcon size={28} />
             </div>
           </div>
 
           <div className="text-center">
-            <div className="text-[11px] font-medium uppercase tracking-[0.18em] text-zinc-600">
-              Luma
-            </div>
+            <div className="luma-kicker">Luma</div>
 
-            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em] text-zinc-100">
+            <h1 className="mt-2 text-[28px] font-semibold tracking-[-0.03em]">
               Welcome to Luma
             </h1>
 
-            <p className="mx-auto mt-3 max-w-md text-sm leading-6 text-zinc-500">
+            <p className="mx-auto mt-3 max-w-md text-[13px] leading-6 text-[var(--luma-text-secondary)]">
               Connect Luma to an AI provider and choose the model you want to
               use for your coding workspace.
             </p>
@@ -38,12 +45,8 @@ export default function SetupWelcome() {
         </div>
       </div>
 
-      <div className="flex shrink-0 justify-end border-t border-white/[0.06] px-7 py-4">
-        <button
-          type="button"
-          onClick={next}
-          className="h-9 rounded-lg bg-zinc-100 px-4 text-[12px] font-medium text-zinc-900 transition hover:bg-white"
-        >
+      <div className="flex shrink-0 justify-end border-t border-[var(--luma-border)] px-7 py-4">
+        <button type="button" onClick={next} className="luma-btn-primary">
           Get started
         </button>
       </div>
@@ -59,10 +62,10 @@ function Feature({
   description: string;
 }) {
   return (
-    <div className="rounded-xl border border-white/[0.06] bg-white/[0.02] p-3.5">
-      <div className="text-[12px] font-medium text-zinc-300">{title}</div>
+    <div className="luma-card p-3.5">
+      <div className="text-[13px] font-medium">{title}</div>
 
-      <div className="mt-1 text-[11px] leading-4 text-zinc-600">
+      <div className="mt-1 text-[12px] leading-5 text-[var(--luma-text-muted)]">
         {description}
       </div>
     </div>

@@ -24,6 +24,18 @@ contextBridge.exposeInMainWorld("luma", {
 
   getStatus: () => ipcRenderer.invoke("luma:status"),
 
+  onOpenSettings: (callback: () => void) => {
+    const listener = () => {
+      callback();
+    };
+
+    ipcRenderer.on("luma:open-settings", listener);
+
+    return () => {
+      ipcRenderer.removeListener("luma:open-settings", listener);
+    };
+  },
+
   onEvent: (callback: (event: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, data: unknown) => {
       callback(data);

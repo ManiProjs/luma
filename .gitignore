@@ -2,3 +2,5 @@
 
 .DS_Store
 .omc/
+.serena/
+node_modules

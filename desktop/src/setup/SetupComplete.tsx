@@ -47,7 +47,13 @@ export default function SetupComplete() {
               stiffness: 300,
               damping: 22,
             }}
-            className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.04] text-xl text-zinc-100"
+            className="
+              mx-auto flex h-14 w-14 items-center justify-center
+              rounded-2xl
+              border border-[var(--luma-border-strong)]
+              bg-[var(--luma-accent-soft)]
+              text-xl text-[var(--luma-accent)]
+            "
           >
             ✓
           </motion.div>
@@ -64,7 +70,7 @@ export default function SetupComplete() {
             transition={{
               delay: 0.1,
             }}
-            className="mt-5 text-2xl font-semibold tracking-tight text-zinc-100"
+            className="mt-5 text-[22px] font-semibold tracking-tight"
           >
             Luma is ready
           </motion.h1>
@@ -81,7 +87,7 @@ export default function SetupComplete() {
             transition={{
               delay: 0.15,
             }}
-            className="mt-2 text-sm leading-6 text-zinc-500"
+            className="mt-2 text-[13px] leading-6 text-[var(--luma-text-secondary)]"
           >
             Your provider and model configuration has been saved.
           </motion.p>
@@ -100,16 +106,14 @@ export default function SetupComplete() {
       }}
       className="flex h-full min-h-0 flex-col"
     >
-      <div className="border-b border-white/[0.06] px-7 py-5">
-        <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-600">
-          Step 3 of 3
-        </div>
+      <div className="border-b border-[var(--luma-border)] px-7 py-5">
+        <div className="luma-kicker">Step 4 of 4</div>
 
-        <h1 className="mt-1.5 text-[22px] font-semibold tracking-tight text-zinc-100">
+        <h1 className="mt-1.5 text-[22px] font-semibold tracking-tight">
           Review your setup
         </h1>
 
-        <p className="mt-1 text-[13px] text-zinc-500">
+        <p className="mt-1 text-[13px] text-[var(--luma-text-secondary)]">
           Check your configuration before starting Luma.
         </p>
       </div>
@@ -162,7 +166,7 @@ export default function SetupComplete() {
                   opacity: 0,
                   y: -5,
                 }}
-                className="rounded-lg border border-red-500/10 bg-red-500/[0.04] px-3 py-2.5 text-[12px] text-red-400"
+                className="rounded-lg border border-[var(--luma-danger)]/20 bg-[var(--luma-danger)]/5 px-3 py-2.5 text-[13px] text-[var(--luma-danger)]"
               >
                 {error}
               </motion.div>
@@ -171,7 +175,7 @@ export default function SetupComplete() {
         </motion.div>
       </div>
 
-      <div className="flex shrink-0 items-center justify-between border-t border-white/[0.06] px-7 py-4">
+      <div className="flex shrink-0 items-center justify-between border-t border-[var(--luma-border)] px-7 py-4">
         <motion.button
           type="button"
           onClick={back}
@@ -182,7 +186,7 @@ export default function SetupComplete() {
           whileTap={{
             scale: 0.97,
           }}
-          className="h-9 rounded-lg px-3 text-[12px] text-zinc-500 transition hover:bg-white/[0.04] hover:text-zinc-300 disabled:opacity-30"
+          className="luma-btn-ghost"
         >
           Back
         </motion.button>
@@ -205,7 +209,7 @@ export default function SetupComplete() {
                 }
               : undefined
           }
-          className="h-9 rounded-lg bg-zinc-100 px-4 text-[12px] font-medium text-zinc-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-30"
+          className="luma-btn-primary"
         >
           {saving ? "Saving..." : "Finish setup"}
         </motion.button>
@@ -231,17 +235,15 @@ function Summary({
       transition={{
         duration: 0.15,
       }}
-      className="flex items-center justify-between gap-6 rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3.5"
+      className="luma-card flex items-center justify-between gap-6 px-4 py-3.5"
     >
-      <div className="text-[12px] text-zinc-500">{label}</div>
+      <div className="text-[13px] text-[var(--luma-text-secondary)]">{label}</div>
 
       <div className="min-w-0 text-right">
-        <div className="truncate text-[13px] font-medium text-zinc-200">
-          {value}
-        </div>
+        <div className="truncate text-[13px] font-medium">{value}</div>
 
         {detail && (
-          <div className="mt-0.5 truncate text-[10px] text-zinc-600">
+          <div className="mt-0.5 truncate text-[12px] text-[var(--luma-text-muted)]">
             {detail}
           </div>
         )}

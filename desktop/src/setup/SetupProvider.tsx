@@ -58,12 +58,6 @@ export default function SetupProvider() {
     const normalized = query.trim().toLowerCase();
 
     return safeProviders.filter((provider) => {
-      /*
-       * Rust's provider registry is the
-       * source of truth.
-       *
-       * provider_type is the Rust field.
-       */
       if (filter !== "All") {
         const type = provider.provider_type.toLowerCase();
 
@@ -98,7 +92,7 @@ export default function SetupProvider() {
       }}
       className="flex h-full min-h-0 flex-col"
     >
-      <div className="border-b border-white/[0.06] px-7 py-5">
+      <div className="border-b border-[var(--luma-border)] px-7 py-5">
         <motion.div
           initial={{
             opacity: 0,
@@ -111,9 +105,9 @@ export default function SetupProvider() {
           transition={{
             delay: 0.04,
           }}
-          className="text-[11px] font-medium uppercase tracking-[0.14em] text-zinc-600"
+          className="luma-kicker"
         >
-          Step 1 of 3
+          Step 2 of 4
         </motion.div>
 
         <motion.h1
@@ -128,7 +122,7 @@ export default function SetupProvider() {
           transition={{
             delay: 0.08,
           }}
-          className="mt-1.5 text-[22px] font-semibold tracking-tight text-zinc-100"
+          className="mt-1.5 text-[22px] font-semibold tracking-tight"
         >
           Choose a provider
         </motion.h1>
@@ -145,7 +139,7 @@ export default function SetupProvider() {
           transition={{
             delay: 0.12,
           }}
-          className="mt-1 text-[13px] text-zinc-500"
+          className="mt-1 text-[13px] text-[var(--luma-text-secondary)]"
         >
           Select where Luma should send model requests.
         </motion.p>
@@ -171,13 +165,13 @@ export default function SetupProvider() {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search providers..."
-              className="h-9 min-w-0 flex-1 rounded-lg border border-white/[0.07] bg-white/[0.02] px-3 text-[13px] text-zinc-200 outline-none placeholder:text-zinc-600 transition focus:border-white/[0.14]"
+              className="luma-input flex-1"
             />
 
             <select
               value={filter}
               onChange={(event) => setFilter(event.target.value as Filter)}
-              className="h-9 rounded-lg border border-white/[0.07] bg-[#0c0d10] px-3 text-[12px] text-zinc-400 outline-none"
+              className="luma-input w-[132px]"
             >
               <option value="All">All</option>
 
@@ -207,7 +201,7 @@ export default function SetupProvider() {
                   height: 0,
                   y: -5,
                 }}
-                className="mt-3 overflow-hidden rounded-lg border border-red-500/10 bg-red-500/[0.04] px-3 py-2.5 text-[12px] text-red-400"
+                className="mt-3 overflow-hidden rounded-lg border border-[var(--luma-danger)]/20 bg-[var(--luma-danger)]/5 px-3 py-2.5 text-[13px] text-[var(--luma-danger)]"
               >
                 {error}
               </motion.div>
@@ -224,7 +218,7 @@ export default function SetupProvider() {
               }}
               className="flex justify-center py-16"
             >
-              <div className="flex items-center gap-2 text-[13px] text-zinc-600">
+              <div className="flex items-center gap-2 text-[13px] text-[var(--luma-text-muted)]">
                 <motion.div
                   animate={{
                     opacity: [0.25, 1, 0.25],
@@ -233,7 +227,7 @@ export default function SetupProvider() {
                     duration: 1.1,
                     repeat: Infinity,
                   }}
-                  className="h-1.5 w-1.5 rounded-full bg-zinc-500"
+                  className="h-1.5 w-1.5 rounded-full bg-[var(--luma-text-muted)]"
                 />
                 Loading providers...
               </div>
@@ -248,11 +242,11 @@ export default function SetupProvider() {
               }}
               className="py-16 text-center"
             >
-              <div className="text-[13px] text-zinc-400">
+              <div className="text-[13px] text-[var(--luma-text-secondary)]">
                 No providers found
               </div>
 
-              <div className="mt-1 text-[11px] text-zinc-600">
+              <div className="mt-1 text-[12px] text-[var(--luma-text-muted)]">
                 Try another search.
               </div>
             </motion.div>
@@ -281,17 +275,17 @@ export default function SetupProvider() {
                     className={[
                       "rounded-xl border p-3.5 text-left transition-colors",
                       selected
-                        ? "border-white/[0.16] bg-white/[0.07]"
-                        : "border-white/[0.06] bg-white/[0.02] hover:border-white/[0.10] hover:bg-white/[0.04]",
+                        ? "border-[var(--luma-border-strong)] bg-[var(--luma-surface-hover)]"
+                        : "border-[var(--luma-border)] bg-[var(--luma-surface)] hover:bg-[var(--luma-surface-hover)]",
                     ].join(" ")}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <div className="truncate text-[13px] font-medium text-zinc-200">
+                        <div className="truncate text-[13px] font-medium">
                           {provider.name}
                         </div>
 
-                        <div className="mt-1 text-[11px] leading-4 text-zinc-600">
+                        <div className="mt-1 text-[12px] leading-5 text-[var(--luma-text-muted)]">
                           {provider.description}
                         </div>
                       </div>
@@ -311,7 +305,7 @@ export default function SetupProvider() {
                               opacity: 0,
                               scale: 0.7,
                             }}
-                            className="shrink-0 text-[10px] text-zinc-400"
+                            className="shrink-0 text-[11px] text-[var(--luma-text-secondary)]"
                           >
                             Selected
                           </motion.div>
@@ -320,11 +314,11 @@ export default function SetupProvider() {
                     </div>
 
                     <div className="mt-3 flex items-center gap-2">
-                      <span className="rounded-md bg-white/[0.04] px-1.5 py-0.5 text-[9px] text-zinc-500">
+                      <span className="rounded-md bg-[var(--luma-surface-raised)] px-1.5 py-0.5 text-[11px] text-[var(--luma-text-secondary)]">
                         {provider.provider_type}
                       </span>
 
-                      <span className="truncate rounded-md bg-white/[0.04] px-1.5 py-0.5 text-[9px] text-zinc-600">
+                      <span className="truncate rounded-md bg-[var(--luma-surface-raised)] px-1.5 py-0.5 text-[11px] text-[var(--luma-text-muted)]">
                         {provider.endpoint}
                       </span>
                     </div>
@@ -336,7 +330,7 @@ export default function SetupProvider() {
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center justify-between border-t border-white/[0.06] px-7 py-4">
+      <div className="flex shrink-0 items-center justify-between border-t border-[var(--luma-border)] px-7 py-4">
         <motion.button
           type="button"
           onClick={back}
@@ -346,7 +340,7 @@ export default function SetupProvider() {
           whileTap={{
             scale: 0.97,
           }}
-          className="h-9 rounded-lg px-3 text-[12px] text-zinc-500 transition hover:bg-white/[0.04] hover:text-zinc-300"
+          className="luma-btn-ghost"
         >
           Back
         </motion.button>
@@ -369,7 +363,7 @@ export default function SetupProvider() {
                 }
               : undefined
           }
-          className="h-9 rounded-lg bg-zinc-100 px-4 text-[12px] font-medium text-zinc-900 transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-30"
+          className="luma-btn-primary"
         >
           Continue
         </motion.button>

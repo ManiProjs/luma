@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
 :root {
+  color-scheme: dark;
+
   --luma-bg: #07080a;
   --luma-surface: #0b0d10;
   --luma-surface-raised: #101216;
@@ -10,8 +12,8 @@
   --luma-border-strong: rgba(255, 255, 255, 0.09);
 
   --luma-text: #f4f4f5;
-  --luma-text-secondary: #a1a1aa;
-  --luma-text-muted: #52525b;
+  --luma-text-secondary: #c4c4cc;
+  --luma-text-muted: #8b8b96;
 
   --luma-accent: #8eb7ff;
   --luma-accent-soft: rgba(142, 183, 255, 0.08);
@@ -22,6 +24,7 @@
   --luma-warning: #fbbf24;
 
   --luma-selection: rgba(142, 183, 255, 0.12);
+  --luma-on-accent: #081018;
 }
 
 [data-theme="midnight"] {
@@ -34,8 +37,8 @@
   --luma-border-strong: rgba(139, 156, 255, 0.14);
 
   --luma-text: #eef2ff;
-  --luma-text-secondary: #a5b4d4;
-  --luma-text-muted: #59627a;
+  --luma-text-secondary: #c5cde6;
+  --luma-text-muted: #8b93a8;
 
   --luma-accent: #8b9cff;
   --luma-accent-soft: rgba(139, 156, 255, 0.1);
@@ -46,6 +49,7 @@
   --luma-warning: #ffd166;
 
   --luma-selection: rgba(139, 156, 255, 0.14);
+  --luma-on-accent: #0a0c18;
 }
 
 [data-theme="nord"] {
@@ -59,7 +63,7 @@
 
   --luma-text: #eceff4;
   --luma-text-secondary: #d8dee9;
-  --luma-text-muted: #7f8c9f;
+  --luma-text-muted: #9aa6b8;
 
   --luma-accent: #88c0d0;
   --luma-accent-soft: rgba(136, 192, 208, 0.1);
@@ -70,6 +74,7 @@
   --luma-warning: #ebcb8b;
 
   --luma-selection: rgba(136, 192, 208, 0.14);
+  --luma-on-accent: #1a1e26;
 }
 
 [data-theme="dracula"] {
@@ -82,8 +87,8 @@
   --luma-border-strong: rgba(248, 248, 242, 0.12);
 
   --luma-text: #f8f8f2;
-  --luma-text-secondary: #c9c9c0;
-  --luma-text-muted: #6272a4;
+  --luma-text-secondary: #d4d4cc;
+  --luma-text-muted: #9aa3c7;
 
   --luma-accent: #bd93f9;
   --luma-accent-soft: rgba(189, 147, 249, 0.1);
@@ -94,6 +99,7 @@
   --luma-warning: #f1fa8c;
 
   --luma-selection: rgba(189, 147, 249, 0.15);
+  --luma-on-accent: #1a1224;
 }
 
 [data-theme="solarized"] {
@@ -107,7 +113,7 @@
 
   --luma-text: #eee8d5;
   --luma-text-secondary: #93a1a1;
-  --luma-text-muted: #657b83;
+  --luma-text-muted: #839496;
 
   --luma-accent: #268bd2;
   --luma-accent-soft: rgba(38, 139, 210, 0.1);
@@ -118,6 +124,48 @@
   --luma-warning: #b58900;
 
   --luma-selection: rgba(38, 139, 210, 0.15);
+  --luma-on-accent: #00141a;
+}
+
+[data-appearance="light"] {
+  color-scheme: light;
+
+  --luma-bg: #f3f4f6;
+  --luma-surface: #fafafa;
+  --luma-surface-raised: #ffffff;
+  --luma-surface-hover: #eceef1;
+
+  --luma-border: rgba(24, 24, 27, 0.08);
+  --luma-border-strong: rgba(24, 24, 27, 0.14);
+
+  --luma-text: #18181b;
+  --luma-text-secondary: #3f3f46;
+  --luma-text-muted: #5c5c66;
+
+  --luma-accent-soft: color-mix(in srgb, var(--luma-accent) 14%, transparent);
+  --luma-accent-glow: color-mix(in srgb, var(--luma-accent) 22%, transparent);
+  --luma-selection: color-mix(in srgb, var(--luma-accent) 16%, transparent);
+  --luma-on-accent: #ffffff;
+}
+
+[data-appearance="light"][data-theme="luma"] {
+  --luma-accent: #3b6fd4;
+}
+
+[data-appearance="light"][data-theme="midnight"] {
+  --luma-accent: #4f5fd6;
+}
+
+[data-appearance="light"][data-theme="nord"] {
+  --luma-accent: #2e7a8c;
+}
+
+[data-appearance="light"][data-theme="dracula"] {
+  --luma-accent: #7c4dcc;
+}
+
+[data-appearance="light"][data-theme="solarized"] {
+  --luma-accent: #2076b4;
 }
 
 html,
@@ -144,6 +192,8 @@ body {
     "SF Pro Display",
     system-ui,
     sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
   -webkit-font-smoothing: antialiased;
   transition:
     background-color 160ms ease,
@@ -160,12 +210,21 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
 button {
   -webkit-app-region: no-drag;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--luma-accent);
+  outline-offset: 2px;
 }
 
 .drag-region {
@@ -174,4 +233,89 @@ button {
 
 .no-drag {
   -webkit-app-region: no-drag;
+}
+
+.luma-kicker {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--luma-text-muted);
+}
+
+.luma-input {
+  height: 36px;
+  min-width: 0;
+  border-radius: 8px;
+  border: 1px solid var(--luma-border);
+  background: var(--luma-surface);
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--luma-text);
+  outline: none;
+  transition: border-color 140ms ease;
+}
+
+.luma-input::placeholder {
+  color: var(--luma-text-muted);
+}
+
+.luma-input:focus {
+  border-color: var(--luma-border-strong);
+}
+
+.luma-btn-primary {
+  height: 36px;
+  border-radius: 8px;
+  background: var(--luma-text);
+  padding: 0 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--luma-bg);
+  transition: opacity 140ms ease;
+}
+
+.luma-btn-primary:hover:not(:disabled) {
+  opacity: 0.92;
+}
+
+.luma-btn-primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.3;
+}
+
+.luma-btn-ghost {
+  height: 36px;
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--luma-text-secondary);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease;
+}
+
+.luma-btn-ghost:hover:not(:disabled) {
+  background: var(--luma-surface-hover);
+  color: var(--luma-text);
+}
+
+.luma-btn-ghost:disabled {
+  opacity: 0.3;
+}
+
+.luma-card {
+  border-radius: 12px;
+  border: 1px solid var(--luma-border);
+  background: var(--luma-surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

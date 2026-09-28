@@ -8,7 +8,16 @@ import {
   type ReactNode,
 } from "react";
 
-export type ThemeId = "luma" | "midnight" | "nord" | "dracula" | "solarized";
+export type ThemeId =
+  | "system"
+  | "luma"
+  | "luma-light"
+  | "midnight"
+  | "nord"
+  | "dracula"
+  | "solarized";
+
+export type Appearance = "light" | "dark";
 
 export type ThemeDefinition = {
   id: ThemeId;
@@ -19,10 +28,22 @@ export type ThemeDefinition = {
 
 export const themes: ThemeDefinition[] = [
   {
+    id: "system",
+    name: "Match System",
+    description: "Follows the macOS appearance.",
+    accent: "#8eb7ff",
+  },
+  {
     id: "luma",
     name: "Luma Dark",
     description: "The default Luma interface.",
     accent: "#8eb7ff",
+  },
+  {
+    id: "luma-light",
+    name: "Luma Light",
+    description: "A bright workspace for daylight.",
+    accent: "#3b6fd4",
   },
   {
     id: "midnight",
@@ -54,30 +75,77 @@ type ThemeContextValue = {
   theme: ThemeId;
   setTheme: (theme: ThemeId) => void;
   definition: ThemeDefinition;
+  appearance: Appearance;
 };
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 const STORAGE_KEY = "luma.theme";
 
+const THEME_IDS: ThemeId[] = [
+  "system",
+  "luma",
+  "luma-light",
+  "midnight",
+  "nord",
+  "dracula",
+  "solarized",
+];
+
+function isThemeId(value: string | null): value is ThemeId {
+  return THEME_IDS.includes(value as ThemeId);
+}
+
 function getInitialTheme(): ThemeId {
   const stored = localStorage.getItem(STORAGE_KEY);
 
-  if (
-    stored === "luma" ||
-    stored === "midnight" ||
-    stored === "nord" ||
-    stored === "dracula" ||
-    stored === "solarized"
-  ) {
+  if (isThemeId(stored)) {
     return stored;
   }
 
   return "luma";
 }
 
+function systemPrefersLight() {
+  return window.matchMedia("(prefers-color-scheme: light)").matches;
+}
+
+export function resolveTheme(theme: ThemeId): {
+  palette: "luma" | "midnight" | "nord" | "dracula" | "solarized";
+  appearance: Appearance;
+} {
+  if (theme === "system") {
+    return {
+      palette: "luma",
+      appearance: systemPrefersLight() ? "light" : "dark",
+    };
+  }
+
+  if (theme === "luma-light") {
+    return {
+      palette: "luma",
+      appearance: "light",
+    };
+  }
+
+  return {
+    palette: theme,
+    appearance: "dark",
+  };
+}
+
+function applyResolvedTheme(theme: ThemeId) {
+  const resolved = resolveTheme(theme);
+
+  document.documentElement.dataset.theme = resolved.palette;
+  document.documentElement.dataset.appearance = resolved.appearance;
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeId>(getInitialTheme);
+  const [appearance, setAppearance] = useState<Appearance>(
+    () => resolveTheme(getInitialTheme()).appearance,
+  );
 
   const setTheme = useCallback((nextTheme: ThemeId) => {
     setThemeState(nextTheme);
@@ -85,11 +153,27 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
+    const apply = () => {
+      applyResolvedTheme(theme);
+      setAppearance(resolveTheme(theme).appearance);
+    };
+
+    apply();
+
+    if (theme !== "system") {
+      return;
+    }
+
+    const media = window.matchMedia("(prefers-color-scheme: light)");
+    media.addEventListener("change", apply);
+
+    return () => {
+      media.removeEventListener("change", apply);
+    };
   }, [theme]);
 
   const definition = useMemo(
-    () => themes.find((item) => item.id === theme) ?? themes[0],
+    () => themes.find((item) => item.id === theme) ?? themes[1],
     [theme],
   );
 
@@ -99,6 +183,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         theme,
         setTheme,
         definition,
+        appearance,
       }}
     >
       {children}
