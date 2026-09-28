@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"cargo clippy -- -D warnings 2>&1\",\"description\":\"Final linting check to ensure all clippy errors are resolved\"}",
+  "error": "Exit code 101\n    Checking luma v0.1.0 (/Users/maniarasteh/projs/luma)\nerror: method `default` can be confused for the standard trait method `std::default::Default::default`\n  --> src/theme.rs:11:5\n   |\n11 | /     pub fn default() -> Self {\n12 | |         Self {\n13 | |             star: Color::Yellow,\n14 | |             glow: Color::LightYellow,\n...  |\n18 | |     }\n   | |_____^\n   |\n   = help: consider implementing the trait `std::default::Default` or choosing a less ambiguous method name\n   = h...",
+  "timestamp": "2026-09-07T18:12:25.713Z",
+  "retry_count": 1
+}

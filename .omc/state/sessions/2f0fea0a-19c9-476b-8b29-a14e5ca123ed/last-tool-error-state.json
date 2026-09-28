@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"cargo check\",\"description\":\"Check if the new module structure is valid\"}",
+  "error": "Exit code 101\n    Checking luma v0.1.0 (/Users/maniarasteh/projs/luma)\nerror[E0433]: cannot find `workspace` in `crate`\n  --> src/agent.rs:16:5\n   |\n16 |     workspace::language::{self, ProgrammingLanguage},\n   |     ^^^^^^^^^ could not find `workspace` in the crate root\n\nerror[E0432]: unresolved import `axum::extract::ws`\n  --> src/dashboard/mod.rs:2:14\n   |\n 2 |     extract::ws::{Message, WebSocket, WebSocketUpgrade},\n   |              ^^ could not find `ws` in `extract`\n   |\nnote: found an it...",
+  "timestamp": "2026-09-14T11:48:41.998Z",
+  "retry_count": 1
+}

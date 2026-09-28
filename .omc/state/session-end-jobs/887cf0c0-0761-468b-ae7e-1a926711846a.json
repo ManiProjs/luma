@@ -1,0 +1,331 @@
+{
+  "version": 1,
+  "jobId": "fb506511-762d-4f54-acad-753081a9897a",
+  "sessionId": "887cf0c0-0761-468b-ae7e-1a926711846a",
+  "scopeKey": "b03d40694026c45f5cd9516631474a436462c8effc0fdeac50535fe39b5e5e2b",
+  "revision": 54,
+  "createdAt": "2026-09-15T06:58:48.723Z",
+  "updatedAt": "2026-09-15T06:59:20.778Z",
+  "producerGraceExpiresAt": "2026-09-15T06:59:18.724Z",
+  "bestEffortDeadlineAt": "2026-09-15T07:00:09.724Z",
+  "producers": {
+    "core": {
+      "state": "sealed",
+      "intentKey": "9fb20aea243a877542b5d2aedfc5ad52807add6f040ce7aac7051cdbde5e01c7",
+      "payloadDigest": "9fb20aea243a877542b5d2aedfc5ad52807add6f040ce7aac7051cdbde5e01c7",
+      "sealedAt": "2026-09-15T06:59:19.331Z",
+      "sealedBy": "recovery"
+    },
+    "wiki": {
+      "state": "no-op",
+      "sealedAt": "2026-09-15T06:58:48.723Z",
+      "sealedBy": "wiki-producer"
+    }
+  },
+  "actions": {
+    "foreground-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "febf6dba2f2536433960a07f7cedce72e946b43ced0896570df80f017b8914d2",
+      "payload": {
+        "transcriptPath": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+        "cwd": "/Users/maniarasteh/projs/luma",
+        "reason": "prompt_input_exit",
+        "input": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "transcript_path": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+          "cwd": "/Users/maniarasteh/projs/luma",
+          "prompt_id": "813d3059-c972-4cdb-b56a-9b44466e2232",
+          "hook_event_name": "SessionEnd",
+          "reason": "prompt_input_exit"
+        },
+        "metrics": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "ended_at": "2026-09-15T06:58:48.722Z",
+          "reason": "prompt_input_exit",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 9000,
+      "claimedAt": "2026-09-15T06:59:18.890Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "41642adb-5010-4c00-9dc9-899fbf0f7ef2",
+        "phase": "terminal",
+        "deadlineAt": "2026-09-15T06:59:28.725Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-09-15T06:59:19.309Z"
+    },
+    "wiki-capture": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 0,
+      "idempotencyKey": "1719cd1ef5b51e0269b78c4cb8c9308c9c1f7b82fd1c067fc034c060f23863f5",
+      "payload": {},
+      "budgetMs": 9000,
+      "completedAt": "2026-09-15T06:58:48.723Z"
+    },
+    "team-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "cee6ac31df545408e1e822247ac249b3f8182a98a5fe8e448ae3b251e55bdee1",
+      "payload": {
+        "transcriptPath": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+        "cwd": "/Users/maniarasteh/projs/luma",
+        "reason": "prompt_input_exit",
+        "input": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "transcript_path": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+          "cwd": "/Users/maniarasteh/projs/luma",
+          "prompt_id": "813d3059-c972-4cdb-b56a-9b44466e2232",
+          "hook_event_name": "SessionEnd",
+          "reason": "prompt_input_exit"
+        },
+        "metrics": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "ended_at": "2026-09-15T06:58:48.722Z",
+          "reason": "prompt_input_exit",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 9000,
+      "claimedAt": "2026-09-15T06:59:19.406Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "01cd437a-85b9-49d5-b538-3bb3c6c3bb1e",
+        "phase": "terminal",
+        "deadlineAt": "2026-09-15T06:59:28.725Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-09-15T06:59:19.593Z"
+    },
+    "python-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "1f1370c4ac056606059d517e2f106b602d8cbcb04587b3fcc5f3b9f89e649cd0",
+      "payload": {
+        "transcriptPath": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+        "cwd": "/Users/maniarasteh/projs/luma",
+        "reason": "prompt_input_exit",
+        "input": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "transcript_path": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+          "cwd": "/Users/maniarasteh/projs/luma",
+          "prompt_id": "813d3059-c972-4cdb-b56a-9b44466e2232",
+          "hook_event_name": "SessionEnd",
+          "reason": "prompt_input_exit"
+        },
+        "metrics": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "ended_at": "2026-09-15T06:58:48.722Z",
+          "reason": "prompt_input_exit",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 9000,
+      "claimedAt": "2026-09-15T06:59:19.641Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "19f75397-0dea-411d-9e5f-d4fd1274c03c",
+        "phase": "terminal",
+        "deadlineAt": "2026-09-15T06:59:28.725Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-09-15T06:59:19.830Z"
+    },
+    "reply-cleanup": {
+      "class": "required",
+      "phase": "deferred-required",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "0b3a8b47c28b26d56aca004d4f572b96c118f16819c0d35162418816f9a5420a",
+      "payload": {
+        "transcriptPath": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+        "cwd": "/Users/maniarasteh/projs/luma",
+        "reason": "prompt_input_exit",
+        "input": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "transcript_path": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+          "cwd": "/Users/maniarasteh/projs/luma",
+          "prompt_id": "813d3059-c972-4cdb-b56a-9b44466e2232",
+          "hook_event_name": "SessionEnd",
+          "reason": "prompt_input_exit"
+        },
+        "metrics": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "ended_at": "2026-09-15T06:58:48.722Z",
+          "reason": "prompt_input_exit",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 9000,
+      "claimedAt": "2026-09-15T06:59:19.880Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "e8e33786-a6b8-4852-87a1-6a817231e3d1",
+        "phase": "terminal",
+        "deadlineAt": "2026-09-15T06:59:28.725Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-09-15T06:59:20.052Z"
+    },
+    "callback": {
+      "class": "best-effort",
+      "phase": "deferred-best-effort",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "d068ede2655bf89e0c0950e087d0603d7dcf45538e94f20a654d08c6f4841895",
+      "payload": {
+        "transcriptPath": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+        "cwd": "/Users/maniarasteh/projs/luma",
+        "reason": "prompt_input_exit",
+        "input": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "transcript_path": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+          "cwd": "/Users/maniarasteh/projs/luma",
+          "prompt_id": "813d3059-c972-4cdb-b56a-9b44466e2232",
+          "hook_event_name": "SessionEnd",
+          "reason": "prompt_input_exit"
+        },
+        "metrics": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "ended_at": "2026-09-15T06:58:48.722Z",
+          "reason": "prompt_input_exit",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 2000,
+      "claimedAt": "2026-09-15T06:59:20.102Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "106defce-5719-47ee-9d3a-02d849cb2ad6",
+        "phase": "terminal",
+        "deadlineAt": "2026-09-15T06:59:28.725Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-09-15T06:59:20.281Z"
+    },
+    "notification": {
+      "class": "best-effort",
+      "phase": "deferred-best-effort",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "89c0438ff63097ce04beb60efb87292ff68a7af350a0ee331f3de9dbf42d62fc",
+      "payload": {
+        "transcriptPath": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+        "cwd": "/Users/maniarasteh/projs/luma",
+        "reason": "prompt_input_exit",
+        "input": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "transcript_path": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+          "cwd": "/Users/maniarasteh/projs/luma",
+          "prompt_id": "813d3059-c972-4cdb-b56a-9b44466e2232",
+          "hook_event_name": "SessionEnd",
+          "reason": "prompt_input_exit"
+        },
+        "metrics": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "ended_at": "2026-09-15T06:58:48.722Z",
+          "reason": "prompt_input_exit",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 2000,
+      "claimedAt": "2026-09-15T06:59:20.330Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "b219ab4f-061e-4a20-86c9-ab0ca2a87e83",
+        "phase": "terminal",
+        "deadlineAt": "2026-09-15T06:59:28.725Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-09-15T06:59:20.490Z"
+    },
+    "openclaw": {
+      "class": "best-effort",
+      "phase": "deferred-best-effort",
+      "status": "completed",
+      "attempts": 1,
+      "idempotencyKey": "31fe8f6e1cf204e27006de511df257326fdd98655122ca437013e8779ffc735b",
+      "payload": {
+        "transcriptPath": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+        "cwd": "/Users/maniarasteh/projs/luma",
+        "reason": "prompt_input_exit",
+        "input": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "transcript_path": "/Users/maniarasteh/.claude/projects/-Users-maniarasteh-projs-luma/887cf0c0-0761-468b-ae7e-1a926711846a.jsonl",
+          "cwd": "/Users/maniarasteh/projs/luma",
+          "prompt_id": "813d3059-c972-4cdb-b56a-9b44466e2232",
+          "hook_event_name": "SessionEnd",
+          "reason": "prompt_input_exit"
+        },
+        "metrics": {
+          "session_id": "887cf0c0-0761-468b-ae7e-1a926711846a",
+          "ended_at": "2026-09-15T06:58:48.722Z",
+          "reason": "prompt_input_exit",
+          "agents_spawned": 0,
+          "agents_completed": 0,
+          "modes_used": []
+        },
+        "initialTeamNames": [],
+        "openClawEnabled": false,
+        "openClawRouting": {}
+      },
+      "budgetMs": 2000,
+      "claimedAt": "2026-09-15T06:59:20.538Z",
+      "runner": {
+        "attempt": 1,
+        "runnerNonce": "2a4afba6-1c26-4921-9c05-22ad3ef41b63",
+        "phase": "terminal",
+        "deadlineAt": "2026-09-15T06:59:28.725Z"
+      },
+      "lastOutcomeCode": "completed",
+      "completedAt": "2026-09-15T06:59:20.703Z"
+    }
+  },
+  "owner": null,
+  "phase": "complete",
+  "completion": {
+    "completedAt": "2026-09-15T06:59:20.743Z",
+    "terminalDigest": "db8e4be71767c1e6aa2a9617b0ed32b9114f632ae8547f03074b9ab823b7328a",
+    "terminalRevision": 53
+  }
+}

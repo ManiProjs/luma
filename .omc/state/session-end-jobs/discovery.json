@@ -1,0 +1,78 @@
+{
+  "version": 2,
+  "cursor": 8,
+  "tickets": [
+    {
+      "sessionId": "2f0fea0a-19c9-476b-8b29-a14e5ca123ed",
+      "attempts": 0,
+      "retryAt": "2026-09-14T16:12:26.252Z",
+      "acknowledgedAt": "2026-09-14T16:12:59.112Z"
+    },
+    {
+      "sessionId": "10f46870-6c20-4a5c-a5eb-e406cff1498b",
+      "attempts": 0,
+      "retryAt": "2026-09-14T21:07:55.362Z",
+      "acknowledgedAt": "2026-09-14T21:08:27.862Z"
+    },
+    {
+      "sessionId": "744218fb-a2ab-4070-8811-4087a2d2053e",
+      "attempts": 0,
+      "retryAt": "2026-09-15T06:48:53.282Z",
+      "acknowledgedAt": "2026-09-15T06:49:25.952Z"
+    },
+    {
+      "sessionId": "5d73f7f6-b181-4a7d-9a7e-0e756f4270f2",
+      "attempts": 0,
+      "retryAt": "2026-09-15T06:49:36.083Z",
+      "acknowledgedAt": "2026-09-15T06:50:09.069Z"
+    },
+    {
+      "sessionId": "887cf0c0-0761-468b-ae7e-1a926711846a",
+      "attempts": 0,
+      "retryAt": "2026-09-15T06:58:48.743Z",
+      "acknowledgedAt": "2026-09-15T06:59:20.789Z"
+    },
+    {
+      "sessionId": "9782c580-125a-4204-a4cf-87c104f925ef",
+      "attempts": 0,
+      "retryAt": "2026-09-15T07:03:36.179Z",
+      "acknowledgedAt": "2026-09-15T07:04:06.581Z"
+    },
+    {
+      "sessionId": "1df7157f-45b0-4c2b-ae43-97e62764602e",
+      "attempts": 0,
+      "retryAt": "2026-09-18T19:48:26.310Z",
+      "acknowledgedAt": "2026-09-18T19:48:58.614Z"
+    },
+    {
+      "sessionId": "62956a17-df2e-4d6d-905f-bd6af698c02a",
+      "attempts": 0,
+      "retryAt": "2026-09-19T08:54:45.681Z",
+      "acknowledgedAt": "2026-09-19T08:55:17.940Z"
+    },
+    {
+      "sessionId": "f469cfa3-16d9-4cbc-912a-86e322b3ca0e",
+      "attempts": 0,
+      "retryAt": "2026-09-19T09:50:19.829Z",
+      "acknowledgedAt": "2026-09-19T09:50:52.203Z"
+    },
+    {
+      "sessionId": "d526e367-cd18-482e-b63f-6b674baedd61",
+      "attempts": 0,
+      "retryAt": "2026-09-23T19:20:54.178Z",
+      "acknowledgedAt": "2026-09-23T19:21:26.148Z"
+    },
+    {
+      "sessionId": "49b39d10-65a6-476a-a019-3dab02df68a8",
+      "attempts": 0,
+      "retryAt": "2026-09-23T19:22:58.845Z",
+      "acknowledgedAt": "2026-09-23T19:23:30.857Z"
+    },
+    {
+      "sessionId": "a9fd2e6a-3a9a-4d8b-8f1a-2eb820186b05",
+      "attempts": 0,
+      "retryAt": "2026-09-23T20:09:55.193Z",
+      "acknowledgedAt": "2026-09-23T20:10:27.908Z"
+    }
+  ]
+}

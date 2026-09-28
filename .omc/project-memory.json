@@ -1,0 +1,201 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1790191251930,
+  "projectRoot": "/Users/maniarasteh/projs/luma",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": ">=22.12.0",
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "astro",
+        "version": "7.2.9",
+        "category": "fullstack"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": "Node.js 22.12.0"
+  },
+  "build": {
+    "buildCommand": "npm run build",
+    "testCommand": null,
+    "lintCommand": null,
+    "devCommand": "npm run dev",
+    "scripts": {
+      "dev": "astro dev",
+      "build": "astro build",
+      "preview": "astro preview",
+      "astro": "astro"
+    }
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": "type-based"
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "public",
+      "src"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "desktop": {
+      "path": "desktop",
+      "purpose": null,
+      "fileCount": 0,
+      "lastAccessed": 1790191251909,
+      "keyFiles": []
+    },
+    "public": {
+      "path": "public",
+      "purpose": "Public files",
+      "fileCount": 3,
+      "lastAccessed": 1790191251917,
+      "keyFiles": [
+        "demo.mp4",
+        "favicon.ico",
+        "favicon.svg"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 1,
+      "lastAccessed": 1790191251920,
+      "keyFiles": []
+    },
+    "target": {
+      "path": "target",
+      "purpose": null,
+      "fileCount": 2,
+      "lastAccessed": 1790191251921,
+      "keyFiles": [
+        "CACHEDIR.TAG"
+      ]
+    },
+    "desktop/node_modules": {
+      "path": "desktop/node_modules",
+      "purpose": "Dependencies",
+      "fileCount": 1,
+      "lastAccessed": 1790191251925,
+      "keyFiles": []
+    },
+    "src/assets": {
+      "path": "src/assets",
+      "purpose": "Static assets",
+      "fileCount": 2,
+      "lastAccessed": 1790191251927,
+      "keyFiles": [
+        "astro.svg",
+        "background.svg"
+      ]
+    },
+    "src/components": {
+      "path": "src/components",
+      "purpose": "UI components",
+      "fileCount": 9,
+      "lastAccessed": 1790191251928,
+      "keyFiles": [
+        "Architecture.astro",
+        "Download.astro",
+        "Features.astro"
+      ]
+    },
+    "src/pages": {
+      "path": "src/pages",
+      "purpose": "Page components",
+      "fileCount": 1,
+      "lastAccessed": 1790191251929,
+      "keyFiles": [
+        "index.astro"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "src/components/Features.astro",
+      "accessCount": 5,
+      "lastAccessed": 1790192795643,
+      "type": "file"
+    },
+    {
+      "path": "src/styles/global.css",
+      "accessCount": 3,
+      "lastAccessed": 1790192165252,
+      "type": "file"
+    },
+    {
+      "path": "src/components/Navbar.astro",
+      "accessCount": 3,
+      "lastAccessed": 1790193154695,
+      "type": "file"
+    },
+    {
+      "path": "src/components/Footer.astro",
+      "accessCount": 3,
+      "lastAccessed": 1790193525913,
+      "type": "file"
+    },
+    {
+      "path": "src/components/Hero.astro",
+      "accessCount": 2,
+      "lastAccessed": 1790192597178,
+      "type": "file"
+    },
+    {
+      "path": "src/layouts/Layout.astro",
+      "accessCount": 2,
+      "lastAccessed": 1790192820242,
+      "type": "file"
+    },
+    {
+      "path": "src/pages/index.astro",
+      "accessCount": 1,
+      "lastAccessed": 1790191682233,
+      "type": "file"
+    },
+    {
+      "path": "src/components/TerminalDemo.astro",
+      "accessCount": 1,
+      "lastAccessed": 1790192005812,
+      "type": "file"
+    },
+    {
+      "path": "package.json",
+      "accessCount": 1,
+      "lastAccessed": 1790193916893,
+      "type": "file"
+    },
+    {
+      "path": "astro.config.mjs",
+      "accessCount": 1,
+      "lastAccessed": 1790194143181,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

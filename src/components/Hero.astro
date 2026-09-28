@@ -1,25 +1,39 @@
-<section id="terminal-section" class="hero">
+---
+interface Props {
+  terminalDemo?: boolean;
+}
+const { terminalDemo = true } = Astro.props;
+---
+
+<section class="hero-section">
+  <!-- Background grid - subtle, intentional -->
   <div class="hero-background" aria-hidden="true">
-    <div class="hero-glow
-hero-glow-left"></div>
-    <div class="hero-glow hero-glow-right"></div>
-    <div class="hero-grid"></div>
+    <div class="hero-grid-pattern"></div>
+    <div class="hero-accent-overlay"></div>
   </div>
-  <div class="hero-content">
-    <div class="hero-copy">
-      <div class="eyebrow">
-        <span class="eyebrow-dot"></span>
-        Local-first AI coding agent
+
+  <div class="hero-container">
+    <div class="hero-content">
+      <!-- Minimal, intentional eyebrow - no dot -->
+      <div class="hero-badge">
+        <span class="hero-badge-icon">⌥</span>
+        <span class="hero-badge-text">LOCAL-FIRST AI AGENT</span>
       </div>
-      <h1>Your codebase. <span>In good hands.</span></h1>
+
+      <h1 class="hero-headline">
+        Codebase intelligence
+        <span class="hero-headline-highlight">that works locally.</span>
+      </h1>
+
       <p class="hero-description">
-        Luma is a lightweight AI coding agent built in Rust that can explore
-        your workspace, understand code, use development tools, modify files,
-        run commands, and verify its work.
+        Luma is a Rust-based AI coding agent that inspects your workspace, uses development tools,
+        and verifies its work — all running on your local machine or private infrastructure.
       </p>
+
       <div class="hero-actions">
         <a href="#download" class="button button-primary">
-          Download Luma <span aria-hidden="true">→</span>
+          <span class="button-icon">↓</span>
+          <span>Download for macOS</span>
         </a>
         <a
           href="https://github.com/ManiProjs/luma"
@@ -27,362 +41,480 @@ hero-glow-left"></div>
           target="_blank"
           rel="noreferrer"
         >
-          View source
+          <span class="button-icon">⌘</span>
+          <span>View source</span>
         </a>
       </div>
-      <div class="hero-info">
-        <div class="hero-info-item">
-          <span class="hero-info-icon">🦀</span>
-          <div>
-            <strong>Built in Rust</strong>
-            <span>Fast, small, and efficient.</span>
-          </div>
-        </div>
-        <div class="hero-info-item">
-          <span class="hero-info-icon">🧠</span>
-          <div>
-            <strong>Local-first</strong>
-            <span>Works with your own model provider.</span>
-          </div>
-        </div>
-        <div class="hero-info-item">
-          <span class="hero-info-icon">🔧</span>
-          <div>
-            <strong>Real tools</strong>
-            <span>Reads, edits, searches, and runs commands.</span>
-          </div>
-        </div>
-      </div>
+
+      <!-- Simple, clean stats - no icons, no boxes -->
       <div class="hero-stats">
-        <div><strong>Rust</strong> <span>Native core</span></div>
-        <div><strong>Local</strong> <span>Model support</span></div>
-        <div>
-          <strong>Tools</strong>
-          <span>Agent actions</span>
+        <div class="hero-stat">
+          <div class="hero-stat-value">Native</div>
+          <div class="hero-stat-label">Rust core</div>
         </div>
-        <div>
-          <strong>TUI</strong>
-          <span>Developer workflow</span>
+        <div class="hero-stat">
+          <div class="hero-stat-value">Local</div>
+          <div class="hero-stat-label">Model support</div>
+        </div>
+        <div class="hero-stat">
+          <div class="hero-stat-value">Tool‑based</div>
+          <div class="hero-stat-label">Agent actions</div>
+        </div>
+        <div class="hero-stat">
+          <div class="hero-stat-value">TUI</div>
+          <div class="hero-stat-label">Dev workflow</div>
         </div>
       </div>
     </div>
-  </div>
-  <div id="terminal-frame" class="terminal-frame">
-    <div class="terminal-window">
-      <div class="terminal-header">
-        <div class="terminal-controls">
-          <span></span>
-          <span></span>
-          <span></span>
+
+    <!-- Terminal preview - authentic, not overly stylized -->
+    {terminalDemo && (
+      <div class="terminal-preview">
+        <div class="terminal-window">
+          <div class="terminal-header">
+            <div class="terminal-controls">
+              <span class="terminal-control terminal-control-close"></span>
+              <span class="terminal-control terminal-control-minimize"></span>
+              <span class="terminal-control terminal-control-maximize"></span>
+            </div>
+            <div class="terminal-title">luma — ~/projects/my‑workspace</div>
+          </div>
+          <div class="terminal-body">
+            <div class="terminal-line terminal-line-prompt">
+              <span class="terminal-prompt-icon">❯</span>
+              <span class="terminal-command">luma</span>
+            </div>
+            <div class="terminal-line">Initializing Luma...</div>
+            <div class="terminal-line terminal-line-success">
+              <span class="terminal-success-icon">✓</span>
+              <span>Workspace detected</span>
+            </div>
+            <div class="terminal-line terminal-line-success">
+              <span class="terminal-success-icon">✓</span>
+              <span>Loaded project context</span>
+            </div>
+            <div class="terminal-line terminal-line-success">
+              <span class="terminal-success-icon">✓</span>
+              <span>Connected to local model</span>
+            </div>
+            <div class="terminal-line terminal-line-prompt">
+              <span class="terminal-prompt-icon">❯</span>
+              <span class="terminal-command">analyze borrow checker error</span>
+            </div>
+            <div class="terminal-line terminal-line-label">
+              <span class="terminal-label">plan</span>
+              <span>Analyzing workspace...</span>
+            </div>
+            <div class="terminal-line terminal-line-active">
+              <span class="terminal-active-icon">↻</span>
+              <span>Agent working...</span>
+            </div>
+          </div>
         </div>
-        <div class="terminal-title">luma</div>
-        <div></div>
+        <div class="terminal-caption">
+          <div class="terminal-status">
+            <span class="terminal-status-indicator"></span>
+            <span class="terminal-status-text">Agent session</span>
+          </div>
+          <p class="terminal-description">
+            Luma explores your workspace, selects tools based on context, observes results,
+            and continues until the task is complete.
+          </p>
+        </div>
       </div>
-      <div class="terminal-content">
-        <video autoplay muted loop playsinline preload="metadata">
-          <source src="/luma/demo.mp4" type="video/mp4" />
-        </video>
-      </div>
-    </div>
-    <div class="terminal-caption">
-      <span class="terminal-status"> <span></span> Live agent session </span>
-      <p>
-        Luma explores your workspace, selects tools, observes results, and
-        continues until the task is complete.
-      </p>
-    </div>
+    )}
   </div>
 </section>
-<script>
-  const section = document.getElementById("terminal-section")!;
-  const terminal = document.getElementById("terminal-frame")!;
-  function updateTerminal() {
-    const rect = section.getBoundingClientRect();
-    const scrollDistance = section.offsetHeight + window.innerHeight;
-    const traveled = window.innerHeight - rect.top;
-    const progress = Math.max(0, Math.min(1, traveled / scrollDistance));
-    const translateY = 180 - progress * 180;
-    const scale = 0.78 + progress * 0.22;
-    const rotateX = 14 - progress * 14;
-    terminal.style.transform = `
-perspective(1800px) translateY(${translateY}px) rotateX(${rotateX}deg) scale(${
-      scale
-    }) `;
-  }
-  let ticking = false;
-  function onScroll() {
-    if (ticking) return;
-    ticking = true;
-    requestAnimationFrame(() => {
-      updateTerminal();
-      ticking = false;
-    });
-  }
-  window.addEventListener("scroll", onScroll, { passive: true });
-  window.addEventListener("resize", updateTerminal);
-  updateTerminal();
-</script>
+
 <style>
-  .hero {
+  .hero-section {
     position: relative;
-    min-height: 230vh;
-    overflow: clip;
+    min-height: 100vh;
+    overflow: hidden;
+    padding: 0 1.5rem;
+    display: flex;
+    align-items: center;
+    background: var(--background);
   }
+
   .hero-background {
     position: absolute;
     inset: 0;
     pointer-events: none;
     overflow: hidden;
   }
-  .hero-glow {
-    position: absolute;
-    width: 55rem;
-    height: 55rem;
-    border-radius: 999px;
-    filter: blur(120px);
-    opacity: 0.2;
-  }
-  .hero-glow-left {
-    top: -20rem;
-    left: -25rem;
-    background: #8b5cf6;
-  }
-  .hero-glow-right {
-    top: 25rem;
-    right: -30rem;
-    background: #2563eb;
-  }
-  .hero-grid {
+
+  .hero-grid-pattern {
     position: absolute;
     inset: 0;
     background-image:
-      linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-    background-size: 48px 48px;
-    mask-image: linear-gradient(to bottom, black, transparent 80%);
+      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    background-size: 64px 64px;
+    mask-image: radial-gradient(circle at 50% 50%, black 30%, transparent 70%);
   }
-  .hero-content {
-    position: sticky;
-    top: 0;
-    min-height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    padding: 7rem 1.5rem 22rem;
+
+  .hero-accent-overlay {
+    position: absolute;
+    top: -40%;
+    left: -20%;
+    width: 140%;
+    height: 140%;
+    background: radial-gradient(
+      circle at 50% 50%,
+      rgba(16, 185, 129, 0.03) 0%,
+      transparent 60%
+    );
+  }
+
+  .hero-container {
+    width: min(100%, 1200px);
+    margin: 0 auto;
+    position: relative;
     z-index: 1;
   }
-  .hero-copy {
-    width: min(100%, 850px);
+
+  .hero-content {
     text-align: center;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 4rem 0 6rem;
   }
-  .eyebrow {
+
+  .hero-badge {
     display: inline-flex;
     align-items: center;
-    gap: 0.65rem;
-    padding: 0.5rem 0.85rem;
-    margin-bottom: 1.75rem;
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    margin-bottom: 2rem;
+    border: 1px solid rgba(16, 185, 129, 0.3);
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.04);
-    color: rgba(255, 255, 255, 0.7);
-    font-size: 0.85rem;
+    background: rgba(16, 185, 129, 0.05);
+    color: var(--accent-primary);
+    font-size: 0.8rem;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
   }
-  .eyebrow-dot {
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 50%;
-    background: #a78bfa;
-    box-shadow: 0 0 16px rgba(167, 139, 250, 0.9);
+
+  .hero-badge-icon {
+    font-size: 1rem;
   }
-  h1 {
+
+  .hero-headline {
     margin: 0;
-    font-size: clamp(3.5rem, 9vw, 8rem);
-    line-height: 0.95;
-    letter-spacing: -0.065em;
+    font-size: clamp(3rem, 7vw, 5rem);
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    color: var(--foreground);
   }
-  h1 span {
+
+  .hero-headline-highlight {
     display: block;
-    background: linear-gradient(120deg, #ffffff, #a78bfa 45%, #60a5fa);
-    background-clip: text;
-    -webkit-background-clip: text;
-    color: transparent;
+    margin-top: 0.25em;
+    color: var(--accent-primary);
   }
+
   .hero-description {
-    width: min(100%, 680px);
-    margin: 2rem auto 0;
-    color: rgba(255, 255, 255, 0.62);
-    font-size: clamp(1rem, 1.5vw, 1.2rem);
-    line-height: 1.7;
+    max-width: 600px;
+    margin: 1.5rem auto 0;
+    font-size: clamp(1rem, 1.75vw, 1.25rem);
+    line-height: 1.6;
+    color: var(--muted);
   }
+
   .hero-actions {
     display: flex;
     justify-content: center;
     flex-wrap: wrap;
-    gap: 0.75rem;
-    margin-top: 2rem;
+    gap: 1rem;
+    margin-top: 2.5rem;
   }
+
   .button {
     display: inline-flex;
     align-items: center;
-    justify-content: center;
     gap: 0.5rem;
-    padding: 0.85rem 1.3rem;
-    border-radius: 999px;
+    padding: 0.875rem 1.75rem;
+    border-radius: 0.5rem;
+    font-size: 0.9375rem;
+    font-weight: 500;
     text-decoration: none;
-    transition: transform 180ms ease;
+    transition: all 200ms cubic-bezier(0.16, 1, 0.3, 1);
   }
-  .button:hover {
+
+  .button-primary {
+    background: var(--accent-primary);
+    color: white;
+    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.25);
+  }
+
+  .button-primary:hover {
+    background: #0da271;
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(16, 185, 129, 0.35);
+  }
+
+  .button-primary:active {
+    transform: translateY(0);
+  }
+
+  .button-secondary {
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: var(--surface-elevated);
+    color: var(--foreground);
+  }
+
+  .button-secondary:hover {
+    background: var(--surface-hover);
+    border-color: rgba(255, 255, 255, 0.2);
     transform: translateY(-2px);
   }
-  .button-primary {
-    background: white;
-    color: black;
+
+  .button-icon {
+    font-size: 1.125rem;
   }
-  .button-secondary {
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    background: rgba(255, 255, 255, 0.04);
-    color: white;
-  }
-  .hero-info {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 0.75rem;
-    margin-top: 3rem;
-  }
-  .hero-info-item {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.75rem;
-    padding: 1rem;
-    text-align: left;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 16px;
-    background: rgba(255, 255, 255, 0.025);
-  }
-  .hero-info-icon {
-    font-size: 1.3rem;
-  }
-  .hero-info-item div {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-  .hero-info-item strong {
-    font-size: 0.9rem;
-  }
-  .hero-info-item span:not(.hero-info-icon) {
-    color: rgba(255, 255, 255, 0.5);
-    font-size: 0.75rem;
-    line-height: 1.4;
-  }
+
   .hero-stats {
     display: flex;
     justify-content: center;
     flex-wrap: wrap;
-    gap: 2rem;
-    margin-top: 2rem;
+    gap: 2.5rem;
+    margin-top: 4rem;
+    padding-top: 2.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
   }
-  .hero-stats div {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
+
+  .hero-stat {
+    text-align: center;
   }
-  .hero-stats strong {
-    font-size: 0.9rem;
+
+  .hero-stat-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--foreground);
   }
-  .hero-stats span {
-    color: rgba(255, 255, 255, 0.45);
-    font-size: 0.75rem;
+
+  .hero-stat-label {
+    margin-top: 0.25rem;
+    font-size: 0.875rem;
+    color: var(--muted);
   }
-  .terminal-frame {
-    position: sticky;
-    top: 10vh;
-    width: min(1100px, calc(100vw - 2rem));
-    margin: -12rem auto 0;
-    transform-origin: center top;
-    will-change: transform;
-    z-index: 2;
+
+  /* Terminal preview styles */
+  .terminal-preview {
+    margin-top: 4rem;
+    max-width: 900px;
+    margin-left: auto;
+    margin-right: auto;
   }
+
   .terminal-window {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.75rem;
+    background: rgba(0, 0, 0, 0.5);
     overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: clamp(14px, 2vw, 24px);
-    background: #080808;
-    box-shadow: 0 60px 150px rgba(0, 0, 0, 0.65);
+    box-shadow: 0 32px 64px rgba(0, 0, 0, 0.5);
   }
+
   .terminal-header {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
+    display: flex;
     align-items: center;
-    height: 42px;
-    padding: 0 1rem;
+    padding: 0.75rem 1rem;
+    background: rgba(255, 255, 255, 0.03);
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
+
   .terminal-controls {
     display: flex;
-    gap: 0.45rem;
+    gap: 0.5rem;
   }
-  .terminal-controls span {
-    width: 0.7rem;
-    height: 0.7rem;
+
+  .terminal-control {
+    width: 0.75rem;
+    height: 0.75rem;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.2);
   }
+
+  .terminal-control-close {
+    background: #ef4444;
+  }
+
+  .terminal-control-minimize {
+    background: #f59e0b;
+  }
+
+  .terminal-control-maximize {
+    background: #10b981;
+  }
+
   .terminal-title {
-    color: rgba(255, 255, 255, 0.45);
-    font-family: monospace;
-    font-size: 0.78rem;
+    flex: 1;
+    text-align: center;
+    font-family: ui-monospace, monospace;
+    font-size: 0.8125rem;
+    color: var(--muted);
   }
-  .terminal-content video {
-    display: block;
-    width: 100%;
+
+  .terminal-body {
+    padding: 1.5rem;
+    font-family: ui-monospace, monospace;
+    font-size: 0.875rem;
+    line-height: 1.7;
   }
+
+  .terminal-line {
+    margin: 0.5rem 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .terminal-line-prompt {
+    color: var(--foreground);
+  }
+
+  .terminal-prompt-icon {
+    color: var(--accent-primary);
+    margin-right: 0.5rem;
+  }
+
+  .terminal-command {
+    color: var(--foreground);
+    font-weight: 500;
+  }
+
+  .terminal-line-success {
+    color: var(--success);
+  }
+
+  .terminal-success-icon {
+    margin-right: 0.5rem;
+  }
+
+  .terminal-line-label {
+    color: var(--muted);
+  }
+
+  .terminal-label {
+    display: inline-block;
+    padding: 0.125rem 0.5rem;
+    margin-right: 0.5rem;
+    border-radius: 0.25rem;
+    background: rgba(59, 130, 246, 0.1);
+    color: var(--accent-secondary);
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .terminal-line-active {
+    color: var(--accent-primary);
+  }
+
+  .terminal-active-icon {
+    margin-right: 0.5rem;
+    animation: pulse 2s infinite;
+  }
+
   .terminal-caption {
     display: flex;
     justify-content: space-between;
+    align-items: flex-start;
     gap: 2rem;
-    margin-top: 1rem;
-    color: rgba(255, 255, 255, 0.5);
+    margin-top: 1.5rem;
   }
-  .terminal-caption p {
-    max-width: 550px;
-    margin: 0;
-    font-size: 0.85rem;
-    line-height: 1.6;
-  }
+
   .terminal-status {
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    white-space: nowrap;
-    font-size: 0.8rem;
   }
-  .terminal-status span {
+
+  .terminal-status-indicator {
     width: 0.5rem;
     height: 0.5rem;
     border-radius: 50%;
-    background: #22c55e;
+    background: var(--success);
+    animation: pulse 2s infinite;
   }
-  @media (max-width: 750px) {
-    .hero {
-      min-height: 210vh;
+
+  .terminal-status-text {
+    font-size: 0.875rem;
+    color: var(--muted);
+  }
+
+  .terminal-description {
+    flex: 1;
+    margin: 0;
+    max-width: 500px;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    color: var(--muted);
+  }
+
+  @keyframes pulse {
+    0%, 100% {
+      opacity: 1;
     }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  /* Responsive design */
+  @media (max-width: 768px) {
     .hero-content {
-      padding-bottom: 18rem;
+      padding: 2rem 0 4rem;
     }
-    .hero-info {
-      grid-template-columns: 1fr;
+
+    .hero-headline {
+      font-size: clamp(2.5rem, 8vw, 3.5rem);
     }
+
+    .hero-actions {
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .hero-actions .button {
+      width: 100%;
+      max-width: 280px;
+    }
+
     .hero-stats {
-      gap: 1rem;
+      gap: 1.5rem;
     }
-    .terminal-frame {
-      top: 18vh;
-      margin-top: -8rem;
+
+    .hero-stat-value {
+      font-size: 1.5rem;
     }
+
+    .terminal-preview {
+      margin-top: 3rem;
+    }
+
     .terminal-caption {
       flex-direction: column;
       gap: 0.75rem;
+    }
+
+    .terminal-body {
+      padding: 1rem;
+      font-size: 0.8125rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .button-primary:hover,
+    .button-secondary:hover {
+      transform: none;
+    }
+
+    .terminal-active-icon,
+    .terminal-status-indicator {
+      animation: none;
     }
   }
 </style>
