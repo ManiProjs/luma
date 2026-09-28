@@ -459,8 +459,6 @@ app.whenReady().then(() => {
   ipcMain.handle("luma:cancel", async () => {
     sendToLuma({
       type: "Cancel",
-
-      data: {},
     });
 
     return {

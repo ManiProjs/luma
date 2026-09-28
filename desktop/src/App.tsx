@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import Editor from "@monaco-editor/react";
 
@@ -12,6 +12,8 @@ import { useLuma } from "./renderer/hooks/useLuma";
 import SetupWizard from "./setup/SetupWizard";
 
 import type { SetupConfig } from "./stores/setupStore";
+
+import { useWorkspaceStore, type Chat } from "./stores/workspaceStore";
 
 type AppMode = "agent" | "ide" | "changes";
 
@@ -175,6 +177,40 @@ function SearchIcon() {
     >
       <circle cx="11" cy="11" r="6.5" />
       <path d="m16 16 5 5" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+    >
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+function PinIcon({ filled }: { filled?: boolean }) {
+  return (
+    <svg
+      width="12"
+      height="12"
+      viewBox="0 0 24 24"
+      fill={filled ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M15 4.5 19.5 9l-3.2.8a2 2 0 0 0-1.5 1.5L14 15l-5-5 .7-.8a2 2 0 0 0 1.5-1.5L12 4.5z" />
+      <path d="m9 15-5 5" />
     </svg>
   );
 }
@@ -516,7 +552,7 @@ function SettingsPanel({
 
               <SettingsRow
                 title="Workspace"
-                description="Files shown in the sidebar"
+                description="Files shown in the IDE panel"
                 value="~/projs/luma"
               />
 
@@ -719,46 +755,323 @@ function filterWorkspace(nodes: WorkspaceNode[], query: string): WorkspaceNode[]
   return next;
 }
 
-function Sidebar({
-  selectedFile,
-  onFileSelect,
-}: {
-  selectedFile: string | null;
-  onFileSelect: (path: string) => void;
-}) {
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [query, setQuery] = useState("");
+function formatChatTime(timestamp: number) {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
 
-  const visible = filterWorkspace(workspace, query);
+  if (sameDay) {
+    return date.toLocaleTimeString([], {
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  }
+
+  return date.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function SidebarSection({
+  title,
+  actionLabel,
+  onAction,
+  children,
+}: {
+  title: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="mb-3">
+      <div className="mb-1 flex h-6 items-center px-1">
+        <span className="luma-kicker">{title}</span>
+
+        {actionLabel && onAction && (
+          <button
+            type="button"
+            onClick={onAction}
+            className="
+              ml-auto
+              text-[11px]
+              text-[var(--luma-text-muted)]
+              hover:text-[var(--luma-text-secondary)]
+            "
+          >
+            {actionLabel}
+          </button>
+        )}
+      </div>
+
+      {children}
+    </section>
+  );
+}
+
+function ChatRow({
+  chat,
+  active,
+  projectName,
+  onSelect,
+  onTogglePin,
+  onRename,
+  onDelete,
+}: {
+  chat: Chat;
+  active: boolean;
+  projectName?: string;
+  onSelect: () => void;
+  onTogglePin: () => void;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div
+      className={`
+        group mb-0.5 flex items-center
+        rounded-md
+        ${
+          active
+            ? "bg-[var(--luma-accent-soft)]"
+            : "hover:bg-[var(--luma-surface-hover)]"
+        }
+      `}
+    >
+      <button
+        type="button"
+        onClick={onSelect}
+        className="
+          min-w-0 flex-1
+          px-2 py-1.5
+          text-left
+        "
+      >
+        <div className="flex items-center gap-1.5">
+          {chat.pinned && (
+            <span className="text-[var(--luma-accent)]">
+              <PinIcon filled />
+            </span>
+          )}
+
+          <span
+            className={`
+              truncate text-[12px]
+              ${active ? "text-[var(--luma-text)]" : "text-[var(--luma-text-secondary)]"}
+            `}
+          >
+            {chat.title}
+          </span>
+        </div>
+
+        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--luma-text-muted)]">
+          {projectName && <span className="truncate">{projectName}</span>}
+
+          {projectName && <span className="opacity-40">·</span>}
+
+          <span>{formatChatTime(chat.updatedAt)}</span>
+        </div>
+      </button>
+
+      <div className="mr-1 hidden items-center group-hover:flex">
+        <button
+          type="button"
+          onClick={onTogglePin}
+          aria-label={chat.pinned ? "Unpin chat" : "Pin chat"}
+          className="
+            flex h-6 w-6 items-center justify-center
+            rounded-md
+            text-[var(--luma-text-muted)]
+            hover:text-[var(--luma-text-secondary)]
+          "
+        >
+          <PinIcon filled={chat.pinned} />
+        </button>
+        <button
+          type="button"
+          onClick={onRename}
+          className="
+            px-1 text-[11px]
+            text-[var(--luma-text-muted)]
+            hover:text-[var(--luma-text-secondary)]
+          "
+        >
+          Rename
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          className="
+            px-1 text-[11px]
+            text-[var(--luma-text-muted)]
+            hover:text-[var(--luma-danger)]
+          "
+        >
+          Delete
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Sidebar({ onOpenChat }: { onOpenChat: () => void }) {
+  const chats = useWorkspaceStore((state) => state.chats);
+  const projects = useWorkspaceStore((state) => state.projects);
+  const activeChatId = useWorkspaceStore((state) => state.activeChatId);
+  const activeProjectId = useWorkspaceStore((state) => state.activeProjectId);
+  const createChat = useWorkspaceStore((state) => state.createChat);
+  const selectChat = useWorkspaceStore((state) => state.selectChat);
+  const togglePin = useWorkspaceStore((state) => state.togglePin);
+  const renameChat = useWorkspaceStore((state) => state.renameChat);
+  const deleteChat = useWorkspaceStore((state) => state.deleteChat);
+  const createProject = useWorkspaceStore((state) => state.createProject);
+  const selectProject = useWorkspaceStore((state) => state.selectProject);
+  const renameProject = useWorkspaceStore((state) => state.renameProject);
+  const deleteProject = useWorkspaceStore((state) => state.deleteProject);
+
+  const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [projectsOpen, setProjectsOpen] = useState(true);
+  const [creatingProject, setCreatingProject] = useState(false);
+  const [projectName, setProjectName] = useState("");
+
+  const projectById = useMemo(() => {
+    const map = new Map<string, string>();
+
+    for (const project of projects) {
+      map.set(project.id, project.name);
+    }
+
+    return map;
+  }, [projects]);
+
+  const visibleChats = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+
+    return chats
+      .filter((chat) => {
+        if (activeProjectId && chat.projectId !== activeProjectId) {
+          return false;
+        }
+
+        if (!normalized) {
+          return true;
+        }
+
+        const projectName = chat.projectId
+          ? projectById.get(chat.projectId) ?? ""
+          : "";
+
+        return (
+          chat.title.toLowerCase().includes(normalized) ||
+          projectName.toLowerCase().includes(normalized)
+        );
+      })
+      .sort((left, right) => right.updatedAt - left.updatedAt);
+  }, [activeProjectId, chats, projectById, query]);
+
+  const pinnedChats = visibleChats.filter((chat) => chat.pinned);
+  const historyChats = visibleChats.filter((chat) => !chat.pinned);
+
+  function submitProject() {
+    const name = projectName.trim();
+
+    if (!name) {
+      setCreatingProject(false);
+      setProjectName("");
+      return;
+    }
+
+    createProject(name);
+    setProjectName("");
+    setCreatingProject(false);
+    setProjectsOpen(true);
+  }
+
+  function handleRenameChat(chat: Chat) {
+    const next = window.prompt("Rename chat", chat.title);
+
+    if (next === null) {
+      return;
+    }
+
+    renameChat(chat.id, next);
+  }
+
+  function handleDeleteChat(chat: Chat) {
+    if (!window.confirm(`Delete “${chat.title}”?`)) {
+      return;
+    }
+
+    deleteChat(chat.id);
+  }
+
+  function handleRenameProject(projectId: string, currentName: string) {
+    const next = window.prompt("Rename project", currentName);
+
+    if (next === null) {
+      return;
+    }
+
+    renameProject(projectId, next);
+  }
+
+  function handleDeleteProject(projectId: string, currentName: string) {
+    if (!window.confirm(`Delete project “${currentName}”? Chats stay in history.`)) {
+      return;
+    }
+
+    deleteProject(projectId);
+  }
 
   return (
     <aside
       className="
-        flex w-[220px] shrink-0 flex-col
+        flex w-[240px] shrink-0 flex-col
         border-r border-[var(--luma-border)]
         bg-[var(--luma-surface)]
       "
     >
-      <div className="flex h-9 items-center px-2.5">
-        <span className="luma-kicker">Workspace</span>
+      <div className="px-2.5 pt-2.5">
+        <button
+          type="button"
+          onClick={() => {
+            createChat();
+            onOpenChat();
+          }}
+          className="
+            luma-btn-primary
+            flex h-8 w-full items-center justify-center gap-1.5
+            text-[12px]
+          "
+        >
+          <PlusIcon />
+          New chat
+        </button>
+      </div>
 
-        <div className="ml-auto flex items-center">
-          <button
-            type="button"
-            className="
-              flex h-6 w-6 items-center justify-center
-              rounded-md
-              text-[var(--luma-text-muted)]
-              hover:bg-[var(--luma-surface-hover)]
-              hover:text-[var(--luma-text-secondary)]
-            "
-            aria-label="Search workspace"
-            aria-pressed={searchOpen}
-            onClick={() => setSearchOpen((value) => !value)}
-          >
-            <SearchIcon />
-          </button>
-        </div>
+      <div className="mt-2 flex h-8 items-center px-2.5">
+        <span className="luma-kicker">Menu</span>
+
+        <button
+          type="button"
+          className="
+            ml-auto flex h-6 w-6 items-center justify-center
+            rounded-md
+            text-[var(--luma-text-muted)]
+            hover:bg-[var(--luma-surface-hover)]
+            hover:text-[var(--luma-text-secondary)]
+          "
+          aria-label="Search chats"
+          aria-pressed={searchOpen}
+          onClick={() => setSearchOpen((value) => !value)}
+        >
+          <SearchIcon />
+        </button>
       </div>
 
       {searchOpen && (
@@ -766,7 +1079,7 @@ function Sidebar({
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Filter files"
+            placeholder="Search chats"
             className="luma-input h-8 w-full"
             autoFocus
           />
@@ -774,23 +1087,190 @@ function Sidebar({
       )}
 
       <div className="min-h-0 flex-1 overflow-auto px-1.5 pb-2">
-        <WorkspaceTree
-          nodes={visible}
-          selectedFile={selectedFile}
-          onFileSelect={onFileSelect}
-        />
-      </div>
+        <SidebarSection
+          title="Projects"
+          actionLabel="New"
+          onAction={() => {
+            setCreatingProject(true);
+            setProjectsOpen(true);
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setProjectsOpen((value) => !value)}
+            className="
+              mb-0.5 flex h-7 w-full items-center gap-1
+              rounded-md px-1
+              text-left text-[12px]
+              text-[var(--luma-text-secondary)]
+              hover:bg-[var(--luma-surface-hover)]
+            "
+          >
+            <ChevronIcon open={projectsOpen} />
+            <FolderIcon />
+            <span className="truncate">
+              {activeProjectId
+                ? projectById.get(activeProjectId) ?? "Projects"
+                : "All chats"}
+            </span>
+          </button>
 
-      <div
-        className="
-          flex h-8 shrink-0 items-center
-          border-t border-[var(--luma-border)]
-          px-2.5
-          text-[12px]
-          text-[var(--luma-text-muted)]
-        "
-      >
-        <span className="truncate">~/projs/luma</span>
+          {projectsOpen && (
+            <div className="mb-1">
+              <button
+                type="button"
+                onClick={() => selectProject(null)}
+                className={`
+                  mb-0.5 flex h-7 w-full items-center
+                  rounded-md px-2
+                  text-left text-[12px]
+                  ${
+                    activeProjectId === null
+                      ? "bg-[var(--luma-accent-soft)] text-[var(--luma-text)]"
+                      : "text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)]"
+                  }
+                `}
+              >
+                All chats
+              </button>
+
+              {projects.map((project) => (
+                <div
+                  key={project.id}
+                  className={`
+                    group mb-0.5 flex items-center
+                    rounded-md
+                    ${
+                      activeProjectId === project.id
+                        ? "bg-[var(--luma-accent-soft)]"
+                        : "hover:bg-[var(--luma-surface-hover)]"
+                    }
+                  `}
+                >
+                  <button
+                    type="button"
+                    onClick={() => selectProject(project.id)}
+                    className={`
+                      min-w-0 flex-1 truncate
+                      px-2 py-1.5
+                      text-left text-[12px]
+                      ${
+                        activeProjectId === project.id
+                          ? "text-[var(--luma-text)]"
+                          : "text-[var(--luma-text-secondary)]"
+                      }
+                    `}
+                  >
+                    {project.name}
+                  </button>
+
+                  <div className="mr-1 hidden group-hover:flex">
+                    <button
+                      type="button"
+                      onClick={() => handleRenameProject(project.id, project.name)}
+                      className="
+                        px-1 text-[11px]
+                        text-[var(--luma-text-muted)]
+                        hover:text-[var(--luma-text-secondary)]
+                      "
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteProject(project.id, project.name)}
+                      className="
+                        px-1 text-[11px]
+                        text-[var(--luma-text-muted)]
+                        hover:text-[var(--luma-danger)]
+                      "
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+
+              {creatingProject && (
+                <input
+                  value={projectName}
+                  onChange={(event) => setProjectName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      submitProject();
+                    }
+
+                    if (event.key === "Escape") {
+                      setCreatingProject(false);
+                      setProjectName("");
+                    }
+                  }}
+                  onBlur={submitProject}
+                  placeholder="Project name"
+                  className="luma-input mt-1 h-8 w-full"
+                  autoFocus
+                />
+              )}
+
+              {!creatingProject && projects.length === 0 && (
+                <div className="px-2 py-1 text-[12px] text-[var(--luma-text-muted)]">
+                  No projects yet.
+                </div>
+              )}
+            </div>
+          )}
+        </SidebarSection>
+
+        {pinnedChats.length > 0 && (
+          <SidebarSection title="Pinned">
+            {pinnedChats.map((chat) => (
+              <ChatRow
+                key={chat.id}
+                chat={chat}
+                active={chat.id === activeChatId}
+                projectName={
+                  chat.projectId ? projectById.get(chat.projectId) : undefined
+                }
+                onSelect={() => {
+                  selectChat(chat.id);
+                  onOpenChat();
+                }}
+                onTogglePin={() => togglePin(chat.id)}
+                onRename={() => handleRenameChat(chat)}
+                onDelete={() => handleDeleteChat(chat)}
+              />
+            ))}
+          </SidebarSection>
+        )}
+
+        <SidebarSection title="History">
+          {historyChats.length === 0 ? (
+            <div className="px-2 py-1 text-[12px] text-[var(--luma-text-muted)]">
+              {query.trim()
+                ? "No matching chats."
+                : "Start a chat to see it here."}
+            </div>
+          ) : (
+            historyChats.map((chat) => (
+              <ChatRow
+                key={chat.id}
+                chat={chat}
+                active={chat.id === activeChatId}
+                projectName={
+                  chat.projectId ? projectById.get(chat.projectId) : undefined
+                }
+                onSelect={() => {
+                  selectChat(chat.id);
+                  onOpenChat();
+                }}
+                onTogglePin={() => togglePin(chat.id)}
+                onRename={() => handleRenameChat(chat)}
+                onDelete={() => handleDeleteChat(chat)}
+              />
+            ))
+          )}
+        </SidebarSection>
       </div>
     </aside>
   );
@@ -1303,7 +1783,48 @@ function AgentView() {
     sendPrompt,
     respondToConfirmation,
     cancel,
+    resetSession,
   } = useLuma();
+
+  const chats = useWorkspaceStore((state) => state.chats);
+  const activeChatId = useWorkspaceStore((state) => state.activeChatId);
+  const setChatMessages = useWorkspaceStore((state) => state.setChatMessages);
+
+  const loadedChatId = useRef<string | null>(null);
+  const skipPersist = useRef(false);
+
+  useEffect(() => {
+    if (!activeChatId) {
+      return;
+    }
+
+    if (loadedChatId.current === activeChatId) {
+      return;
+    }
+
+    const chat = chats.find((item) => item.id === activeChatId);
+
+    if (thinking || confirmation !== null) {
+      void cancel();
+    }
+
+    skipPersist.current = true;
+    resetSession(chat?.messages ?? []);
+    loadedChatId.current = activeChatId;
+  }, [activeChatId, cancel, chats, confirmation, resetSession, thinking]);
+
+  useEffect(() => {
+    if (!activeChatId || loadedChatId.current !== activeChatId) {
+      return;
+    }
+
+    if (skipPersist.current) {
+      skipPersist.current = false;
+      return;
+    }
+
+    setChatMessages(activeChatId, messages);
+  }, [activeChatId, messages, setChatMessages]);
 
   const hasContent =
     messages.length > 0 ||
@@ -1397,7 +1918,90 @@ function getLanguage(file: string | null) {
   return "plaintext";
 }
 
-function IDEView({ selectedFile }: { selectedFile: string | null }) {
+function FilesPanel({
+  selectedFile,
+  onFileSelect,
+}: {
+  selectedFile: string | null;
+  onFileSelect: (path: string) => void;
+}) {
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState("");
+
+  const visible = filterWorkspace(workspace, query);
+
+  return (
+    <aside
+      className="
+        flex w-[220px] shrink-0 flex-col
+        border-r border-[var(--luma-border)]
+        bg-[var(--luma-surface)]
+      "
+    >
+      <div className="flex h-9 items-center px-2.5">
+        <span className="luma-kicker">Files</span>
+
+        <div className="ml-auto flex items-center">
+          <button
+            type="button"
+            className="
+              flex h-6 w-6 items-center justify-center
+              rounded-md
+              text-[var(--luma-text-muted)]
+              hover:bg-[var(--luma-surface-hover)]
+              hover:text-[var(--luma-text-secondary)]
+            "
+            aria-label="Search files"
+            aria-pressed={searchOpen}
+            onClick={() => setSearchOpen((value) => !value)}
+          >
+            <SearchIcon />
+          </button>
+        </div>
+      </div>
+
+      {searchOpen && (
+        <div className="px-2.5 pb-2">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Filter files"
+            className="luma-input h-8 w-full"
+            autoFocus
+          />
+        </div>
+      )}
+
+      <div className="min-h-0 flex-1 overflow-auto px-1.5 pb-2">
+        <WorkspaceTree
+          nodes={visible}
+          selectedFile={selectedFile}
+          onFileSelect={onFileSelect}
+        />
+      </div>
+
+      <div
+        className="
+          flex h-8 shrink-0 items-center
+          border-t border-[var(--luma-border)]
+          px-2.5
+          text-[12px]
+          text-[var(--luma-text-muted)]
+        "
+      >
+        <span className="truncate">~/projs/luma</span>
+      </div>
+    </aside>
+  );
+}
+
+function IDEView({
+  selectedFile,
+  onFileSelect,
+}: {
+  selectedFile: string | null;
+  onFileSelect: (path: string) => void;
+}) {
   const { theme } = useTheme();
 
   const fileName = selectedFile
@@ -1409,7 +2013,10 @@ function IDEView({ selectedFile }: { selectedFile: string | null }) {
   const monacoTheme = theme === "solarized" ? "vs-dark" : "vs-dark";
 
   return (
-    <div className="flex h-full min-w-0 flex-col bg-[var(--luma-bg)]">
+    <div className="flex h-full min-w-0">
+      <FilesPanel selectedFile={selectedFile} onFileSelect={onFileSelect} />
+
+      <div className="flex min-w-0 flex-1 flex-col bg-[var(--luma-bg)]">
       <div
         className="
           flex h-9 shrink-0 items-center
@@ -1534,6 +2141,7 @@ function IDEView({ selectedFile }: { selectedFile: string | null }) {
         <span>Spaces: 2</span>
 
         <span className="ml-auto">Luma Editor</span>
+      </div>
       </div>
     </div>
   );
@@ -1671,18 +2279,17 @@ export default function App() {
       />
 
       <div className="flex min-h-0 flex-1">
-        <Sidebar
-          selectedFile={selectedFile}
-          onFileSelect={(file) => {
-            setSelectedFile(file);
-            setMode("ide");
-          }}
-        />
+        <Sidebar onOpenChat={() => setMode("agent")} />
 
         <main className="min-w-0 flex-1 overflow-hidden">
           {mode === "agent" && <AgentView />}
 
-          {mode === "ide" && <IDEView selectedFile={selectedFile} />}
+          {mode === "ide" && (
+            <IDEView
+              selectedFile={selectedFile}
+              onFileSelect={setSelectedFile}
+            />
+          )}
 
           {mode === "changes" && <ChangesView />}
         </main>

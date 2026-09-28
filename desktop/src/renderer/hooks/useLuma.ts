@@ -312,6 +312,15 @@ export function useLuma() {
   // Send prompt
   // ----------------------------------------------------------
 
+  const resetSession = useCallback((nextMessages: AgentMessage[] = []) => {
+    activeToolIds.current = [];
+    setMessages(nextMessages);
+    setTools([]);
+    setThinking(false);
+    setError(null);
+    setConfirmation(null);
+  }, []);
+
   const sendPrompt = useCallback(async (text: string) => {
     const trimmed = text.trim();
 
@@ -377,6 +386,7 @@ export function useLuma() {
     sendPrompt,
     respondToConfirmation,
     cancel,
+    resetSession,
   };
 }
 
