@@ -274,12 +274,12 @@ function TopBar({
     >
       <div
         className="
-          no-drag
           flex h-full w-full items-center
           pl-[82px] pr-3
+          pointer-events-none
         "
       >
-        <div className="flex items-center gap-2">
+        <div className="no-drag pointer-events-auto flex items-center gap-2">
           <div
             className="
               flex h-6 w-6 items-center justify-center
@@ -294,7 +294,7 @@ function TopBar({
           <span className="text-[12px] font-medium tracking-tight">Luma</span>
         </div>
 
-        <div className="ml-6 flex h-full items-center gap-0.5">
+        <div className="no-drag pointer-events-auto ml-6 flex h-full items-center gap-0.5">
           <ModeButton
             active={mode === "agent"}
             onClick={() => setMode("agent")}
@@ -314,7 +314,7 @@ function TopBar({
           </ModeButton>
         </div>
 
-        <div className="ml-auto flex items-center gap-2">
+        <div className="no-drag pointer-events-auto ml-auto flex items-center gap-2">
           <div
             className="
               flex items-center gap-1.5
@@ -1521,6 +1521,14 @@ export default function App() {
   const [connected, setConnected] = useState(false);
 
   const [setupComplete, setSetupComplete] = useState(false);
+
+  useEffect(() => {
+    window.luma.getSetupConfig().then((config) => {
+      if (config) {
+        setSetupComplete(true);
+      }
+    });
+  }, []);
 
   useEffect(() => {
     let mounted = true;

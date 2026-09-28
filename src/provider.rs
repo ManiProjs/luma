@@ -421,6 +421,10 @@ impl Provider for OpenAiCompatibleProvider {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(&request.provider.endpoint);
 
+        if endpoint.trim().is_empty() {
+            return Err(anyhow!("Provider endpoint is not configured."));
+        }
+
         let url = models_url(endpoint);
 
         let client = Client::new();

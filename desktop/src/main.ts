@@ -15,8 +15,17 @@ type PendingRequest = {
 let mainWindow: BrowserWindow | null = null;
 
 let lumaProcess: ChildProcessWithoutNullStreams | null = null;
+let respawnAttempts = 0;
+let intentionalShutdown = false;
+const MAX_RESPAWN_ATTEMPTS = 3;
 
 const pendingRequests = new Map<string, PendingRequest>();
+
+let isLumaReady = false;
+let lumaReadyResolver: (() => void) | null = null;
+let lumaReadyPromise = new Promise<void>((resolve) => {
+  lumaReadyResolver = resolve;
+});
 
 function getLumaBinary(): string {
   return process.env.LUMA_BINARY || "luma";
@@ -30,16 +39,34 @@ function sendToLuma(message: unknown) {
   lumaProcess.stdin.write(`${JSON.stringify(message)}\n`);
 }
 
-function requestLuma(
+async function requestLuma(
   type: string,
   data: Record<string, unknown> = {},
 ): Promise<unknown> {
+  if (!isLumaReady) {
+    await lumaReadyPromise;
+  }
+
   return new Promise((resolve, reject) => {
     const requestId = randomUUID();
+    const TIMEOUT_MS = 10000; // 10 seconds
+
+    const timeout = setTimeout(() => {
+      if (pendingRequests.has(requestId)) {
+        pendingRequests.delete(requestId);
+        reject(new Error(`Luma request timed out: ${type}`));
+      }
+    }, TIMEOUT_MS);
 
     pendingRequests.set(requestId, {
-      resolve,
-      reject,
+      resolve: (value) => {
+        clearTimeout(timeout);
+        resolve(value);
+      },
+      reject: (reason) => {
+        clearTimeout(timeout);
+        reject(reason);
+      },
     });
 
     try {
@@ -51,6 +78,7 @@ function requestLuma(
         },
       });
     } catch (error) {
+      clearTimeout(timeout);
       pendingRequests.delete(requestId);
       reject(error);
     }
@@ -62,6 +90,12 @@ function startLuma() {
     return;
   }
 
+  intentionalShutdown = false;
+  isLumaReady = false;
+  lumaReadyPromise = new Promise<void>((resolve) => {
+    lumaReadyResolver = resolve;
+  });
+
   const binary = getLumaBinary();
 
   console.log(`[luma] Starting: ${binary} desktop-server`);
@@ -72,24 +106,7 @@ function startLuma() {
   });
 
   lumaProcess.on("error", (error) => {
-    console.error(`[luma] Failed to start "${binary}":`, error);
-
-    for (const pending of pendingRequests.values()) {
-      pending.reject(error);
-    }
-
-    pendingRequests.clear();
-
-    if (lumaProcess) {
-      lumaProcess = null;
-    }
-
-    mainWindow?.webContents.send("luma:event", {
-      type: "Error",
-      data: {
-        message: `Failed to start Luma: ${error.message}`,
-      },
-    });
+    handleLumaProcessFailure(error);
   });
 
   const stdout = readline.createInterface({
@@ -109,6 +126,13 @@ function startLuma() {
     } catch {
       console.error("[luma] Invalid JSON:", line);
 
+      return;
+    }
+
+    if (event.type === "Ready") {
+      isLumaReady = true;
+      respawnAttempts = 0;
+      lumaReadyResolver?.();
       return;
     }
 
@@ -138,22 +162,18 @@ function startLuma() {
   });
 
   lumaProcess.on("exit", (code, signal) => {
-    console.log(`[luma] Exited: code=${code}, signal=${signal}`);
-
-    for (const pending of pendingRequests.values()) {
-      pending.reject(new Error("Luma desktop server exited."));
+    if (intentionalShutdown) {
+      return;
     }
 
-    pendingRequests.clear();
+    if (code !== 0) {
+      handleLumaProcessFailure(
+        `Luma exited with code=${code}, signal=${signal}`,
+      );
+      return;
+    }
 
     lumaProcess = null;
-
-    mainWindow?.webContents.send("luma:event", {
-      type: "Error",
-      data: {
-        message: "Luma desktop server exited.",
-      },
-    });
   });
 }
 
@@ -161,6 +181,8 @@ function stopLuma() {
   if (!lumaProcess) {
     return;
   }
+
+  intentionalShutdown = true;
 
   for (const pending of pendingRequests.values()) {
     pending.reject(new Error("Luma desktop server stopped."));
@@ -171,6 +193,40 @@ function stopLuma() {
   lumaProcess.kill();
 
   lumaProcess = null;
+}
+
+function handleLumaProcessFailure(error: Error | string) {
+  if (intentionalShutdown) {
+    return;
+  }
+
+  console.error("[luma] Process failure:", error);
+
+  for (const pending of pendingRequests.values()) {
+    pending.reject(
+      typeof error === "string" ? new Error(error) : error,
+    );
+  }
+
+  pendingRequests.clear();
+  lumaProcess = null;
+
+  mainWindow?.webContents.send("luma:event", {
+    type: "Error",
+    data: {
+      message:
+        typeof error === "string" ? error : `Luma error: ${error.message}`,
+      category: "transient",
+    },
+  });
+
+  if (respawnAttempts < MAX_RESPAWN_ATTEMPTS) {
+    respawnAttempts++;
+    console.log(
+      `[luma] Respawning (attempt ${respawnAttempts}/${MAX_RESPAWN_ATTEMPTS})...`,
+    );
+    setTimeout(startLuma, 1000 * respawnAttempts);
+  }
 }
 
 function createWindow() {

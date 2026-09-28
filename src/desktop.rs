@@ -54,6 +54,14 @@ pub enum DesktopMessage {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCategory {
+    Transient,
+    Fatal,
+    InitializationFailed,
+}
+
+#[derive(Debug, Serialize)]
 #[serde(tag = "type", content = "data")]
 pub enum DesktopEvent {
     Agent(AgentEvent),
@@ -63,6 +71,7 @@ pub enum DesktopEvent {
     Error {
         request_id: Option<String>,
         message: String,
+        category: ErrorCategory,
     },
 
     SetupConfig {
@@ -172,6 +181,7 @@ pub async fn run(
                                             DesktopEvent::Error {
                                                 request_id: Some(request_id),
                                                 message: error.to_string(),
+                                                category: crate::desktop::ErrorCategory::Transient,
                                             },
                                         )
                                         .await?;
@@ -200,6 +210,7 @@ pub async fn run(
                                             DesktopEvent::Error {
                                                 request_id: Some(request_id),
                                                 message: error.to_string(),
+                                                category: crate::desktop::ErrorCategory::Transient,
                                             },
                                         )
                                         .await?;
@@ -257,6 +268,7 @@ pub async fn run(
                                             DesktopEvent::Error {
                                                 request_id: Some(request_id),
                                                 message: error.to_string(),
+                                                category: crate::desktop::ErrorCategory::Transient,
                                             },
                                         )
                                         .await?;
@@ -299,6 +311,7 @@ pub async fn run(
                                             DesktopEvent::Error {
                                                 request_id: Some(request_id),
                                                 message: error.to_string(),
+                                                category: crate::desktop::ErrorCategory::Transient,
                                             },
                                         )
                                         .await?;
@@ -316,6 +329,7 @@ pub async fn run(
                                 message: format!(
                                     "Invalid desktop message: {error}"
                                 ),
+                                category: crate::desktop::ErrorCategory::Fatal,
                             },
                         )
                         .await?;
