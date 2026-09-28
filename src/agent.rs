@@ -17,10 +17,29 @@ use crate::{
 };
 
 // ============================================================================
+// Limits
+// ============================================================================
+
+/// Maximum amount of observation text sent to the planner in one request.
+///
+/// This prevents a few large `read_file` / `run_command` results from
+/// turning every subsequent planner call into a huge prompt.
+const MAX_PLANNER_OBSERVATIONS: usize = 16_000;
+
+/// Maximum amount of output stored for an individual tool observation.
+///
+/// The full tool result is still displayed to the user by the tool event,
+/// but the planner doesn't need megabytes of compiler output.
+const MAX_TOOL_OBSERVATION: usize = 8_000;
+
+/// Maximum number of planner iterations for one user request.
+const MAX_STEPS: usize = 12;
+
+// ============================================================================
 // Pricing
 // ============================================================================
 
-/// Cost per 1M tokens in USD. Adjust as needed for your providers.
+/// Cost per 1M tokens in USD.
 const INPUT_COST_PER_MILLION: f64 = 3.0;
 const OUTPUT_COST_PER_MILLION: f64 = 15.0;
 
@@ -82,9 +101,21 @@ pub struct Agent<M, P> {
     language: ProgrammingLanguage,
     planning_state: PlanningState,
 
-    // The current request is kept separately so the planner does not need
-    // the entire conversational history on every planning turn.
+    /// Current user request.
     current_request: String,
+
+    /// Observations generated during the current request only.
+    ///
+    /// This is intentionally separate from `Context`. The final answer needs
+    /// conversational context, but the planner only needs fresh workspace
+    /// observations.
+    request_observations: Vec<String>,
+
+    /// Planner instructions are static for the lifetime of the agent.
+    ///
+    /// Building them for every planner iteration wastes CPU and allocations,
+    /// and more importantly makes it easy to accidentally grow the prompt.
+    planner_system_prompt: String,
 }
 
 impl<M, P> Agent<M, P>
@@ -113,17 +144,24 @@ where
             );
         }
 
+        let planner_system_prompt = Self::build_planner_system_prompt(&tools);
+
         Self {
             model,
             planner,
             context,
             tools,
             history,
+
             inspected_files: Vec::new(),
             inspection: InspectionState::default(),
             language: ProgrammingLanguage::Unknown,
             planning_state: PlanningState::Exploring,
+
             current_request: String::new(),
+            request_observations: Vec::new(),
+
+            planner_system_prompt,
         }
     }
 
@@ -208,8 +246,12 @@ where
     fn begin_request(&mut self, input: &str) -> Result<()> {
         self.inspection = InspectionState::default();
         self.inspected_files.clear();
+        self.request_observations.clear();
+
         self.planning_state = PlanningState::Exploring;
-        self.current_request = input.to_owned();
+
+        self.current_request.clear();
+        self.current_request.push_str(input);
 
         self.context.add(MessageRole::User, input.to_owned());
 
@@ -262,15 +304,16 @@ where
         tx: &Sender<AgentEvent>,
         cancel: &CancellationToken,
     ) -> Result<String> {
-        let mut messages = vec![Message {
+        let mut messages = Vec::with_capacity(self.context.messages().len() + 1);
+
+        messages.push(Message {
             role: MessageRole::System,
             content: self.answer_system_prompt(),
-        }];
+        });
 
-        // The answer model gets the conversation context, but the planner
-        // does not. This keeps the planning request small without sacrificing
-        // conversational continuity for the final response.
         messages.extend(self.context.messages().iter().cloned());
+
+        let started = Instant::now();
 
         let mut stream = self.model.stream(CompletionRequest { messages }).await?;
 
@@ -302,9 +345,9 @@ where
             }
         }
 
-        // Emit usage after generation completes.
         if let Some(usage) = self.model.usage() {
             let cost = calculate_cost(usage.prompt_tokens, usage.completion_tokens);
+
             tx.send(AgentEvent::Usage {
                 prompt_tokens: usage.prompt_tokens,
                 completion_tokens: usage.completion_tokens,
@@ -313,6 +356,8 @@ where
             })
             .await?;
         }
+
+        let _elapsed = started.elapsed();
 
         Ok(response)
     }
@@ -342,17 +387,16 @@ or test results.
     ) -> Result<()> {
         tx.send(AgentEvent::Thinking).await?;
 
-        const MAX_STEPS: usize = 12;
-
         for step in 0..MAX_STEPS {
             if cancel.is_cancelled() {
                 tx.send(AgentEvent::Error("Interrupted.".into())).await?;
                 return Ok(());
             }
 
-            // Handle the most obvious first inspection locally. This avoids
-            // spending a model round deciding to perform the same trivial
-            // directory inspection on every new workspace request.
+            // ------------------------------------------------------------
+            // Deterministic first action
+            // ------------------------------------------------------------
+
             if step == 0
                 && let Some((name, input)) = self.deterministic_first_action()
             {
@@ -361,6 +405,12 @@ or test results.
 
                 continue;
             }
+
+            // ------------------------------------------------------------
+            // Planner
+            // ------------------------------------------------------------
+
+            let plan_started = Instant::now();
 
             let plan = match self.create_plan(cancel).await {
                 Ok(plan) => plan,
@@ -374,22 +424,36 @@ or test results.
                 }
             };
 
+            let _planner_elapsed = plan_started.elapsed();
+
             match plan {
+                // --------------------------------------------------------
+                // Single tool
+                // --------------------------------------------------------
                 PlanAction::Tool { name, input } => {
                     self.execute_tool(&name, &input, tx, cancel, confirmation_rx)
                         .await?;
                 }
 
+                // --------------------------------------------------------
+                // Multiple tools
+                // --------------------------------------------------------
                 PlanAction::Multi { actions } => {
                     self.execute_actions(actions, tx, cancel, confirmation_rx)
                         .await?;
                 }
 
+                // --------------------------------------------------------
+                // Answer
+                // --------------------------------------------------------
                 PlanAction::Answer => {
                     self.run_conversation(tx, cancel).await?;
                     return Ok(());
                 }
 
+                // --------------------------------------------------------
+                // Explicit plan
+                // --------------------------------------------------------
                 PlanAction::Plan { content } => {
                     tx.send(AgentEvent::PlanGenerated(content.clone())).await?;
 
@@ -401,6 +465,7 @@ or test results.
 
                     if allowed {
                         self.planning_state = PlanningState::Implementing;
+
                         self.context.add(
                             MessageRole::System,
                             format!(
@@ -410,17 +475,22 @@ or test results.
                         );
                     } else {
                         self.planning_state = PlanningState::Exploring;
+
                         self.context.add(
                             MessageRole::System,
-                            "Plan rejected. Rethink the approach and either explore more or propose a revised plan."
+                            "Plan rejected. Rethink the approach and either \
+                             explore more or propose a revised plan."
                                 .to_string(),
                         );
                     }
                 }
             }
 
+            // Don't waste another planner request after the final allowed
+            // iteration.
             if step + 1 == MAX_STEPS {
                 self.run_conversation(tx, cancel).await?;
+                return Ok(());
             }
         }
 
@@ -438,8 +508,6 @@ or test results.
 
         let input = self.current_request.trim().to_lowercase();
 
-        // If the user explicitly asks for the project/file tree, there is no
-        // useful reason to spend a planner generation deciding to list it.
         const DIRECTORY_REQUESTS: &[&str] = &[
             "show me the files",
             "show the files",
@@ -461,8 +529,6 @@ or test results.
             return Some(("list_directory".into(), ".".into()));
         }
 
-        // A request containing an explicit source/config path is also
-        // unambiguous when the path is clearly a single file.
         if let Some(path) = Self::extract_explicit_file_path(&input)
             && !path.is_empty()
             && !path.ends_with('/')
@@ -495,90 +561,18 @@ or test results.
             .map(ToOwned::to_owned)
     }
 
-    async fn execute_actions(
-        &mut self,
-        actions: Vec<PlanAction>,
-        tx: &Sender<AgentEvent>,
-        cancel: &CancellationToken,
-        confirmation_rx: &mut Receiver<Confirmation>,
-    ) -> Result<()> {
-        for action in actions {
-            if cancel.is_cancelled() {
-                return Ok(());
-            }
+    // ========================================================================
+    // Planner
+    // ========================================================================
 
-            let PlanAction::Tool { name, input } = action else {
-                continue;
-            };
-
-            if self.planning_state == PlanningState::Exploring
-                && (name == "write_file" || name == "patch_file")
-            {
-                tx.send(AgentEvent::Error(format!(
-                    "Cannot execute '{}' while in planning phase. Approve a plan first.",
-                    name
-                )))
-                .await?;
-
-                break;
-            }
-
-            if let Err(error) = self
-                .execute_tool(&name, &input, tx, cancel, confirmation_rx)
-                .await
-            {
-                tx.send(AgentEvent::Error(format!("{} failed: {}", name, error)))
-                    .await?;
-
-                break;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn create_plan(&self, cancel: &CancellationToken) -> Result<PlanAction> {
-        // IMPORTANT: do not send the complete Context here.
-        //
-        // The planner only needs:
-        //   1. the current request
-        //   2. compact workspace state
-        //   3. observations produced during this request
-        //
-        // This prevents the planner from repeatedly processing the full
-        // conversational history and previous assistant responses.
-        let mut messages = Vec::with_capacity(3);
-
-        messages.push(Message {
-            role: MessageRole::System,
-            content: self.planner_system_prompt(),
-        });
-
-        messages.push(Message {
-            role: MessageRole::User,
-            content: self.current_request.clone(),
-        });
-
-        let observations = self.planner_observations();
-
-        if !observations.is_empty() {
-            messages.push(Message {
-                role: MessageRole::Observation,
-                content: observations,
-            });
-        }
-
-        self.planner.plan(messages, cancel.clone()).await
-    }
-
-    fn planner_system_prompt(&self) -> String {
-        let tools = self.tools.descriptions().join("\n");
+    fn build_planner_system_prompt(tools: &ToolRegistry) -> String {
+        let tools_description = tools.descriptions().join("\n");
 
         format!(
             "\
-You are Luma's internal planner.
+You are Luma's internal coding-agent planner.
 
-Choose ONLY the NEXT action. Do not explain your reasoning.
+Choose ONLY the NEXT action.
 Return exactly one valid JSON object and nothing else.
 
 AVAILABLE TOOLS:
@@ -609,13 +603,62 @@ RULES:
 - Return answer for ordinary conversation.
 - Return plan only when enough information is known and approval is useful.
 - Keep plan content short.
-- Never output Markdown or reasoning.
-"
+- Never output Markdown.
+- Never output reasoning.
+",
+            tools = tools_description,
         )
     }
 
+    fn create_plan<'a>(
+        &'a self,
+        cancel: &'a CancellationToken,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<PlanAction>> + Send + 'a>> {
+        Box::pin(async move {
+            let observations = self.planner_observations();
+
+            let mut messages = Vec::with_capacity(if observations.is_empty() { 2 } else { 3 });
+
+            messages.push(Message {
+                role: MessageRole::System,
+                content: self.planner_system_prompt.clone(),
+            });
+
+            messages.push(Message {
+                role: MessageRole::User,
+                content: self.current_request.clone(),
+            });
+
+            if !observations.is_empty() {
+                messages.push(Message {
+                    role: MessageRole::Observation,
+                    content: observations,
+                });
+            }
+
+            self.planner.plan(messages, cancel.clone()).await
+        })
+    }
+
     fn planner_observations(&self) -> String {
-        let mut output = String::new();
+        if self.request_observations.is_empty()
+            && self.inspected_files.is_empty()
+            && self.language == ProgrammingLanguage::Unknown
+            && !self.inspection.directory
+            && !self.inspection.config
+            && !self.inspection.readme
+            && !self.inspection.source
+            && !self.inspection.galaxy
+        {
+            return String::new();
+        }
+
+        let mut output = String::with_capacity(
+            self.request_observations
+                .len()
+                .saturating_mul(512)
+                .min(MAX_PLANNER_OBSERVATIONS),
+        );
 
         output.push_str("WORKSPACE STATE:\n");
 
@@ -655,26 +698,38 @@ RULES:
             }
         }
 
-        // Context stores the full observation strings, but the planner gets
-        // only the observation messages generated during this request.
-        let observations = self
-            .context
-            .messages()
-            .iter()
-            .filter(|message| message.role == MessageRole::Observation)
-            .map(|message| message.content.as_str())
-            .collect::<Vec<_>>();
-
-        if !observations.is_empty() {
+        if !self.request_observations.is_empty() {
             output.push_str("\nOBSERVATIONS:\n");
 
-            for observation in observations {
-                output.push_str(observation);
+            let mut selected: Vec<String> = Vec::new();
+
+            let mut remaining = MAX_PLANNER_OBSERVATIONS.saturating_sub(output.len());
+
+            for observation in self.request_observations.iter().rev() {
+                if remaining == 0 {
+                    break;
+                }
+
+                let size = observation.len();
+
+                if size <= remaining {
+                    selected.push(observation.clone());
+                    remaining -= size;
+                } else {
+                    selected.push(truncate_text(observation, remaining));
+                    break;
+                }
+            }
+
+            selected.reverse();
+
+            for observation in selected {
+                output.push_str(&observation);
                 output.push_str("\n---\n");
             }
         }
 
-        output
+        truncate_text(&output, MAX_PLANNER_OBSERVATIONS)
     }
 
     // ========================================================================
@@ -719,16 +774,19 @@ RULES:
 
         let result = match self.tools.execute(name, input.trim()) {
             Ok(result) => result,
+
             Err(error) => {
                 let message = format!("{} failed: {}", name, error);
+
                 tx.send(AgentEvent::Error(message.clone())).await?;
-                self.context.add(
-                    MessageRole::Observation,
-                    format!("Observation from `{}`:\n{}", name, message),
-                );
+
+                self.record_observation(name, &message);
+
                 return Ok(());
             }
         };
+
+        let duration = started.elapsed();
 
         if cancel.is_cancelled() {
             return Ok(());
@@ -738,14 +796,69 @@ RULES:
 
         tx.send(AgentEvent::ToolFinished {
             name: name.to_owned(),
-            duration_ms: started.elapsed().as_millis(),
+            duration_ms: duration.as_millis(),
         })
         .await?;
 
-        self.context.add(
-            MessageRole::Observation,
-            format!("Observation from `{}`:\n{}", name, result),
-        );
+        self.record_observation(name, &result);
+
+        Ok(())
+    }
+
+    fn record_observation(&mut self, tool: &str, result: &str) {
+        let compact = compact_tool_output(result);
+
+        let observation = format!("Observation from `{}`:\n{}", tool, compact);
+
+        // Keep the compact observation in the conversational context.
+        //
+        // The final answer can therefore still see what happened.
+        self.context
+            .add(MessageRole::Observation, observation.clone());
+
+        // Keep a separate request-local copy for the planner.
+        self.request_observations.push(observation);
+    }
+
+    async fn execute_actions(
+        &mut self,
+        actions: Vec<PlanAction>,
+        tx: &Sender<AgentEvent>,
+        cancel: &CancellationToken,
+        confirmation_rx: &mut Receiver<Confirmation>,
+    ) -> Result<()> {
+        for action in actions {
+            if cancel.is_cancelled() {
+                return Ok(());
+            }
+
+            let PlanAction::Tool { name, input } = action else {
+                continue;
+            };
+
+            if self.planning_state == PlanningState::Exploring
+                && (name == "write_file" || name == "patch_file")
+            {
+                tx.send(AgentEvent::Error(format!(
+                    "Cannot execute '{}' while in planning phase. \
+                     Approve a plan first.",
+                    name
+                )))
+                .await?;
+
+                break;
+            }
+
+            if let Err(error) = self
+                .execute_tool(&name, &input, tx, cancel, confirmation_rx)
+                .await
+            {
+                tx.send(AgentEvent::Error(format!("{} failed: {}", name, error)))
+                    .await?;
+
+                break;
+            }
+        }
 
         Ok(())
     }
@@ -1112,6 +1225,7 @@ RULES:
             .await?;
 
         let (project, language, important_files) = self.detect_project();
+
         let structure = self.directory_structure();
 
         let galaxy = format!(
@@ -1176,6 +1290,7 @@ RULES:
                     };
 
                     project = name.replace('"', "").trim().to_owned();
+
                     break;
                 }
             }
@@ -1212,6 +1327,38 @@ RULES:
             })
             .unwrap_or_else(|_| "Unable to inspect.".into())
     }
+}
+
+// ============================================================================
+// Output compaction
+// ============================================================================
+
+/// Make tool output suitable for another LLM.
+///
+/// This is deliberately separate from the actual tool output shown in the UI.
+/// The planner generally does not need every byte of a compiler log or file.
+fn compact_tool_output(result: &str) -> String {
+    truncate_text(result, MAX_TOOL_OBSERVATION)
+}
+
+/// UTF-8-safe truncation.
+///
+/// Never slice a String by byte index because that can split a UTF-8
+/// character and panic.
+fn truncate_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_owned();
+    }
+
+    let mut output = String::with_capacity(max_chars + 64);
+
+    for ch in text.chars().take(max_chars) {
+        output.push(ch);
+    }
+
+    output.push_str("\n\n[output truncated by Luma]");
+
+    output
 }
 
 // ============================================================================
