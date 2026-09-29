@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useFocusTrap } from "./hooks/useFocusTrap";
 
 import Editor from "@monaco-editor/react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { SparkIcon } from "./components/LumaWordmark";
 import LumaWordmark from "./components/LumaWordmark";
@@ -324,9 +327,10 @@ function TopBar({
                   ? "bg-[var(--luma-success)]"
                   : "bg-[var(--luma-danger)]"
               }`}
+              aria-hidden="true"
             />
-
-            {connected ? "Connected" : "Disconnected"}
+            <span className="sr-only">{connected ? 'Connected' : 'Disconnected'}</span>
+            <span aria-hidden="true">{connected ? 'Connected' : 'Disconnected'}</span>
           </div>
 
           <button
@@ -399,6 +403,7 @@ function SettingsPanel({
   onReconfigure: () => void;
 }) {
   const { theme, setTheme, definition } = useTheme();
+  const trapRef = useFocusTrap(open);
 
   const [section, setSection] = useState<"appearance" | "general">(
     "appearance",
@@ -437,9 +442,11 @@ function SettingsPanel({
       />
 
       <div
+        ref={trapRef as React.RefObject<HTMLDivElement>}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
+        aria-describedby="settings-description"
         className="
           no-drag
           fixed left-1/2 top-1/2 z-40
@@ -462,6 +469,9 @@ function SettingsPanel({
         >
           <div id="settings-title" className="luma-kicker mb-1 px-2 py-1">
             Settings
+          </div>
+          <div id="settings-description" className="sr-only">
+            Configure Luma's appearance, connection, and model settings
           </div>
 
           <SettingsNavButton
@@ -877,39 +887,28 @@ function ChatRow({
         </div>
       </button>
 
-      <div className="mr-1 hidden items-center group-hover:flex">
+      <div className="mr-1 flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
         <button
           type="button"
           onClick={onTogglePin}
-          aria-label={chat.pinned ? "Unpin chat" : "Pin chat"}
-          className="
-            flex h-6 w-6 items-center justify-center
-            rounded-md
-            text-[var(--luma-text-muted)]
-            hover:text-[var(--luma-text-secondary)]
-          "
+          aria-label={chat.pinned ? 'Unpin chat' : 'Pin chat'}
+          className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--luma-text-muted)] hover:text-[var(--luma-text-secondary)] focus:text-[var(--luma-text-secondary)]"
         >
           <PinIcon filled={chat.pinned} />
         </button>
         <button
           type="button"
           onClick={onRename}
-          className="
-            px-1 text-[11px]
-            text-[var(--luma-text-muted)]
-            hover:text-[var(--luma-text-secondary)]
-          "
+          aria-label={`Rename chat ${chat.name}`}
+          className="px-1 text-[11px] text-[var(--luma-text-muted)] hover:text-[var(--luma-text-secondary)] focus:text-[var(--luma-text-secondary)]"
         >
           Rename
         </button>
         <button
           type="button"
           onClick={onDelete}
-          className="
-            px-1 text-[11px]
-            text-[var(--luma-text-muted)]
-            hover:text-[var(--luma-danger)]
-          "
+          aria-label={`Delete chat ${chat.name}`}
+          className="px-1 text-[11px] text-[var(--luma-text-muted)] hover:text-[var(--luma-danger)] focus:text-[var(--luma-danger)]"
         >
           Delete
         </button>
@@ -1035,6 +1034,8 @@ function Sidebar({ onOpenChat }: { onOpenChat: () => void }) {
         border-r border-[var(--luma-border)]
         bg-[var(--luma-surface)]
       "
+      role="navigation"
+      aria-label="Chat and project navigation"
     >
       <div className="px-2.5 pt-2.5">
         <button
@@ -1164,26 +1165,20 @@ function Sidebar({ onOpenChat }: { onOpenChat: () => void }) {
                     {project.name}
                   </button>
 
-                  <div className="mr-1 hidden group-hover:flex">
+                  <div className="mr-1 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                     <button
                       type="button"
                       onClick={() => handleRenameProject(project.id, project.name)}
-                      className="
-                        px-1 text-[11px]
-                        text-[var(--luma-text-muted)]
-                        hover:text-[var(--luma-text-secondary)]
-                      "
+                      aria-label={`Rename project ${project.name}`}
+                      className="px-1 text-[11px] text-[var(--luma-text-muted)] hover:text-[var(--luma-text-secondary)] focus:text-[var(--luma-text-secondary)]"
                     >
                       Rename
                     </button>
                     <button
                       type="button"
                       onClick={() => handleDeleteProject(project.id, project.name)}
-                      className="
-                        px-1 text-[11px]
-                        text-[var(--luma-text-muted)]
-                        hover:text-[var(--luma-danger)]
-                      "
+                      aria-label={`Delete project ${project.name}`}
+                      className="px-1 text-[11px] text-[var(--luma-text-muted)] hover:text-[var(--luma-danger)] focus:text-[var(--luma-danger)]"
                     >
                       Delete
                     </button>
@@ -1494,11 +1489,63 @@ function AgentMessageView({
                 px-3 py-2
                 text-[var(--luma-text)]
               `
-              : "text-[var(--luma-text-secondary)]"
+              : "text-[var(--luma-text-secondary)] prose prose-sm prose-invert max-w-none"
           }
         `}
       >
-        {content}
+        {role === "assistant" ? (
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              code({ node, inline, className, children, ...props }) {
+                const match = /language-(\w+)/.exec(className || '');
+                return !inline && match ? (
+                  <pre className="my-2 overflow-x-auto rounded border border-[var(--luma-border)] bg-[var(--luma-surface)] p-2">
+                    <code className={className} {...props}>
+                      {children}
+                    </code>
+                  </pre>
+                ) : (
+                  <code className={className} {...props}>
+                    {children}
+                  </code>
+                );
+              },
+              p({ children }) {
+                return <p className="mb-2 last:mb-0">{children}</p>;
+              },
+              ul({ children }) {
+                return <ul className="mb-2 ml-4 list-disc">{children}</ul>;
+              },
+              ol({ children }) {
+                return <ol className="mb-2 ml-4 list-decimal">{children}</ol>;
+              },
+              li({ children }) {
+                return <li className="mb-1">{children}</li>;
+              },
+              blockquote({ children }) {
+                return (
+                  <blockquote className="my-2 border-l-2 border-[var(--luma-border)] pl-3 italic">
+                    {children}
+                  </blockquote>
+                );
+              },
+              h1({ children }) {
+                return <h1 className="mb-2 mt-3 text-[14px] font-semibold">{children}</h1>;
+              },
+              h2({ children }) {
+                return <h2 className="mb-2 mt-3 text-[13px] font-semibold">{children}</h2>;
+              },
+              h3({ children }) {
+                return <h3 className="mb-2 mt-3 text-[12px] font-semibold">{children}</h3>;
+              },
+            }}
+          >
+            {content}
+          </ReactMarkdown>
+        ) : (
+          <span>{content}</span>
+        )}
       </div>
     </div>
   );
@@ -1514,10 +1561,16 @@ function ToolActivity({
   }
 
   return (
-    <div className="mt-2 space-y-1">
+    <div
+      role="status"
+      aria-label="Agent tool activity"
+      className="mt-2 space-y-1"
+    >
       {tools.map((tool) => (
         <div
           key={tool.id}
+          role="listitem"
+          aria-label={`${tool.name} ${tool.finished ? 'completed' : 'running'}`}
           className="
             flex items-center gap-2
             rounded-md
@@ -1554,7 +1607,12 @@ function ToolActivity({
 
 function ThinkingIndicator() {
   return (
-    <div className="flex items-center gap-2">
+    <div
+      role="status"
+      aria-live="polite"
+      aria-label="Luma is thinking"
+      className="flex items-center gap-2"
+    >
       <div
         className="
           flex h-5 w-5 shrink-0
@@ -1937,6 +1995,8 @@ function FilesPanel({
         border-r border-[var(--luma-border)]
         bg-[var(--luma-surface)]
       "
+      role="navigation"
+      aria-label="File explorer"
     >
       <div className="flex h-9 items-center px-2.5">
         <span className="luma-kicker">Files</span>
@@ -2260,6 +2320,8 @@ export default function App() {
         text-[var(--luma-text)]
       "
     >
+      {/* Live region for screen reader announcements */}
+      <div id="luma-announcer" aria-live="polite" className="sr-only" />
       <TopBar
         mode={mode}
         setMode={setMode}

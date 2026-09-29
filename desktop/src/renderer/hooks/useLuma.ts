@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { LumaAgentEvent } from "../../preload";
 
+import { announce } from "../../utils/accessibility";
+
 export type AgentMessage = {
   id: string;
   role: "user" | "assistant";
@@ -53,6 +55,7 @@ export function useLuma() {
       case "Error": {
         setError(event.data.message);
         setThinking(false);
+        announce(`Error: ${event.data.message}`, 'assertive');
         break;
       }
 
@@ -83,6 +86,7 @@ export function useLuma() {
 
       case "Thinking": {
         setThinking(true);
+        announce("Luma is thinking...");
         break;
       }
 
@@ -173,6 +177,7 @@ export function useLuma() {
         ]);
 
         setThinking(false);
+        announce(`Running tool: ${tool.name}`);
 
         break;
       }
@@ -187,6 +192,8 @@ export function useLuma() {
         if (!tool) {
           return;
         }
+
+        announce(`Tool ${tool.name} completed in ${tool.duration_ms}ms`);
 
         setTools((current) => {
           // Prefer the most recent unfinished

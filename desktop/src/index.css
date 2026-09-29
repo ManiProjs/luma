@@ -319,3 +319,28 @@ select:focus-visible {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Markdown prose styles */
+.prose-invert {
+  --tw-prose-body: var(--luma-text-secondary);
+  --tw-prose-headings: var(--luma-text);
+  --tw-prose-lead: var(--luma-text-muted);
+  --tw-prose-links: var(--luma-accent);
+  --tw-prose-bold: var(--luma-text);
+  --tw-prose-counters: var(--luma-text-muted);
+  --tw-prose-bullets: var(--luma-border);
+  --tw-prose-hr: var(--luma-border);
+  --tw-prose-quotes: var(--luma-text-muted);
+  --tw-prose-quote-borders: var(--luma-border);
+  --tw-prose-captions: var(--luma-text-muted);
+  --tw-prose-code: var(--luma-text);
+  --tw-prose-pre-code: var(--luma-text-secondary);
+  --tw-prose-pre-bg: var(--luma-surface);
+  --tw-prose-th-borders: var(--luma-border);
+  --tw-prose-td-borders: var(--luma-border);
+}
+
+.prose-sm {
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
