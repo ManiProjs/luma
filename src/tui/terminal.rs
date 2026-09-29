@@ -15,16 +15,16 @@ use crossterm::{
 
 use ratatui::{Terminal, backend::CrosstermBackend};
 
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::broadcast;
+use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    agent::Confirmation,
-    commands::Command,
     event::AgentEvent,
+    session::{AgentCommand, MessageRole, Session},
     theme::LumaTheme,
     tui::{
-        app::{App, MessageLine, MessageRole},
+        app::{App, MessageLine},
         info::LumaInfo,
         ui,
     },
@@ -34,25 +34,32 @@ const POLL_INTERVAL: Duration = Duration::from_millis(30);
 const EXIT_CONFIRM_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub async fn run(
-    mut rx: Receiver<AgentEvent>,
+    session: &mut Session,
+    events: &mut broadcast::Receiver<AgentEvent>,
     input_tx: Sender<String>,
     cancel: CancellationToken,
-    confirmation_tx: Sender<Confirmation>,
-    mut info: LumaInfo,
 ) -> Result<()> {
     let mut terminal = setup_terminal()?;
 
+    let mut app = App::new();
+
+    let mut info = LumaInfo::new(session.info());
+
     let result = run_loop(
         &mut terminal,
-        &mut rx,
-        &input_tx,
-        &cancel,
-        &confirmation_tx,
+        session,
+        events,
+        &mut app,
         &mut info,
+        &input_tx,
     )
     .await;
 
     restore_terminal(&mut terminal)?;
+
+    // The loop only stops on an explicit exit, but a `/quit` or a cancelled
+    // request anywhere else still has to tear the agent down.
+    cancel.cancel();
 
     result
 }
@@ -94,27 +101,26 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
 
 async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    rx: &mut Receiver<AgentEvent>,
-    input_tx: &Sender<String>,
-    cancel: &CancellationToken,
-    confirmation_tx: &Sender<Confirmation>,
+    session: &mut Session,
+    events: &mut broadcast::Receiver<AgentEvent>,
+    app: &mut App,
     info: &mut LumaInfo,
+    input_tx: &Sender<String>,
 ) -> Result<()> {
-    let mut app = App::new();
     let theme = LumaTheme::default();
 
     let mut confirm_exit = false;
     let mut last_ctrl_c = Instant::now();
 
     loop {
-        draw(terminal, &app, &theme, info, confirm_exit)?;
+        draw(terminal, app, &theme, info, confirm_exit)?;
 
         // ----------------------------------------------------
         // Agent events
         // ----------------------------------------------------
 
-        if drain_agent_events(rx, &mut app, info) {
-            draw(terminal, &app, &theme, info, confirm_exit)?;
+        if drain_agent_events(events, session, app, info) {
+            draw(terminal, app, &theme, info, confirm_exit)?;
         }
 
         // ----------------------------------------------------
@@ -135,24 +141,29 @@ async fn run_loop(
 
         let event = event::read()?;
 
-        let should_exit = match event {
+        // Ctrl+C twice always exits, even if the session never saw a command.
+        if session.exit_requested() {
+            break;
+        }
+
+        let should_exit = match &event {
             Event::Mouse(mouse) => {
-                handle_mouse(&mut app, mouse.kind);
+                handle_mouse(session, app, info, mouse.kind);
                 false
             }
 
             Event::Key(key) => {
-                let mut key_ctx = KeyContext {
-                    app: &mut app,
-                    input_tx,
-                    cancel,
-                    confirmation_tx,
+                handle_key(
+                    session,
+                    app,
                     info,
-                    confirm_exit: &mut confirm_exit,
-                    last_ctrl_c: &mut last_ctrl_c,
-                };
-
-                handle_key(&mut key_ctx, key.code, key.modifiers).await?
+                    key.code,
+                    key.modifiers,
+                    input_tx,
+                    &mut confirm_exit,
+                    &mut last_ctrl_c,
+                )
+                .await?
             }
 
             _ => false,
@@ -188,80 +199,107 @@ fn draw(
 // Agent events
 // ============================================================
 
-fn drain_agent_events(rx: &mut Receiver<AgentEvent>, app: &mut App, info: &mut LumaInfo) -> bool {
+/// Fold incoming agent events into the core session, then mirror the core's
+/// state into the front end's `App`.
+///
+/// `App` still owns the transcript it draws; the session owns the transcript
+/// it reasons about. They are the same list, and this is the one place the
+/// copy is refreshed.
+fn drain_agent_events(
+    events: &mut broadcast::Receiver<AgentEvent>,
+    session: &mut Session,
+    app: &mut App,
+    info: &mut LumaInfo,
+) -> bool {
     let mut received = false;
 
-    while let Ok(event) = rx.try_recv() {
-        received = true;
+    loop {
+        match events.try_recv() {
+            Ok(event) => {
+                session.handle_event(event);
+                received = true;
+            }
 
-        update_info_status(info, &event);
+            Err(broadcast::error::TryRecvError::Empty) => break,
 
-        app.handle_event(event);
+            Err(broadcast::error::TryRecvError::Lagged(skipped)) => {
+                tracing::warn!(skipped, "terminal event receiver lagged");
+                received = true;
+            }
 
-        if app.auto_scroll {
-            app.scroll_to_bottom();
+            Err(broadcast::error::TryRecvError::Closed) => break,
         }
+    }
+
+    if received {
+        sync_from_session(session, app, info);
     }
 
     received
 }
 
-fn update_info_status(info: &mut LumaInfo, event: &AgentEvent) {
-    match event {
-        AgentEvent::Thinking => {
-            info.set_status("Thinking");
-        }
+/// Copy the core's state into the front end.
+fn sync_from_session(session: &Session, app: &mut App, info: &mut LumaInfo) {
+    let state = session.state();
 
-        AgentEvent::PlanGenerated(_) => {
-            info.set_status("Thinking");
-        }
+    app.thinking = state.busy;
+    app.status = state.status.clone();
+    app.welcome_visible = state.fresh;
+    app.confirmation =
+        state
+            .confirmation
+            .clone()
+            .map(|confirmation| crate::tui::app::PendingConfirmation {
+                name: confirmation.name,
+                input: confirmation.input,
+            });
 
-        AgentEvent::ToolStarted { name, .. } => {
-            info.set_status(format!("Running {}", name));
-        }
+    app.messages = state
+        .messages
+        .iter()
+        .map(|message| MessageLine {
+            role: match message.role {
+                MessageRole::User => crate::tui::app::MessageRole::User,
+                MessageRole::Assistant => crate::tui::app::MessageRole::Assistant,
+                MessageRole::Tool => crate::tui::app::MessageRole::Tool,
+                MessageRole::Plan => crate::tui::app::MessageRole::Plan,
+                MessageRole::System => crate::tui::app::MessageRole::System,
+                MessageRole::Error => crate::tui::app::MessageRole::Error,
+            },
+            content: message.content.clone(),
+        })
+        .collect();
 
-        AgentEvent::ToolFinished { .. } => {
-            info.set_status("Thinking");
-        }
+    // The tool panel tracks the most recent tool entry, running or finished,
+    // but only for as long as the turn is alive — once the agent reports
+    // `Finished` the transcript is the only place the tool is shown.
+    app.current_tool = match state.busy {
+        true => state
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.tool.is_some())
+            .map(|message| crate::tui::app::ToolState {
+                name: message.tool.clone().unwrap_or_default(),
+                input: message.content.clone(),
+                status: match (message.running, message.succeeded) {
+                    (_, Some(true)) => crate::tui::app::ToolStatus::Success,
+                    (_, Some(false)) => crate::tui::app::ToolStatus::Failed,
+                    _ => crate::tui::app::ToolStatus::Running,
+                },
+            }),
 
-        AgentEvent::ConfirmationRequired { .. } => {
-            info.set_status("Confirmation required");
-        }
+        false => None,
+    };
 
-        AgentEvent::TextDelta(_) => {
-            info.set_status("Generating");
-        }
-
-        AgentEvent::SystemMessage(_) => {
-            info.set_status("Ready");
-        }
-
-        AgentEvent::Finished => {
-            info.set_status("Ready");
-        }
-
-        AgentEvent::Error(_) => {
-            info.set_status("Error");
-        }
-
-        AgentEvent::Usage {
-            prompt_tokens,
-            completion_tokens,
-            total_tokens,
-            cost_usd,
-        } => {
-            info.add_usage(*prompt_tokens, *completion_tokens, *total_tokens, *cost_usd);
-        }
-
-        AgentEvent::Status { .. } => {}
-    }
+    info.sync(session.info(), state);
 }
 
 // ============================================================
 // Mouse
 // ============================================================
 
-fn handle_mouse(app: &mut App, kind: MouseEventKind) {
+fn handle_mouse(session: &Session, app: &mut App, info: &mut LumaInfo, kind: MouseEventKind) {
     match kind {
         MouseEventKind::ScrollUp => {
             app.scroll_up();
@@ -271,7 +309,11 @@ fn handle_mouse(app: &mut App, kind: MouseEventKind) {
             app.scroll_down();
         }
 
-        _ => {}
+        // Scrolling is a purely local view change, but it clears the
+        // session's echo of the status line the header reads.
+        _ => {
+            info.sync(session.info(), session.state());
+        }
     }
 }
 
@@ -279,41 +321,64 @@ fn handle_mouse(app: &mut App, kind: MouseEventKind) {
 // Keyboard
 // ============================================================
 
-struct KeyContext<'a> {
-    app: &'a mut App,
-    input_tx: &'a Sender<String>,
-    cancel: &'a CancellationToken,
-    confirmation_tx: &'a Sender<Confirmation>,
-    info: &'a mut LumaInfo,
-    confirm_exit: &'a mut bool,
-    last_ctrl_c: &'a mut Instant,
-}
-
+#[allow(clippy::too_many_arguments)]
 async fn handle_key(
-    ctx: &mut KeyContext<'_>,
+    session: &mut Session,
+    app: &mut App,
+    info: &mut LumaInfo,
     code: KeyCode,
     modifiers: KeyModifiers,
+    input_tx: &Sender<String>,
+    confirm_exit: &mut bool,
+    last_ctrl_c: &mut Instant,
 ) -> Result<bool> {
     // --------------------------------------------------------
-    // Ctrl+C
+    // Ctrl+C: cancel a running request, otherwise arm the exit
     // --------------------------------------------------------
 
     if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('c') {
-        return handle_ctrl_c(
-            ctx.app,
-            ctx.cancel,
-            ctx.info,
-            ctx.confirm_exit,
-            ctx.last_ctrl_c,
-        );
+        if session.state().busy {
+            session.apply(AgentCommand::Cancel).await?;
+
+            sync_from_session(session, app, info);
+
+            return Ok(false);
+        }
+
+        if !*confirm_exit {
+            *confirm_exit = true;
+            *last_ctrl_c = Instant::now();
+
+            return Ok(false);
+        }
+
+        return Ok(true);
     }
 
     // --------------------------------------------------------
-    // Confirmation mode
+    // A pending confirmation swallows every other key
     // --------------------------------------------------------
 
-    if ctx.app.confirmation_pending() {
-        return handle_confirmation(ctx.app, code, ctx.confirmation_tx, ctx.info).await;
+    if session.state().confirmation.is_some() {
+        return match code {
+            KeyCode::Enter => {
+                session
+                    .apply(AgentCommand::Confirm { allowed: true })
+                    .await?;
+
+                Ok(false)
+            }
+
+            KeyCode::Esc => {
+                session
+                    .apply(AgentCommand::Confirm { allowed: false })
+                    .await?;
+
+                Ok(false)
+            }
+
+            _ => Ok(false),
+        };
     }
 
     // --------------------------------------------------------
@@ -322,138 +387,65 @@ async fn handle_key(
 
     match code {
         KeyCode::Char(c) => {
-            ctx.app.input.insert(c);
-            ctx.app.history_index = None;
-            ctx.app.update_suggestions();
+            app.input.insert(c);
+            app.history_index = None;
+            app.update_suggestions();
         }
 
         KeyCode::Backspace => {
-            ctx.app.input.backspace();
-            ctx.app.history_index = None;
-            ctx.app.update_suggestions();
+            app.input.backspace();
+            app.history_index = None;
+            app.update_suggestions();
         }
 
         KeyCode::Tab => {
-            if !ctx.app.suggestions.is_empty() {
-                ctx.app.accept_suggestion();
+            if !app.suggestions.is_empty() {
+                app.accept_suggestion();
             }
         }
 
         KeyCode::Up => {
-            if ctx.app.suggestions.is_empty() {
-                ctx.app.history_up();
+            if app.suggestions.is_empty() {
+                app.history_up();
             } else {
-                ctx.app.suggestion_up();
+                app.suggestion_up();
             }
         }
 
         KeyCode::Down => {
-            if ctx.app.suggestions.is_empty() {
-                ctx.app.history_down();
+            if app.suggestions.is_empty() {
+                app.history_down();
             } else {
-                ctx.app.suggestion_down();
+                app.suggestion_down();
             }
         }
 
-        KeyCode::Enter => {
-            return handle_enter(ctx.app, modifiers, ctx.input_tx, ctx.info).await;
-        }
-
         KeyCode::Left => {
-            move_cursor_left(ctx.app);
+            move_cursor_left(app);
         }
 
         KeyCode::Right => {
-            move_cursor_right(ctx.app);
+            move_cursor_right(app);
         }
 
         KeyCode::Home => {
-            ctx.app.input.cursor_x = 0;
+            app.input.cursor_x = 0;
         }
 
         KeyCode::End => {
-            move_cursor_end(ctx.app);
+            move_cursor_end(app);
         }
 
         KeyCode::PageUp => {
-            ctx.app.scroll_up();
+            app.scroll_up();
         }
 
         KeyCode::PageDown => {
-            ctx.app.scroll_down();
+            app.scroll_down();
         }
 
-        _ => {}
-    }
-
-    Ok(false)
-}
-
-// ============================================================
-// Ctrl+C
-// ============================================================
-
-fn handle_ctrl_c(
-    app: &mut App,
-    cancel: &CancellationToken,
-    info: &mut LumaInfo,
-    confirm_exit: &mut bool,
-    last_ctrl_c: &mut Instant,
-) -> Result<bool> {
-    if app.thinking || app.current_tool.is_some() {
-        cancel.cancel();
-
-        app.messages.push(MessageLine {
-            role: MessageRole::System,
-            content: "Generation interrupted.".into(),
-        });
-
-        app.thinking = false;
-        app.current_tool = None;
-        app.confirmation = None;
-
-        info.set_status("Ready");
-
-        return Ok(false);
-    }
-
-    if !*confirm_exit {
-        *confirm_exit = true;
-        *last_ctrl_c = Instant::now();
-
-        return Ok(false);
-    }
-
-    Ok(true)
-}
-
-// ============================================================
-// Confirmation
-// ============================================================
-
-async fn handle_confirmation(
-    app: &mut App,
-    code: KeyCode,
-    confirmation_tx: &Sender<Confirmation>,
-    info: &mut LumaInfo,
-) -> Result<bool> {
-    match code {
         KeyCode::Enter => {
-            confirmation_tx.send(Confirmation::Allow).await?;
-
-            app.clear_confirmation();
-            app.thinking = true;
-
-            info.set_status("Thinking");
-        }
-
-        KeyCode::Esc => {
-            confirmation_tx.send(Confirmation::Deny).await?;
-
-            app.clear_confirmation();
-            app.thinking = true;
-
-            info.set_status("Thinking");
+            return handle_enter(session, app, info, modifiers, input_tx).await;
         }
 
         _ => {}
@@ -467,22 +459,24 @@ async fn handle_confirmation(
 // ============================================================
 
 async fn handle_enter(
+    session: &mut Session,
     app: &mut App,
+    info: &mut LumaInfo,
     modifiers: KeyModifiers,
     input_tx: &Sender<String>,
-    info: &mut LumaInfo,
 ) -> Result<bool> {
     // --------------------------------------------------------
-    // Autocomplete
+    // Autocomplete takes precedence over sending
     // --------------------------------------------------------
 
     if !app.suggestions.is_empty() {
         app.accept_suggestion();
+
         return Ok(false);
     }
 
     // --------------------------------------------------------
-    // Shift+Enter
+    // Shift+Enter is a newline
     // --------------------------------------------------------
 
     if modifiers.contains(KeyModifiers::SHIFT) {
@@ -496,112 +490,20 @@ async fn handle_enter(
     // Submit
     // --------------------------------------------------------
 
-    let Some(message) = app.submit_input() else {
+    let Some(text) = app.submit_input() else {
         return Ok(false);
     };
 
-    // --------------------------------------------------------
-    // Slash commands
-    // --------------------------------------------------------
+    // The session owns slash-command handling now: it resolves `/help`,
+    // `/clear` and `/quit` locally, and forwards `/init` to the agent as a
+    // real request.
+    match session.apply(AgentCommand::Submit(text)).await? {
+        Some(forwarded) => input_tx.send(forwarded).await?,
 
-    if let Some(command) = Command::parse(&message) {
-        return handle_command(app, command, input_tx, info).await;
+        None => sync_from_session(session, app, info),
     }
 
-    // --------------------------------------------------------
-    // Normal prompt
-    // --------------------------------------------------------
-
-    app.thinking = true;
-    info.set_status("Thinking");
-
-    input_tx.send(message).await?;
-
-    Ok(false)
-}
-
-// ============================================================
-// Commands
-// ============================================================
-
-async fn handle_command(
-    app: &mut App,
-    command: Command,
-    input_tx: &Sender<String>,
-    info: &mut LumaInfo,
-) -> Result<bool> {
-    match command {
-        Command::Help => {
-            app.messages.push(MessageLine {
-                role: MessageRole::System,
-                content: concat!("Commands:\n\n", "/help\n", "/clear\n", "/quit\n", "/init",)
-                    .into(),
-            });
-
-            app.scroll_to_bottom();
-        }
-
-        Command::Clear => {
-            app.messages.clear();
-            app.current_tool = None;
-            app.confirmation = None;
-            app.thinking = false;
-
-            app.scroll = 0;
-            app.auto_scroll = true;
-            app.welcome_visible = true;
-
-            info.set_status("Ready");
-        }
-
-        Command::Quit => {
-            return Ok(true);
-        }
-
-        Command::Init => {
-            let prompt = r#"Initialize this workspace.
-
-Tasks:
-1. Inspect the project files using available tools.
-2. Detect the programming language and framework.
-3. Create or update GALAXY.md with:
-   - Project name
-   - Language
-   - Framework
-   - Important files
-   - Project structure
-   - Notes for future sessions
-4. Do not explain files.
-5. Do not summarize code.
-6. Use tools whenever possible.
-7. After finishing, reply exactly:
-
-Workspace initialized."#
-                .to_string();
-
-            app.messages.push(MessageLine {
-                role: MessageRole::User,
-                content: prompt.clone(),
-            });
-
-            app.welcome_visible = false;
-            app.thinking = true;
-            info.set_status("Thinking");
-
-            input_tx.send(prompt).await?;
-        }
-
-        Command::Unknown(name) => {
-            app.messages.push(MessageLine {
-                role: MessageRole::System,
-                content: format!("Unknown command: /{}", name),
-            });
-
-            app.scroll_to_bottom();
-        }
-    }
-
-    Ok(false)
+    Ok(session.exit_requested())
 }
 
 // ============================================================

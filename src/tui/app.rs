@@ -1,8 +1,3 @@
-use crate::{
-    event::AgentEvent,
-    tui::status::{error_status, finished_status, thinking_status, tool_status},
-};
-
 #[derive(Debug)]
 pub struct App {
     pub messages: Vec<MessageLine>,
@@ -253,18 +248,6 @@ impl App {
     }
 
     // ─────────────────────────────────────────────
-    // Status
-    // ─────────────────────────────────────────────
-
-    // pub fn set_status(&mut self, status: impl Into<String>) {
-    //     self.status = status.into();
-    // }
-
-    pub fn reset_status(&mut self) {
-        self.status = "Ready".into();
-    }
-
-    // ─────────────────────────────────────────────
     // Input / autocomplete
     // ─────────────────────────────────────────────
 
@@ -387,207 +370,8 @@ impl App {
     // Confirmation
     // ─────────────────────────────────────────────
 
-    pub fn request_confirmation(&mut self, name: String, input: String) {
-        self.confirmation = Some(PendingConfirmation { name, input });
-
-        // The agent is blocked waiting for the user's response.
-        self.thinking = false;
-
-        // A confirmation is an active UI state, not a chat message.
-        self.welcome_visible = false;
-        self.auto_scroll = true;
-
-        self.status = "Waiting for confirmation".into();
-    }
-
-    pub fn clear_confirmation(&mut self) {
-        self.confirmation = None;
-        self.reset_status();
-    }
-
     pub fn confirmation_pending(&self) -> bool {
         self.confirmation.is_some()
-    }
-
-    // ─────────────────────────────────────────────
-    // Agent events
-    // ─────────────────────────────────────────────
-
-    pub fn handle_event(&mut self, event: AgentEvent) {
-        match event {
-            AgentEvent::Thinking => {
-                self.thinking = true;
-                self.status = thinking_status().to_string();
-            }
-
-            AgentEvent::PlanGenerated(content) => {
-                self.messages.push(MessageLine {
-                    role: MessageRole::Plan,
-                    content,
-                });
-
-                self.thinking = false;
-                self.status = thinking_status().to_string();
-
-                if self.auto_scroll {
-                    self.scroll_to_bottom();
-                }
-            }
-
-            AgentEvent::ToolStarted { name, input } => {
-                let display_input = Self::format_tool_input(&name, &input);
-
-                self.messages.push(MessageLine {
-                    role: MessageRole::Tool,
-                    content: format!("{} {}", name, display_input),
-                });
-
-                self.thinking = false;
-
-                self.status = format!("{} {}", tool_status(&name), display_input);
-
-                self.current_tool = Some(ToolState {
-                    name,
-                    input: display_input,
-                    status: ToolStatus::Running,
-                });
-
-                if self.auto_scroll {
-                    self.scroll_to_bottom();
-                }
-            }
-
-            AgentEvent::ToolFinished { name, duration_ms } => {
-                if let Some(tool) = self.current_tool.as_mut()
-                    && tool.name == name
-                {
-                    tool.status = ToolStatus::Success;
-                }
-
-                if let Some(message) = self.messages.iter_mut().rev().find(|message| {
-                    message.role == MessageRole::Tool && message.content.starts_with(&name)
-                }) {
-                    message.content = format!("✓ {}  Completed in {} ms", name, duration_ms);
-                }
-
-                self.current_tool = None;
-                self.status = finished_status().to_string();
-
-                if self.auto_scroll {
-                    self.scroll_to_bottom();
-                }
-            }
-
-            AgentEvent::ConfirmationRequired { name, input } => {
-                self.request_confirmation(name, input);
-            }
-
-            AgentEvent::TextDelta(text) => {
-                self.thinking = false;
-
-                if let Some(last) = self.messages.last_mut()
-                    && last.role == MessageRole::Assistant
-                {
-                    last.content.push_str(&text);
-
-                    if self.auto_scroll {
-                        self.scroll_to_bottom();
-                    }
-
-                    return;
-                }
-
-                self.messages.push(MessageLine {
-                    role: MessageRole::Assistant,
-                    content: text,
-                });
-
-                if self.auto_scroll {
-                    self.scroll_to_bottom();
-                }
-            }
-
-            AgentEvent::SystemMessage(text) => {
-                self.messages.push(MessageLine {
-                    role: MessageRole::System,
-                    content: text,
-                });
-
-                self.thinking = false;
-                self.current_tool = None;
-                self.status = "Ready".into();
-
-                if self.auto_scroll {
-                    self.scroll_to_bottom();
-                }
-            }
-
-            AgentEvent::Finished => {
-                self.thinking = false;
-                self.current_tool = None;
-                self.status = finished_status().to_string();
-
-                // Do NOT blindly clear confirmation here.
-                //
-                // A confirmation request means the agent is waiting
-                // for the user. If another Finished event arrives while
-                // the confirmation UI is still active, preserve it.
-            }
-
-            AgentEvent::Error(error) => {
-                self.messages.push(MessageLine {
-                    role: MessageRole::Error,
-                    content: error,
-                });
-
-                self.thinking = false;
-
-                if let Some(tool) = self.current_tool.as_mut() {
-                    tool.status = ToolStatus::Failed;
-                }
-
-                self.current_tool = None;
-                self.status = error_status().to_string();
-
-                // Keep an explicit confirmation visible until the user
-                // answers it. Errors should not unexpectedly erase it.
-                if self.auto_scroll {
-                    self.scroll_to_bottom();
-                }
-            }
-
-            AgentEvent::Usage { .. } => {
-                // Usage is handled by updating info in terminal.rs
-            }
-
-            AgentEvent::Status { .. } => {}
-        }
-    }
-
-    fn format_tool_input(name: &str, input: &str) -> String {
-        match name {
-            "write_file" => input.lines().next().unwrap_or("?").trim().to_string(),
-
-            "patch_file" => input.lines().next().unwrap_or("?").trim().to_string(),
-
-            "read_file" => input.trim().to_string(),
-
-            "list_directory" => ".".to_string(),
-
-            "search_files" => input.trim().to_string(),
-
-            "run_command" => input.trim().to_string(),
-
-            _ => {
-                let trimmed = input.trim();
-
-                if trimmed.is_empty() {
-                    "working".into()
-                } else {
-                    trimmed.to_string()
-                }
-            }
-        }
     }
 
     // ─────────────────────────────────────────────
@@ -602,10 +386,6 @@ impl App {
     pub fn scroll_down(&mut self) {
         self.auto_scroll = false;
         self.scroll = self.scroll.saturating_add(3);
-    }
-
-    pub fn scroll_to_bottom(&mut self) {
-        self.auto_scroll = true;
     }
 
     // ─────────────────────────────────────────────

@@ -21,6 +21,7 @@ pub enum AgentEvent {
     ToolFinished {
         name: String,
         duration_ms: u128,
+        failed: bool,
     },
 
     ConfirmationRequired {
@@ -40,6 +41,25 @@ pub enum AgentEvent {
     },
 
     Finished,
+
+    /// Detailed tool progress with full output (for Ink retrieval)
+    ToolProgress {
+        name: String,
+        output: String,
+        progress_percent: Option<u8>,
+    },
+
+    /// Session metadata for UI header
+    SessionInfo {
+        workspace: String,
+        model: String,
+        provider: String,
+        tool_count: usize,
+        messages_count: usize,
+    },
+
+    /// Thinking content shown in expanded state
+    ThinkingContent(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,3 +5,5 @@ pub mod markdown;
 pub mod status;
 pub mod terminal;
 pub mod ui;
+
+pub use terminal::run;

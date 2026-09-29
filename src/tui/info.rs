@@ -1,10 +1,11 @@
-#[derive(Clone, Debug, Default)]
-pub struct UsageStats {
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub total_tokens: u64,
-    pub cost_usd: f64,
-}
+//! The header/status data the Ratatui front end renders.
+//!
+//! Every field here is derived from [`SessionInfo`], [`SessionState`], and
+//! [`UsageStats`] — the core already owns all of it. `LumaInfo` exists only
+//! so `ui.rs` can read it in one place; it is deleted with the rest of the
+//! Ratatui front end.
+
+use crate::session::{SessionInfo, SessionState, UsageStats};
 
 #[derive(Clone, Debug)]
 pub struct LumaInfo {
@@ -17,31 +18,24 @@ pub struct LumaInfo {
 }
 
 impl LumaInfo {
-    pub fn new(provider: impl Into<String>, model: impl Into<String>, tools: Vec<String>) -> Self {
+    pub fn new(info: &SessionInfo) -> Self {
         Self {
-            provider: provider.into(),
-            model: model.into(),
+            provider: info.provider.clone(),
+            model: info.model.clone(),
             status: "Ready".into(),
-            workspace: None,
-            tools,
+            workspace: Some(info.workspace.clone()),
+            tools: info.tools.clone(),
             usage: UsageStats::default(),
         }
     }
 
-    pub fn set_status(&mut self, status: impl Into<String>) {
-        self.status = status.into();
-    }
-
-    pub fn add_usage(
-        &mut self,
-        prompt_tokens: u64,
-        completion_tokens: u64,
-        total_tokens: u64,
-        cost_usd: f64,
-    ) {
-        self.usage.prompt_tokens += prompt_tokens;
-        self.usage.completion_tokens += completion_tokens;
-        self.usage.total_tokens += total_tokens;
-        self.usage.cost_usd += cost_usd;
+    /// Re-read everything the core owns, leaving front-end-only state alone.
+    pub fn sync(&mut self, info: &SessionInfo, state: &SessionState) {
+        self.provider = info.provider.clone();
+        self.model = info.model.clone();
+        self.workspace = Some(info.workspace.clone());
+        self.tools = info.tools.clone();
+        self.usage = state.usage;
+        self.status = state.status.clone();
     }
 }

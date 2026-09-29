@@ -1,372 +1,367 @@
+//! JSONL transport for the unified protocol.
+//!
+//! Reads [`ClientMessage`]s from stdin, writes [`ServerEvent`]s to stdout,
+//! one JSON object per line. The desktop shell spawns `luma desktop-server`
+//! and speaks this.
+//!
+//! This module is transport only. Every decision about what a message means
+//! belongs to the core; the desktop shell is one client, not a privileged
+//! one.
+
 use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::Confirmation;
-use crate::config::Config;
 use crate::event::AgentEvent;
-use crate::provider::{
-    ModelRequest, SupportedModel, SupportedProvider, provider_for, supported_providers,
+use crate::protocol::{
+    ClientMessage, ErrorCategory, PROTOCOL_VERSION, ServerEvent, decode, encode,
 };
+use crate::provider::{ModelRequest, provider_for, supported_providers};
+use crate::session::{AgentCommand, Session};
 
-#[derive(Debug, Deserialize)]
-#[serde(tag = "type", content = "data")]
-pub enum DesktopMessage {
-    Prompt {
-        text: String,
-    },
+/// How much input to buffer ahead of the reader.
+///
+/// The desktop shell may leave the process idle for a long time, so this is
+/// sized generously rather than tuned for throughput.
+const READ_BUFFER_BYTES: usize = 64 * 1024;
 
-    Cancel,
+// ============================================================
+// Server
+// ============================================================
 
-    Confirm {
-        allowed: bool,
-    },
-
-    GetSetupConfig {
-        request_id: String,
-    },
-
-    SaveSetupConfig {
-        request_id: String,
-        config: Config,
-    },
-
-    GetProviders {
-        request_id: String,
-    },
-
-    GetModels {
-        request_id: String,
-        provider: SupportedProvider,
-        api_key: Option<String>,
-        endpoint: Option<String>,
-    },
-
-    TestProvider {
-        request_id: String,
-        provider: SupportedProvider,
-        api_key: Option<String>,
-        endpoint: Option<String>,
-        model: String,
-    },
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ErrorCategory {
-    Transient,
-    Fatal,
-    InitializationFailed,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(tag = "type", content = "data")]
-pub enum DesktopEvent {
-    Agent(AgentEvent),
-
-    Ready,
-
-    Error {
-        request_id: Option<String>,
-        message: String,
-        category: ErrorCategory,
-    },
-
-    SetupConfig {
-        request_id: String,
-        config: Config,
-    },
-
-    SetupSaved {
-        request_id: String,
-    },
-
-    Providers {
-        request_id: String,
-        providers: Vec<SupportedProvider>,
-    },
-
-    Models {
-        request_id: String,
-        models: Vec<SupportedModel>,
-    },
-
-    ProviderTested {
-        request_id: String,
-    },
-}
-
-pub async fn run(
-    mut event_rx: mpsc::Receiver<AgentEvent>,
+pub struct DesktopServer {
+    session: Session,
     input_tx: mpsc::Sender<String>,
-    confirmation_tx: mpsc::Sender<Confirmation>,
     cancel: CancellationToken,
-) -> Result<()> {
-    let stdout = tokio::io::stdout();
+}
 
-    let mut stdout = tokio::io::BufWriter::new(stdout);
+impl DesktopServer {
+    pub fn new(
+        session: Session,
+        input_tx: mpsc::Sender<String>,
+        cancel: CancellationToken,
+    ) -> Self {
+        Self {
+            session,
+            input_tx,
+            cancel,
+        }
+    }
 
-    let mut stdin = BufReader::new(tokio::io::stdin());
+    /// Run the read/write loop until stdin closes or the core is cancelled.
+    pub async fn run(mut self, mut events: mpsc::Receiver<AgentEvent>) -> Result<()> {
+        let stdout = tokio::io::stdout();
 
-    let mut line = String::new();
+        let mut stdout = tokio::io::BufWriter::new(stdout);
 
-    write_event(&mut stdout, DesktopEvent::Ready).await?;
+        let mut stdin = BufReader::with_capacity(READ_BUFFER_BYTES, tokio::io::stdin());
 
-    loop {
-        tokio::select! {
-            result = stdin.read_line(&mut line) => {
-                let bytes = result?;
+        let mut line = String::new();
 
-                if bytes == 0 {
-                    break;
-                }
+        write_event(
+            &mut stdout,
+            ServerEvent::Ready {
+                version: PROTOCOL_VERSION,
+            },
+        )
+        .await?;
 
-                let input = line.trim();
+        loop {
+            tokio::select! {
+                read = stdin.read_line(&mut line) => {
+                    if read? == 0 {
+                        break;
+                    }
 
-                if input.is_empty() {
+                    let trimmed = line.trim();
+
+                    if !trimmed.is_empty() {
+                        self.handle_line(trimmed, &mut stdout).await?;
+                    }
+
                     line.clear();
-                    continue;
                 }
 
-                match serde_json::from_str::<DesktopMessage>(input) {
-                    Ok(message) => {
-                        match message {
-                            DesktopMessage::Prompt { text } => {
-                                if input_tx.send(text).await.is_err() {
-                                    break;
-                                }
-                            }
+                Some(event) = events.recv() => {
+                    // The session is the core's view of the conversation, so
+                    // it folds every event first. The session then decides
+                    // which events are worth putting on the wire; a client
+                    // must never see an event the core did not fold in.
+                    let before = self.session.state().messages.len();
 
-                            DesktopMessage::Cancel => {
-                                cancel.cancel();
-                            }
+                    self.session.handle_event(event.clone());
 
-                            DesktopMessage::Confirm { allowed } => {
-                                let confirmation =
-                                    if allowed {
-                                        Confirmation::Allow
-                                    } else {
-                                        Confirmation::Deny
-                                    };
-
-                                if confirmation_tx
-                                    .send(confirmation)
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                            }
-
-                            DesktopMessage::GetSetupConfig {
-                                request_id,
-                            } => {
-                                match crate::config::load_or_default() {
-                                    Ok(config) => {
-                                        write_event(
-                                            &mut stdout,
-                                            DesktopEvent::SetupConfig {
-                                                request_id,
-                                                config,
-                                            },
-                                        )
-                                        .await?;
-                                    }
-
-                                    Err(error) => {
-                                        write_event(
-                                            &mut stdout,
-                                            DesktopEvent::Error {
-                                                request_id: Some(request_id),
-                                                message: error.to_string(),
-                                                category: crate::desktop::ErrorCategory::Transient,
-                                            },
-                                        )
-                                        .await?;
-                                    }
-                                }
-                            }
-
-                            DesktopMessage::SaveSetupConfig {
-                                request_id,
-                                config,
-                            } => {
-                                match crate::config::save(&config) {
-                                    Ok(()) => {
-                                        write_event(
-                                            &mut stdout,
-                                            DesktopEvent::SetupSaved {
-                                                request_id,
-                                            },
-                                        )
-                                        .await?;
-                                    }
-
-                                    Err(error) => {
-                                        write_event(
-                                            &mut stdout,
-                                            DesktopEvent::Error {
-                                                request_id: Some(request_id),
-                                                message: error.to_string(),
-                                                category: crate::desktop::ErrorCategory::Transient,
-                                            },
-                                        )
-                                        .await?;
-                                    }
-                                }
-                            }
-
-                            DesktopMessage::GetProviders {
-                                request_id,
-                            } => {
-                                let providers = supported_providers();
-
-                                write_event(
-                                    &mut stdout,
-                                    DesktopEvent::Providers {
-                                        request_id,
-                                        providers,
-                                    },
-                                )
-                                .await?;
-                            }
-
-                            DesktopMessage::GetModels {
-                                request_id,
-                                provider,
-                                api_key,
-                                endpoint,
-                            } => {
-                                let provider_impl = provider_for(&provider);
-
-                                let request = ModelRequest {
-                                    provider,
-                                    api_key,
-                                    endpoint,
-                                };
-
-                                match provider_impl
-                                    .list_models(&request)
-                                    .await
-                                {
-                                    Ok(models) => {
-                                        write_event(
-                                            &mut stdout,
-                                            DesktopEvent::Models {
-                                                request_id,
-                                                models,
-                                            },
-                                        )
-                                        .await?;
-                                    }
-
-                                    Err(error) => {
-                                        write_event(
-                                            &mut stdout,
-                                            DesktopEvent::Error {
-                                                request_id: Some(request_id),
-                                                message: error.to_string(),
-                                                category: crate::desktop::ErrorCategory::Transient,
-                                            },
-                                        )
-                                        .await?;
-                                    }
-                                }
-                            }
-
-                            DesktopMessage::TestProvider {
-                                request_id,
-                                provider,
-                                api_key,
-                                endpoint,
-                                model,
-                            } => {
-                                let provider_impl = provider_for(&provider);
-
-                                let request = ModelRequest {
-                                    provider,
-                                    api_key,
-                                    endpoint,
-                                };
-
-                                match provider_impl
-                                    .test(&request, &model)
-                                    .await
-                                {
-                                    Ok(()) => {
-                                        write_event(
-                                            &mut stdout,
-                                            DesktopEvent::ProviderTested {
-                                                request_id,
-                                            },
-                                        )
-                                        .await?;
-                                    }
-
-                                    Err(error) => {
-                                        write_event(
-                                            &mut stdout,
-                                            DesktopEvent::Error {
-                                                request_id: Some(request_id),
-                                                message: error.to_string(),
-                                                category: crate::desktop::ErrorCategory::Transient,
-                                            },
-                                        )
-                                        .await?;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Err(error) => {
-                        write_event(
-                            &mut stdout,
-                            DesktopEvent::Error {
-                                request_id: None,
-                                message: format!(
-                                    "Invalid desktop message: {error}"
-                                ),
-                                category: crate::desktop::ErrorCategory::Fatal,
-                            },
-                        )
-                        .await?;
+                    if let Some(event) = self.session.advance(before) {
+                        write_event(&mut stdout, ServerEvent::Agent { event }).await?;
                     }
                 }
 
-                line.clear();
+                _ = self.cancel.cancelled() => break,
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn handle_line<W>(&mut self, line: &str, stdout: &mut W) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        let message = match decode(line) {
+            Ok(message) => message,
+
+            Err(error) => {
+                // A malformed line must not kill the session: the client may
+                // be mid-update, and the next line is probably fine.
+                tracing::warn!(%error, "ignoring unparseable client message");
+
+                return report_error(
+                    stdout,
+                    None,
+                    format!("could not parse message: {error}"),
+                    ErrorCategory::Fatal,
+                )
+                .await;
+            }
+        };
+
+        match message {
+            ClientMessage::GetSession => {
+                write_event(
+                    stdout,
+                    ServerEvent::Session {
+                        session: self.session.view(),
+                    },
+                )
+                .await
             }
 
-            Some(event) = event_rx.recv() => {
-                write_event(
-                    &mut stdout,
-                    DesktopEvent::Agent(event),
+            message if message.request_id().is_some() => serve(message, stdout).await,
+
+            // Everything left is a conversation command, which the session
+            // owns; `into_command` only returns `None` for the arms above.
+            message => {
+                let command = message
+                    .into_command()
+                    .expect("every non-request client message is a session command");
+
+                self.run_command(command, stdout).await
+            }
+        }
+    }
+
+    /// Dispatch a session command, reporting rejections back to the client
+    /// instead of taking the process down.
+    async fn run_command<W>(&mut self, command: AgentCommand, stdout: &mut W) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        let forwarded = match self.session.apply(command.clone()).await {
+            // Anything the session resolves locally (`/help`, `/quit`) or
+            // routes to the agent itself — a confirmation, a cancel — returns
+            // `None`, and has already been acted on.
+            Ok(forwarded) => forwarded,
+
+            Err(error) => {
+                // The session refuses a second prompt while the first is still
+                // running. The desktop client keeps no queue of its own, so the
+                // prompt is passed through and the agent decides what to do.
+                if let AgentCommand::Submit(text) = &command
+                    && error.to_string().contains("busy")
+                {
+                    return self.forward(text.clone(), stdout).await;
+                }
+
+                tracing::warn!(%error, "client command rejected");
+
+                return report_error(stdout, None, error.to_string(), ErrorCategory::Transient)
+                    .await;
+            }
+        };
+
+        match forwarded {
+            Some(text) => self.forward(text, stdout).await,
+
+            None => Ok(()),
+        }
+    }
+
+    /// Hand a prompt to the agent. The session has already recorded it in the
+    /// transcript, so a failure here is a dead agent, not a bad request.
+    async fn forward<W>(&self, text: String, stdout: &mut W) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        match self.input_tx.send(text).await {
+            Ok(()) => Ok(()),
+
+            Err(_) => {
+                report_error(
+                    stdout,
+                    None,
+                    "the agent is no longer accepting input".to_string(),
+                    ErrorCategory::Fatal,
+                )
+                .await
+            }
+        }
+    }
+}
+
+// ============================================================
+// Setup and introspection
+// ============================================================
+
+async fn serve<W>(message: ClientMessage, stdout: &mut W) -> Result<()>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    match message {
+        ClientMessage::GetSetupConfig { request_id } => match crate::config::load_or_default() {
+            Ok(config) => {
+                write_event(stdout, ServerEvent::SetupConfig { request_id, config }).await?;
+            }
+
+            Err(error) => {
+                report_error(
+                    stdout,
+                    Some(request_id),
+                    error.to_string(),
+                    ErrorCategory::Transient,
                 )
                 .await?;
             }
+        },
 
-            _ = cancel.cancelled() => {
-                break;
+        ClientMessage::SaveSetupConfig { request_id, config } => {
+            match crate::config::save(&config) {
+                Ok(()) => {
+                    write_event(stdout, ServerEvent::SetupSaved { request_id }).await?;
+                }
+
+                Err(error) => {
+                    report_error(
+                        stdout,
+                        Some(request_id),
+                        error.to_string(),
+                        ErrorCategory::Transient,
+                    )
+                    .await?;
+                }
             }
+        }
+
+        ClientMessage::GetProviders { request_id } => {
+            write_event(
+                stdout,
+                ServerEvent::Providers {
+                    request_id,
+                    providers: supported_providers(),
+                },
+            )
+            .await?;
+        }
+
+        ClientMessage::GetModels {
+            request_id,
+            provider,
+            api_key,
+            endpoint,
+        } => {
+            let request = ModelRequest {
+                provider: provider.clone(),
+                api_key,
+                endpoint,
+            };
+
+            match provider_for(&provider).list_models(&request).await {
+                Ok(models) => {
+                    write_event(stdout, ServerEvent::Models { request_id, models }).await?;
+                }
+
+                Err(error) => {
+                    report_error(
+                        stdout,
+                        Some(request_id),
+                        error.to_string(),
+                        ErrorCategory::Transient,
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        ClientMessage::TestProvider {
+            request_id,
+            provider,
+            api_key,
+            endpoint,
+            model,
+        } => {
+            let request = ModelRequest {
+                provider: provider.clone(),
+                api_key,
+                endpoint,
+            };
+
+            match provider_for(&provider).test(&request, &model).await {
+                Ok(()) => {
+                    write_event(stdout, ServerEvent::ProviderTested { request_id }).await?;
+                }
+
+                Err(error) => {
+                    report_error(
+                        stdout,
+                        Some(request_id),
+                        error.to_string(),
+                        ErrorCategory::Transient,
+                    )
+                    .await?;
+                }
+            }
+        }
+
+        other => {
+            tracing::debug!(?other, "unhandled client message");
         }
     }
 
     Ok(())
 }
 
-async fn write_event<W>(writer: &mut W, event: DesktopEvent) -> Result<()>
+// ============================================================
+// Output
+// ============================================================
+
+async fn write_event<W>(writer: &mut W, event: ServerEvent) -> Result<()>
 where
     W: AsyncWriteExt + Unpin,
 {
-    let json = serde_json::to_string(&event)?;
+    let line = encode(&event)?;
 
-    writer.write_all(json.as_bytes()).await?;
-
-    writer.write_all(b"\n").await?;
-
+    writer.write_all(line.as_bytes()).await?;
     writer.flush().await?;
 
     Ok(())
+}
+
+async fn report_error<W>(
+    writer: &mut W,
+    request_id: Option<String>,
+    message: String,
+    category: ErrorCategory,
+) -> Result<()>
+where
+    W: AsyncWriteExt + Unpin,
+{
+    write_event(
+        writer,
+        ServerEvent::Error {
+            request_id,
+            message,
+            category,
+        },
+    )
+    .await
 }

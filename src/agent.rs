@@ -772,11 +772,20 @@ RULES:
 
         let started = Instant::now();
 
-        let result = match self.tools.execute(name, input.trim()) {
-            Ok(result) => result,
+        let (result, failed) = match self.tools.execute(name, input.trim()) {
+            Ok(result) => (result, false),
 
             Err(error) => {
                 let message = format!("{} failed: {}", name, error);
+
+                // `ToolFinished` carries the outcome so a client can render the
+                // tool's terminal state without waiting for the error text.
+                tx.send(AgentEvent::ToolFinished {
+                    name: name.to_owned(),
+                    duration_ms: started.elapsed().as_millis(),
+                    failed: true,
+                })
+                .await?;
 
                 tx.send(AgentEvent::Error(message.clone())).await?;
 
@@ -797,6 +806,7 @@ RULES:
         tx.send(AgentEvent::ToolFinished {
             name: name.to_owned(),
             duration_ms: duration.as_millis(),
+            failed,
         })
         .await?;
 

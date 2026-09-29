@@ -9,12 +9,19 @@ mod history;
 mod logging;
 mod model;
 mod planner;
+mod protocol;
 mod provider;
 mod router;
-mod theme;
+mod session;
 mod tools;
-mod tui;
 mod workspace;
+
+#[cfg(feature = "tui")]
+mod theme;
+
+#[cfg(feature = "tui")]
+mod tui;
+use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -34,12 +41,16 @@ use tools::{
     shell::RunCommand,
 };
 
-use crate::{model::create_model, tui::info::LumaInfo};
+use crate::{model::create_model, session::SessionInfo};
 
 use dialoguer::Confirm;
 
 #[derive(Parser, Debug)]
-#[command(name = "luma", version, about = "A lightweight AI coding agent")]
+#[command(
+    name = "luma-core",
+    version,
+    about = "The Luma core: agent, tools, and the JSONL protocol server"
+)]
 struct Args {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -71,7 +82,21 @@ fn confirm_setup() -> Result<bool> {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> ExitCode {
+    match run().await {
+        Ok(()) => ExitCode::SUCCESS,
+
+        Err(error) => {
+            // The front end owns presentation, so a top-level failure has to
+            // be legible in a plain terminal as well as in a log file.
+            eprintln!("luma-core: {error:#}");
+
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> Result<()> {
     // ========================================================
     // Logging
     // ========================================================
@@ -80,10 +105,7 @@ async fn main() -> Result<()> {
 
     tracing::info!("Luma starting");
 
-    tracing::debug!(
-        path = %log_path?.display(),
-        "Logging initialized"
-    );
+    tracing::debug!(path = %log_path?.display(), "Logging initialized");
 
     // ========================================================
     // CLI
@@ -98,6 +120,7 @@ async fn main() -> Result<()> {
     if !config::exists() && !matches!(args.command, Some(Commands::Setup)) {
         if confirm_setup()? {
             config::setup::run().await?;
+
             return Ok(());
         }
 
@@ -108,6 +131,7 @@ async fn main() -> Result<()> {
 
     if let Some(Commands::Setup) = args.command {
         config::setup::run().await?;
+
         return Ok(());
     }
 
@@ -143,8 +167,6 @@ async fn main() -> Result<()> {
 
     let mut tools = ToolRegistry::new();
 
-    let model = create_model(&config.model);
-
     tools.register(ReadFile);
     tools.register(ListDirectory);
     tools.register(RunCommand);
@@ -175,6 +197,8 @@ async fn main() -> Result<()> {
     // ========================================================
     // Agent
     // ========================================================
+
+    let model = create_model(&config.model);
 
     let mut agent = Agent::new(model, planner, tools, history, galaxy);
 
@@ -263,27 +287,43 @@ async fn main() -> Result<()> {
     }
 
     // ========================================================
+    // Session
+    // ========================================================
+
+    let info = SessionInfo::new(
+        config.model.provider.clone(),
+        config.model.name.clone(),
+        std::env::current_dir()?.display().to_string(),
+        tool_names,
+    );
+
+    let mut session = session::Session::new(info, confirmation_tx, cancel.clone());
+
+    // ========================================================
     // Agent
     // ========================================================
 
+    let agent_cancel = cancel.clone();
+
     tokio::spawn(async move {
-        if let Err(error) = agent.run(input_rx, event_tx, cancel, confirmation_rx).await {
+        if let Err(error) = agent
+            .run(input_rx, event_tx, agent_cancel, confirmation_rx)
+            .await
+        {
             tracing::error!("Agent stopped: {}", error);
         }
     });
 
-    // ========================================================
-    // CLI prompt
-    // ========================================================
+    // --------------------------------------------------------
+    // One-shot prompt from the command line.
+    // --------------------------------------------------------
 
-    let cli_prompt = if args.prompt.is_empty() {
-        None
-    } else {
-        Some(args.prompt.join(" "))
-    };
+    if !args.prompt.is_empty() {
+        let prompt = args.prompt.join(" ");
 
-    if let Some(prompt) = cli_prompt {
-        input_tx.send(prompt).await?;
+        if let Some(forwarded) = session.submit(prompt)? {
+            input_tx.send(forwarded).await?;
+        }
     }
 
     // ========================================================
@@ -292,6 +332,7 @@ async fn main() -> Result<()> {
 
     if dashboard_requested {
         tokio::signal::ctrl_c().await?;
+
         return Ok(());
     }
 
@@ -299,71 +340,33 @@ async fn main() -> Result<()> {
     // TUI mode
     // ========================================================
 
-    let info = {
-        let mut info = LumaInfo::new(
-            config.model.provider.clone(),
-            config.model.name.clone(),
-            tool_names,
-        );
+    #[cfg(feature = "tui")]
+    {
+        return run_tui(session, dashboard.events.subscribe(), input_tx, cancel).await;
+    }
 
-        info.workspace = Some(std::env::current_dir()?.display().to_string());
+    // Without the Ratatui front end there is no terminal UI to fall back to.
+    // The core is still reachable over JSONL, so point the user at it rather
+    // than exiting silently.
+    #[cfg(not(feature = "tui"))]
+    {
+        drop(session);
 
-        info
-    };
+        anyhow::bail!(
+            "this build has no terminal UI (built without the `tui` feature); \
+             run `luma desktop-server` and connect a client over stdio JSONL"
+        )
+    }
+}
 
-    // --------------------------------------------------------
-    // Subscribe to the dashboard event bus.
-    //
-    // The dashboard bridge receives AgentEvent from the
-    // original mpsc channel and publishes every event into
-    // dashboard.events.
-    //
-    // The TUI gets its own broadcast subscription here.
-    // --------------------------------------------------------
-
-    let mut tui_event_rx = dashboard.events.subscribe();
-
-    // --------------------------------------------------------
-    // Convert broadcast::Receiver<AgentEvent> into the
-    // mpsc::Receiver<AgentEvent> expected by terminal::run().
-    // --------------------------------------------------------
-
-    let (tui_tx, tui_rx) = tokio::sync::mpsc::channel::<AgentEvent>(100);
-
-    tokio::spawn(async move {
-        loop {
-            match tui_event_rx.recv().await {
-                Ok(event) => {
-                    if tui_tx.send(event).await.is_err() {
-                        break;
-                    }
-                }
-
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
-                    tracing::warn!("TUI event receiver lagged; skipped {} events", skipped);
-                }
-
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    break;
-                }
-            }
-        }
-    });
-
-    // --------------------------------------------------------
-    // Run the actual TUI.
-    // --------------------------------------------------------
-
-    tui::terminal::run(
-        tui_rx,
-        input_tx,
-        CancellationToken::new(),
-        confirmation_tx,
-        info,
-    )
-    .await?;
-
-    Ok(())
+#[cfg(feature = "tui")]
+async fn run_tui(
+    mut session: session::Session,
+    mut events: tokio::sync::broadcast::Receiver<AgentEvent>,
+    input_tx: tokio::sync::mpsc::Sender<String>,
+    cancel: CancellationToken,
+) -> Result<()> {
+    tui::run(&mut session, &mut events, input_tx, cancel).await
 }
 
 // ============================================================
@@ -383,14 +386,14 @@ async fn run_desktop_server() -> Result<()> {
 
     let mut tools = ToolRegistry::new();
 
-    let model = create_model(&config.model);
-
     tools.register(ReadFile);
     tools.register(ListDirectory);
     tools.register(RunCommand);
     tools.register(SearchFiles);
     tools.register(WriteFile);
     tools.register(PatchFile);
+
+    let tool_names = tools.names();
 
     // ========================================================
     // Planner
@@ -414,6 +417,8 @@ async fn run_desktop_server() -> Result<()> {
     // Agent
     // ========================================================
 
+    let model = create_model(&config.model);
+
     let mut agent = Agent::new(model, planner, tools, history, galaxy);
 
     // ========================================================
@@ -427,6 +432,15 @@ async fn run_desktop_server() -> Result<()> {
     let (confirmation_tx, confirmation_rx) = tokio::sync::mpsc::channel::<agent::Confirmation>(16);
 
     let cancel = CancellationToken::new();
+
+    let info = SessionInfo::new(
+        config.model.provider.clone(),
+        config.model.name.clone(),
+        std::env::current_dir()?.display().to_string(),
+        tool_names,
+    );
+
+    let session = session::Session::new(info, confirmation_tx, cancel.clone());
 
     // ========================================================
     // Agent
@@ -447,7 +461,9 @@ async fn run_desktop_server() -> Result<()> {
     // Desktop protocol
     // ========================================================
 
-    desktop::run(event_rx, input_tx, confirmation_tx, cancel).await?;
+    desktop::DesktopServer::new(session, input_tx, cancel)
+        .run(event_rx)
+        .await?;
 
     Ok(())
 }

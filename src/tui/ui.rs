@@ -615,7 +615,7 @@ fn render_info_panel(frame: &mut Frame, area: Rect, theme: &LumaTheme, info: &Lu
     lines.push(Line::from(vec![
         Span::styled("Cost       ", Style::default().fg(theme.space)),
         Span::styled(
-            format!("${:.6}", info.usage.cost_usd),
+            format!("${:.6}", info.usage.cost_usd()),
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
