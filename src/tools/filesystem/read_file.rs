@@ -35,6 +35,14 @@ impl Tool for ReadFile {
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
 
+        if total_lines == 0 {
+            if range.is_some() {
+                bail!("cannot read a line range from an empty file");
+            }
+
+            return Ok(String::new());
+        }
+
         let (start, end) = match range {
             Some(range) => {
                 let (start_str, end_str) = range
@@ -61,7 +69,13 @@ impl Tool for ReadFile {
                     );
                 }
 
-                (start, end.min(total_lines))
+                let end = end.min(total_lines);
+
+                if end < start {
+                    bail!("end line must be greater than or equal to start line");
+                }
+
+                (start, end)
             }
             None => (1, DEFAULT_LINES.min(total_lines)),
         };
@@ -144,6 +158,29 @@ mod tests {
         assert!(out.contains("50: line 50"));
         assert!(out.contains("60: line 60"));
         assert!(!out.contains("61: line 61"));
+    }
+
+    #[test]
+    fn reads_empty_file_without_panicking() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+
+        assert_eq!(ReadFile.execute(file.path().to_str().unwrap()).unwrap(), "");
+    }
+
+    #[test]
+    fn rejects_reversed_line_ranges() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(file, "line one").unwrap();
+        writeln!(file, "line two").unwrap();
+
+        let path = file.path().to_str().unwrap();
+        let error = ReadFile.execute(&format!("{path}:2-1")).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("end line must be greater than or equal")
+        );
     }
 
     #[test]

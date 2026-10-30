@@ -1,45 +1,47 @@
-import type { TextProps } from 'ink';
+import type { TextProps } from "ink";
 
-type Color = NonNullable<TextProps['color']>;
+type Color = NonNullable<TextProps["color"]>;
 
 export const theme = {
-  brand: 'yellowBright',
-  text: undefined,
-  muted: 'cyan',
-  accent: 'greenBright',
+  // One accent throughout the interface: a clear, slightly softened blue.
+  brand: "#4A90E2",
+  user: "#4A90E2",
+  tool: "#4A90E2",
+  plan: "#4A90E2",
 
-  highlight: 'whiteBright',
+  // Neutral supporting tones; primary content remains the terminal foreground.
+  muted: "gray",
+  chrome: "gray",
 
-  success: 'greenBright',
-  warning: 'yellowBright',
-  danger: 'redBright',
+  // Normal content stays terminal-native
+  assistant: undefined,
 
-  chrome: 'cyan',
+  // State
+  success: "#4A90E2",
+  error: "#4A90E2",
+  warning: "#4A90E2",
 
-  user: 'greenBright',
-  assistant: 'whiteBright',
-  tool: 'magenta',
-  plan: 'yellowBright',
+  // Compatibility
+  danger: "#4A90E2",
+  accent: "#4A90E2",
 } satisfies Record<string, Color | undefined>;
 
 export const glyphs = {
-  logo: '✦',
-  user: '›',
-  assistant: '✦',
+  logo: "◈",
 
-  tool: '▸',
-  plan: '◆',
+  user: "›",
+  assistant: "✦",
 
-  success: '✓',
-  error: '✗',
-  running: '·',
+  tool: "▸",
+  plan: "◆",
 
-  divider: '─',
-  bullet: '•',
-  input: '›',
-} as const;
+  success: "✓",
+  error: "✗",
+  running: "·",
 
-export const layout = {
-  paddingX: 1,
-  maxWidthSlack: 2,
+  arrow: "→",
+  bullet: "•",
+  divider: "─",
+
+  input: "›",
 } as const;

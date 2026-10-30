@@ -164,15 +164,6 @@ impl DesktopServer {
             Ok(forwarded) => forwarded,
 
             Err(error) => {
-                // The session refuses a second prompt while the first is still
-                // running. The desktop client keeps no queue of its own, so the
-                // prompt is passed through and the agent decides what to do.
-                if let AgentCommand::Submit(text) = &command
-                    && error.to_string().contains("busy")
-                {
-                    return self.forward(text.clone(), stdout).await;
-                }
-
                 tracing::warn!(%error, "client command rejected");
 
                 return report_error(stdout, None, error.to_string(), ErrorCategory::Transient)
@@ -183,7 +174,18 @@ impl DesktopServer {
         match forwarded {
             Some(text) => self.forward(text, stdout).await,
 
-            None => Ok(()),
+            // Local commands (`/help`, `/clear`) and state-only commands do
+            // not generate an agent event, so send the updated snapshot to
+            // keep clients' transcript and status in sync.
+            None => {
+                write_event(
+                    stdout,
+                    ServerEvent::Session {
+                        session: self.session.view(),
+                    },
+                )
+                .await
+            }
         }
     }
 

@@ -2,13 +2,6 @@ export type Role = "user" | "assistant" | "tool" | "plan" | "system" | "error";
 
 export type ToolStatus = "running" | "success" | "failed";
 
-export type Message = {
-  id: string;
-  role: Role;
-  content: string;
-  timestamp: number;
-};
-
 export type ToolEvent = {
   id: string;
   name: string;
@@ -23,32 +16,41 @@ export type PlanItem = {
   status: "pending" | "active" | "done";
 };
 
-export type UiState = {
-  messages: Message[];
-  tools: ToolEvent[];
-  plan: PlanItem[];
-
-  input: string;
-
-  streaming: boolean;
-  waitingForConfirmation: boolean;
-
+export type SessionInfo = {
+  workspace: string;
   provider: string;
   model: string;
-  workspace: string;
+  contextSize?: number;
+  branch?: string;
+  dirty?: boolean;
 };
+
+export interface Message {
+  id: string;
+  role: Role;
+  content: string;
+  timestamp: number;
+}
+
+export type Status = "idle" | "thinking" | "working" | "streaming" | "waiting" | "done" | "error";
+
+export interface UiState {
+  messages: Message[];
+  session: SessionInfo;
+  status: Status;
+}
 
 export const initialState: UiState = {
   messages: [],
-  tools: [],
-  plan: [],
 
-  input: "",
+  session: {
+    workspace: process.cwd(),
+    provider: "unknown",
+    model: "unknown",
+    contextSize: undefined,
+    branch: undefined,
+    dirty: false,
+  },
 
-  streaming: false,
-  waitingForConfirmation: false,
-
-  provider: "local",
-  model: "unknown",
-  workspace: process.cwd(),
+  status: "idle",
 };

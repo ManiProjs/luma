@@ -1,46 +1,66 @@
-import { Text, Box } from "ink";
-import { glyphs, theme } from "../theme";
+import { Box, Text } from "ink";
+
 import type { Message as MessageType } from "../state";
+import { glyphs, theme } from "../theme";
 
 type Props = {
   message: MessageType;
 };
 
 export function Message({ message }: Props) {
-  const config = {
-    user: {
-      glyph: glyphs.user,
-      color: theme.user,
-    },
-    assistant: {
-      glyph: glyphs.assistant,
-      color: theme.assistant,
-    },
-    tool: {
-      glyph: glyphs.tool,
-      color: theme.tool,
-    },
-    plan: {
-      glyph: glyphs.plan,
-      color: theme.plan,
-    },
-    system: {
-      glyph: "·",
-      color: theme.muted,
-    },
-    error: {
-      glyph: glyphs.error,
-      color: theme.danger,
-    },
-  }[message.role];
+  if (message.role === "user") {
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        <Text color={theme.user} bold>{glyphs.user} YOU</Text>
+        <Box marginLeft={2}>
+          <Text>{message.content}</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (message.role === "assistant") {
+    return (
+      <Box flexDirection="column" marginTop={1}>
+        <Text color={theme.brand} bold>{glyphs.assistant} LUMA</Text>
+        <Box marginLeft={2}>
+          <Text>{message.content}</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (message.role === "tool") {
+    return (
+      <Box marginLeft={2} marginTop={1}>
+        <Text color={theme.tool}>{glyphs.tool} </Text>
+        <Text>{message.content}</Text>
+      </Box>
+    );
+  }
+
+  if (message.role === "plan") {
+    return (
+      <Box marginTop={1}>
+        <Text color={theme.plan}>{glyphs.plan} </Text>
+        <Text>{message.content}</Text>
+      </Box>
+    );
+  }
+
+  if (message.role === "error") {
+    return (
+      <Box marginTop={1}>
+        <Text color={theme.error}>{glyphs.error} </Text>
+        <Text>{message.content}</Text>
+      </Box>
+    );
+  }
 
   return (
-    <Box>
-      <Text color={config.color} bold>
-        {config.glyph}{" "}
-      </Text>
-
-      <Text color={theme.text}>{message.content}</Text>
+    <Box marginTop={1}>
+      <Text color={theme.muted}>· </Text>
+      <Text>{message.content}</Text>
     </Box>
   );
 }

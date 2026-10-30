@@ -113,6 +113,13 @@ async fn run() -> Result<()> {
 
     let args = Args::parse();
 
+    // The desktop server receives JSONL over stdin. It must never run the
+    // interactive setup prompt on that stream, or an unconfigured install
+    // will wait forever instead of returning a protocol error.
+    if matches!(args.command, Some(Commands::DesktopServer)) {
+        return run_desktop_server().await;
+    }
+
     // ========================================================
     // Setup
     // ========================================================
@@ -133,14 +140,6 @@ async fn run() -> Result<()> {
         config::setup::run().await?;
 
         return Ok(());
-    }
-
-    // ========================================================
-    // Desktop server
-    // ========================================================
-
-    if matches!(args.command, Some(Commands::DesktopServer)) {
-        return run_desktop_server().await;
     }
 
     // ========================================================
