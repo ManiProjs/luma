@@ -38,6 +38,7 @@ use tools::{
         list_directory::ListDirectory, patch_file::PatchFile, read_file::ReadFile,
         search_files::SearchFiles, write_file::WriteFile,
     },
+    git::{GitDiff, GitStatus},
     shell::RunCommand,
 };
 
@@ -172,6 +173,8 @@ async fn run() -> Result<()> {
     tools.register(SearchFiles);
     tools.register(WriteFile);
     tools.register(PatchFile);
+    tools.register(GitStatus);
+    tools.register(GitDiff);
 
     let tool_names = tools.names();
 
@@ -391,6 +394,8 @@ async fn run_desktop_server() -> Result<()> {
     tools.register(SearchFiles);
     tools.register(WriteFile);
     tools.register(PatchFile);
+    tools.register(GitStatus);
+    tools.register(GitDiff);
 
     let tool_names = tools.names();
 

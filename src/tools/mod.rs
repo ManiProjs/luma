@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 pub mod filesystem;
+pub mod git;
 pub mod shell;
 
 pub trait Tool: Send + Sync {
