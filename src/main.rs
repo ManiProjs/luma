@@ -46,6 +46,7 @@ use tools::{
     },
     git::{GitDiff, GitStatus},
     shell::RunCommand,
+    skills::{ListSkills, LoadSkill},
 };
 
 use crate::{model::create_model, session::SessionInfo};
@@ -256,6 +257,8 @@ async fn run() -> Result<()> {
     tools.register(FindTodos);
     tools.register(CountLines);
     tools.register(InspectProject);
+    tools.register(ListSkills);
+    tools.register(LoadSkill);
 
     let tool_names = tools.names();
 
@@ -487,6 +490,8 @@ async fn run_desktop_server() -> Result<()> {
     tools.register(FindTodos);
     tools.register(CountLines);
     tools.register(InspectProject);
+    tools.register(ListSkills);
+    tools.register(LoadSkill);
 
     let tool_names = tools.names();
 

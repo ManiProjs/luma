@@ -6,6 +6,7 @@ pub mod developer;
 pub mod filesystem;
 pub mod git;
 pub mod shell;
+pub mod skills;
 
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;

@@ -120,10 +120,48 @@ Luma currently provides:
 | `find_todos` | Find TODO, FIXME, XXX, HACK, and NOTE markers |
 | `count_lines` | Count files and lines by extension |
 | `inspect_project` | Read project manifests and discover build targets/scripts |
+| `list_skills` / `load_skill` | Discover and progressively load reusable Agent Skills |
 
 The inspection tools are read-only. Git and search output is bounded so a
 large repository cannot flood the model context. Luma can combine these tools
 with `run_command` when it needs to execute a build, test suite, or formatter.
+
+### Agent Skills
+
+Luma supports the open Agent Skills directory convention. Each skill is a
+directory containing a `SKILL.md` file with YAML frontmatter and instructions:
+
+```text
+my-project/
+└── .agents/
+    └── skills/
+        └── rust-testing/
+            └── SKILL.md
+```
+
+The frontmatter must declare a matching directory `name` and a non-empty
+`description`:
+
+```markdown
+---
+name: rust-testing
+description: Run focused Rust tests and diagnose failures.
+---
+
+# Rust testing
+
+Prefer focused tests first, then run the full suite before finalizing.
+```
+
+Luma discovers workspace skills in `.agents/skills/` and `.luma/skills/`,
+and personal skills in `~/.agents/skills/` and Luma's config directory at
+`skills/` (for example `~/.config/luma/skills/` on Linux). Workspace skills
+override personal skills with the same name. The planner uses `list_skills`
+to discover metadata and `load_skill` to load a relevant skill only when
+needed, keeping unrelated instructions out of the model context. A loaded
+skill can reference companion files in its own directory; use `read_file` to
+inspect those resources. Skills are guidance, not permission to bypass user
+approval or Luma's safety boundaries.
 
 ### `patch_file`
 
