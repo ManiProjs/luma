@@ -25,6 +25,7 @@ export function App() {
 
       {state.modelPicker ? <ModelPicker
         providers={state.modelPicker.providers}
+        savedApiKeys={state.modelPicker.config?.provider_api_keys}
         models={state.modelPicker.models}
         stage={state.modelPicker.stage}
         loading={state.modelPicker.loading}

@@ -10,6 +10,7 @@ type Props = {
   stage: "providers" | "models";
   loading: boolean;
   error: string | null;
+  savedApiKeys?: Record<string, string>;
   onSelectProvider: (provider: SupportedProvider, apiKey?: string) => void;
   onChooseModel: (model: string, provider?: SupportedProvider, save?: boolean, apiKey?: string | null) => void;
   onClose: () => void;
@@ -17,7 +18,7 @@ type Props = {
 
 type CustomStage = "name" | "endpoint" | "key" | "model" | "save" | "providerKey";
 
-export function ModelPicker({ providers, models, stage, loading, error, onSelectProvider, onChooseModel, onClose }: Props) {
+export function ModelPicker({ providers, models, stage, loading, error, savedApiKeys = {}, onSelectProvider, onChooseModel, onClose }: Props) {
   const [index, setIndex] = useState(0);
   const [customStage, setCustomStage] = useState<CustomStage | null>(null);
   const [name, setName] = useState("");
@@ -114,7 +115,7 @@ export function ModelPicker({ providers, models, stage, loading, error, onSelect
       if (!selected) return;
       if (stage === "providers") {
         if ("provider" in selected && selected.provider) {
-          if (selected.provider.requires_api_key) {
+          if (selected.provider.requires_api_key && !savedApiKeys[selected.provider.id]) {
             setPendingProvider(selected.provider);
             setApiKey("");
             setCustomStage("providerKey");

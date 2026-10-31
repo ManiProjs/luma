@@ -57,6 +57,7 @@ export type AppConfig = {
   model: { provider: string; endpoint: string; name: string; api_key: string | null };
   planner: { provider: string; endpoint: string; name: string; api_key: string | null };
   providers?: SupportedProvider[];
+  provider_api_keys?: Record<string, string>;
 };
 export type SessionView = {
   info: SessionInfo;

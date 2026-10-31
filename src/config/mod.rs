@@ -2,7 +2,7 @@ pub mod setup;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::PathBuf};
+use std::{collections::HashMap, fs, path::PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -12,6 +12,11 @@ pub struct Config {
 
     #[serde(default)]
     pub providers: Vec<crate::provider::SupportedProvider>,
+
+    /// Credentials remembered per provider so changing models does not
+    /// require entering the same API key again.
+    #[serde(default)]
+    pub provider_api_keys: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +36,7 @@ impl Default for Config {
             model: ModelConfig::default(),
             planner: ModelConfig::default(),
             providers: Vec::new(),
+            provider_api_keys: HashMap::new(),
         }
     }
 }

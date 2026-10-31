@@ -347,13 +347,14 @@ export function useSession() {
       }) : current);
       const currentConfig = state.modelPicker?.config;
       const sameProvider = currentConfig?.model.provider === provider.id;
+      const savedProvider = currentConfig?.providers?.find((item) => item.id === provider.id);
       client.send({
         type: "get_models",
         data: {
           request_id: crypto.randomUUID(),
           provider,
-          api_key: apiKey ?? (sameProvider ? currentConfig?.model.api_key ?? null : null),
-          endpoint: sameProvider ? currentConfig?.model.endpoint ?? provider.endpoint : provider.endpoint,
+          api_key: apiKey ?? currentConfig?.provider_api_keys?.[provider.id] ?? (sameProvider ? currentConfig?.model.api_key ?? null : null),
+          endpoint: sameProvider ? currentConfig?.model.endpoint ?? provider.endpoint : savedProvider?.endpoint ?? provider.endpoint,
         },
       });
     },
@@ -367,11 +368,18 @@ export function useSession() {
       }
       const config: AppConfig = {
         ...currentConfig,
+        provider_api_keys: {
+          ...(currentConfig.provider_api_keys ?? {}),
+          ...(apiKey === undefined ? {} : apiKey ? { [provider.id]: apiKey } : {}),
+          ...(currentConfig.model.provider === provider.id && currentConfig.model.api_key
+            ? { [provider.id]: currentConfig.model.api_key }
+            : {}),
+        },
         model: {
           provider: provider.id,
           endpoint: provider.endpoint,
           name: model,
-          api_key: apiKey === undefined ? (picker.selectedApiKey ?? (currentConfig.model.provider === provider.id ? currentConfig.model.api_key : null)) : apiKey,
+          api_key: apiKey === undefined ? (picker.selectedApiKey ?? currentConfig.provider_api_keys?.[provider.id] ?? (currentConfig.model.provider === provider.id ? currentConfig.model.api_key : null)) : apiKey,
         },
         providers: saveProvider && !(currentConfig.providers ?? []).some((item) => item.id === provider.id)
           ? [...(currentConfig.providers ?? []), provider]

@@ -1018,7 +1018,12 @@ pub async fn run() -> Result<()> {
     // Build configuration
     // --------------------------------------------------
 
-    let saved_providers = super::load_or_default()?.providers;
+    let existing_config = super::load_or_default()?;
+    let saved_providers = existing_config.providers.clone();
+    let mut provider_api_keys = existing_config.provider_api_keys;
+    if let Some(key) = api_key.as_ref().filter(|key| !key.is_empty()) {
+        provider_api_keys.insert(provider.id.to_string(), key.clone());
+    }
     let config = Config {
         model: ModelConfig {
             provider: provider.id.to_string(),
@@ -1034,6 +1039,7 @@ pub async fn run() -> Result<()> {
             api_key: api_key.clone(),
         },
         providers: saved_providers,
+        provider_api_keys,
     };
 
     // --------------------------------------------------
