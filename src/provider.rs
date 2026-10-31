@@ -380,6 +380,19 @@ pub fn provider_by_id(id: &str) -> Option<SupportedProvider> {
             supports_model_discovery: provider.supports_model_discovery,
             api_key_env: provider.api_key_env.map(str::to_string),
         })
+        .or_else(|| {
+            id.starts_with("custom-").then(|| SupportedProvider {
+                id: id.to_string(),
+                name: "Custom provider".into(),
+                description: "Custom OpenAI-compatible API".into(),
+                category: ProviderCategory::Custom,
+                protocol: ProviderProtocol::OpenAiCompatible,
+                endpoint: String::new(),
+                requires_api_key: false,
+                supports_model_discovery: true,
+                api_key_env: None,
+            })
+        })
 }
 
 /// Find the runtime implementation for a provider.

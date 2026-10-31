@@ -539,6 +539,13 @@ async fn discover_models(
     base_url: &str,
     api_key: Option<&str>,
 ) -> Result<Vec<String>> {
+    if !provider.supports_discovery {
+        return Err(anyhow!(
+            "{} does not support automatic model discovery",
+            provider.name
+        ));
+    }
+
     match provider.protocol {
         ProviderProtocol::OpenAiCompatible => fetch_models(base_url, api_key).await,
 
@@ -1011,6 +1018,7 @@ pub async fn run() -> Result<()> {
     // Build configuration
     // --------------------------------------------------
 
+    let saved_providers = super::load_or_default()?.providers;
     let config = Config {
         model: ModelConfig {
             provider: provider.id.to_string(),
@@ -1025,6 +1033,7 @@ pub async fn run() -> Result<()> {
             name: planner.clone(),
             api_key: api_key.clone(),
         },
+        providers: saved_providers,
     };
 
     // --------------------------------------------------

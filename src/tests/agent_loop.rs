@@ -172,6 +172,33 @@ async fn test_a_inspect() {
     .await;
 }
 
+#[tokio::test]
+async fn plan_only_request_does_not_execute_tools() {
+    in_temp_dir(|_dir| async move {
+        let events = run_agent_once(
+            vec![PlanAction::Plan {
+                content: "Inspect the module, implement the feature, run tests.".into(),
+            }],
+            vec![],
+            "/plan add a feature to this project",
+            vec![Confirmation::Allow],
+        )
+        .await;
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::PlanGenerated(_)))
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, AgentEvent::ToolStarted { .. }))
+        );
+        assert!(matches!(events.last(), Some(AgentEvent::Finished)));
+    })
+    .await;
+}
+
 // ── Test B: modify ──────────────────────────────────────────────────────────
 //
 // The planner inspects a file, then requests a patch. The patch requires
@@ -192,6 +219,9 @@ async fn test_b_modify() {
 
         let events = run_agent_once(
             vec![
+                PlanAction::Plan {
+                    content: "Inspect code.rs, patch the call, verify.".into(),
+                },
                 PlanAction::Tool {
                     name: "patch_file".into(),
                     input: patch_input,
@@ -200,7 +230,7 @@ async fn test_b_modify() {
             ],
             vec!["Patched.".into()],
             "edit the file code.rs",
-            vec![Confirmation::Allow],
+            vec![Confirmation::Allow, Confirmation::Allow],
         )
         .await;
 
@@ -213,6 +243,20 @@ async fn test_b_modify() {
             "file was not patched: {content}"
         );
         assert!(errors(&events).is_empty(), "errors: {:?}", errors(&events));
+        let preview_index = events
+            .iter()
+            .position(|event| matches!(event, AgentEvent::ChangePreview { .. }))
+            .expect("file changes must be previewed");
+        let confirmation_index = events
+            .iter()
+            .position(|event| matches!(event, AgentEvent::ConfirmationRequired { name, .. } if name == "apply_changes"))
+            .expect("file changes must require approval");
+        assert!(preview_index < confirmation_index);
+        let tool_index = events
+            .iter()
+            .position(|event| matches!(event, AgentEvent::ToolStarted { name, .. } if name == "patch_file"))
+            .expect("approved patch should start");
+        assert!(confirmation_index < tool_index);
     })
     .await;
 }
@@ -293,6 +337,9 @@ async fn test_e_tool_failure_propagates() {
 
         let events = run_agent_once(
             vec![
+                PlanAction::Plan {
+                    content: "Inspect the missing file, then patch it.".into(),
+                },
                 PlanAction::Tool {
                     name: "patch_file".into(),
                     input: patch_input,
@@ -332,6 +379,9 @@ async fn test_confirmation_denied_skips_tool() {
 
         let events = run_agent_once(
             vec![
+                PlanAction::Plan {
+                    content: "Inspect keep.rs and patch the requested text.".into(),
+                },
                 PlanAction::Tool {
                     name: "patch_file".into(),
                     input: patch_input,
@@ -340,7 +390,7 @@ async fn test_confirmation_denied_skips_tool() {
             ],
             vec!["Skipped.".into()],
             "edit the file keep.rs",
-            vec![Confirmation::Deny],
+            vec![Confirmation::Allow, Confirmation::Deny],
         )
         .await;
 

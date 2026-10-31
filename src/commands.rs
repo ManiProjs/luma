@@ -4,10 +4,21 @@ pub enum Command {
     Clear,
     Quit,
     Init,
-    Unknown(String),
+    Unknown,
 }
 
-const COMMANDS: &[&str] = &["/help", "/clear", "/quit", "/init", "/model", "/tools"];
+#[cfg(feature = "tui")]
+const COMMANDS: &[&str] = &[
+    "/help",
+    "/clear",
+    "/quit",
+    "/init",
+    "/model",
+    "/tools",
+    "/history",
+    "/restore",
+    "/summary:add",
+];
 
 impl Command {
     pub fn parse(input: &str) -> Option<Self> {
@@ -26,11 +37,12 @@ impl Command {
 
             "/init" => Command::Init,
 
-            other => Command::Unknown(other.trim_start_matches('/').to_string()),
+            _ => Command::Unknown,
         })
     }
 }
 
+#[cfg(feature = "tui")]
 pub fn suggestions(input: &str) -> Vec<String> {
     // Don't open the autocomplete panel for a bare slash. Apart from being
     // noisy, the full command list can consume most of a short terminal; wait
@@ -48,7 +60,7 @@ pub fn suggestions(input: &str) -> Vec<String> {
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "tui"))]
 mod tests {
     use super::suggestions;
 
@@ -59,7 +71,7 @@ mod tests {
 
     #[test]
     fn slash_prefix_suggests_matching_commands() {
-        assert_eq!(suggestions("/h"), vec!["/help"]);
+        assert_eq!(suggestions("/h"), vec!["/help", "/history"]);
     }
 
     #[test]

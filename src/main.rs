@@ -1,4 +1,5 @@
 mod agent;
+mod chats;
 mod commands;
 mod config;
 mod context;
@@ -13,6 +14,7 @@ mod protocol;
 mod provider;
 mod router;
 mod session;
+mod tasks;
 mod tools;
 mod workspace;
 
@@ -34,6 +36,10 @@ use tokio_util::sync::CancellationToken;
 
 use tools::{
     ToolRegistry,
+    code_intelligence::{FindReferences, FindSymbols},
+    developer::{
+        CountLines, FileMetadata, FindTodos, GitBlame, GitBranches, GitLog, GitShow, InspectProject,
+    },
     filesystem::{
         list_directory::ListDirectory, patch_file::PatchFile, read_file::ReadFile,
         search_files::SearchFiles, write_file::WriteFile,
@@ -64,6 +70,18 @@ struct Args {
 enum Commands {
     Setup,
 
+    /// Browse saved conversations.
+    History {
+        #[command(subcommand)]
+        command: Option<HistoryCommands>,
+    },
+
+    /// Manage saved conversation summaries.
+    Summary {
+        #[command(subcommand)]
+        command: SummaryCommands,
+    },
+
     Dashboard {
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
@@ -73,6 +91,17 @@ enum Commands {
     },
 
     DesktopServer,
+}
+
+#[derive(Subcommand, Debug)]
+enum HistoryCommands {
+    List,
+    Show { id: String },
+}
+
+#[derive(Subcommand, Debug)]
+enum SummaryCommands {
+    Add { id: String, summary: Vec<String> },
 }
 
 fn confirm_setup() -> Result<bool> {
@@ -113,6 +142,48 @@ async fn run() -> Result<()> {
     // ========================================================
 
     let args = Args::parse();
+
+    // Archive commands are standalone and must work without model setup.
+    match args.command.as_ref() {
+        Some(Commands::History { command }) => {
+            match command.as_ref().unwrap_or(&HistoryCommands::List) {
+                HistoryCommands::List => {
+                    let chats = chats::list()?;
+                    if chats.is_empty() {
+                        println!("No saved chats yet.");
+                    }
+                    for chat in chats {
+                        println!("{}  {}  ({} messages)", chat.id, chat.title, chat.messages);
+                        if let Some(summary) = chat.summary {
+                            println!("  Summary: {summary}");
+                        }
+                    }
+                }
+                HistoryCommands::Show { id } => {
+                    let chat = chats::load(id)?;
+                    println!(
+                        "Chat {} · {} · {}",
+                        chat.id, chat.info.model, chat.info.workspace
+                    );
+                    if let Some(summary) = chat.summary {
+                        println!("\nSummary\n{summary}");
+                    }
+                    for message in chat.messages {
+                        println!("\n[{:?}]\n{}", message.role, message.content);
+                    }
+                }
+            }
+            return Ok(());
+        }
+        Some(Commands::Summary {
+            command: SummaryCommands::Add { id, summary },
+        }) => {
+            chats::add_summary(id, summary.join(" "))?;
+            println!("Summary saved for chat {id}.");
+            return Ok(());
+        }
+        _ => {}
+    }
 
     // The desktop server receives JSONL over stdin. It must never run the
     // interactive setup prompt on that stream, or an unconfigured install
@@ -175,6 +246,16 @@ async fn run() -> Result<()> {
     tools.register(PatchFile);
     tools.register(GitStatus);
     tools.register(GitDiff);
+    tools.register(FindSymbols);
+    tools.register(FindReferences);
+    tools.register(GitLog);
+    tools.register(GitShow);
+    tools.register(GitBlame);
+    tools.register(GitBranches);
+    tools.register(FileMetadata);
+    tools.register(FindTodos);
+    tools.register(CountLines);
+    tools.register(InspectProject);
 
     let tool_names = tools.names();
 
@@ -396,6 +477,16 @@ async fn run_desktop_server() -> Result<()> {
     tools.register(PatchFile);
     tools.register(GitStatus);
     tools.register(GitDiff);
+    tools.register(FindSymbols);
+    tools.register(FindReferences);
+    tools.register(GitLog);
+    tools.register(GitShow);
+    tools.register(GitBlame);
+    tools.register(GitBranches);
+    tools.register(FileMetadata);
+    tools.register(FindTodos);
+    tools.register(CountLines);
+    tools.register(InspectProject);
 
     let tool_names = tools.names();
 
@@ -421,9 +512,9 @@ async fn run_desktop_server() -> Result<()> {
     // Agent
     // ========================================================
 
-    let model = create_model(&config.model);
+    let model = model::DynamicModel::new(&config.model);
 
-    let mut agent = Agent::new(model, planner, tools, history, galaxy);
+    let mut agent = Agent::new(model.clone(), planner, tools, history, galaxy);
 
     // ========================================================
     // Channels
@@ -465,7 +556,7 @@ async fn run_desktop_server() -> Result<()> {
     // Desktop protocol
     // ========================================================
 
-    desktop::DesktopServer::new(session, input_tx, cancel)
+    desktop::DesktopServer::new(session, input_tx, cancel, model)
         .run(event_rx)
         .await?;
 

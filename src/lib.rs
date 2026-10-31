@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod chats;
 pub mod commands;
 pub mod config;
 pub mod context;
@@ -13,6 +14,7 @@ pub mod protocol;
 pub mod provider;
 pub mod router;
 pub mod session;
+pub mod tasks;
 pub mod tools;
 pub mod workspace;
 

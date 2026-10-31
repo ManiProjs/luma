@@ -61,6 +61,7 @@ pub enum MessageRole {
     Assistant,
     Tool,
     Plan,
+    Preview,
     System,
     Error,
 }
@@ -201,6 +202,7 @@ impl UsageStats {
         self.cost_usd_micros += (cost_usd * 1_000_000.0).round() as u64;
     }
 
+    #[cfg(feature = "tui")]
     pub fn cost_usd(&self) -> f64 {
         self.cost_usd_micros as f64 / 1_000_000.0
     }
@@ -291,6 +293,10 @@ pub struct Session {
     /// Set by [`Session::handle_event`] and read once by [`Session::advance`].
     last_event: Option<AgentEvent>,
     pending: Option<Pending>,
+    chat_id: String,
+    summary: Option<String>,
+    #[cfg(not(test))]
+    chat_created_at: u64,
 }
 
 /// What the last fold did, as far as the protocol is concerned.
@@ -312,7 +318,7 @@ impl Session {
         confirm_tx: ConfirmationSender,
         cancel: CancellationToken,
     ) -> Self {
-        Self {
+        let session = Self {
             info,
             state: SessionState::default(),
             confirm_tx,
@@ -321,17 +327,36 @@ impl Session {
             exit_requested: false,
             last_event: None,
             pending: None,
-        }
+            chat_id: crate::chats::new_id(),
+            summary: None,
+            #[cfg(not(test))]
+            chat_created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+        session
     }
 
     /// Whether a client has asked to exit — sent by `/quit`, or by Ctrl+C
     /// when nothing was running and the user confirmed.
+    #[cfg(feature = "tui")]
     pub fn exit_requested(&self) -> bool {
         self.exit_requested
     }
 
+    #[cfg(feature = "tui")]
     pub fn info(&self) -> &SessionInfo {
         &self.info
+    }
+
+    pub fn set_model(&mut self, provider: impl Into<String>, model: impl Into<String>) {
+        self.info.provider = provider.into();
+        self.info.model = model.into();
+        self.push_system(format!(
+            "Switched to {} · {}",
+            self.info.provider, self.info.model
+        ));
     }
 
     pub fn state(&self) -> &SessionState {
@@ -409,6 +434,117 @@ impl Session {
             return Ok(None);
         }
 
+        if text == "/history" {
+            let output = crate::chats::list()?
+                .into_iter()
+                .take(10)
+                .map(|chat| format!("{}  {}  ({} messages)", chat.id, chat.title, chat.messages))
+                .collect::<Vec<_>>()
+                .join("\n");
+            self.push_system(if output.is_empty() {
+                "No saved chats yet.".into()
+            } else {
+                output
+            });
+            return Ok(None);
+        }
+
+        if text == "/resume" {
+            if self.state.busy {
+                self.push_system("Cancel the current request before resuming a task.");
+                return Ok(None);
+            }
+            let Some(checkpoint) = crate::tasks::load()? else {
+                self.push_system("There is no saved task checkpoint for this workspace.");
+                return Ok(None);
+            };
+            if checkpoint.status == crate::tasks::TaskStatus::Completed {
+                self.push_system("The last saved task is already completed.");
+                return Ok(None);
+            }
+            let workspace = std::env::current_dir()?.display().to_string();
+            if checkpoint.workspace != workspace {
+                self.push_system("The saved checkpoint belongs to a different workspace.");
+                return Ok(None);
+            }
+            let snapshot = serde_json::to_string(&checkpoint)?;
+            self.state.fresh = false;
+            self.state.busy = true;
+            self.state.status = BUSY_STATUS.into();
+            self.started_at = Some(Instant::now());
+            self.push_system(format!("Resuming task: {}", checkpoint.request));
+            self.persist();
+            return Ok(Some(format!("\0LUMA_RESUME:{snapshot}")));
+        }
+        if text == "/plan" {
+            self.push_system(
+                "Usage: /plan <task> — create and review a plan without implementing it.",
+            );
+            return Ok(None);
+        }
+
+        if let Some(id) = text.strip_prefix("/restore ") {
+            if self.state.busy {
+                self.push_system("Cancel the current request before restoring a chat.");
+                return Ok(None);
+            }
+            let archive = match crate::chats::load(id.trim()) {
+                Ok(archive) => archive,
+                Err(error) => {
+                    self.push_system(format!("Could not restore chat: {error:#}"));
+                    return Ok(None);
+                }
+            };
+            let replay = serde_json::to_string(&archive.messages)?;
+            let messages = archive
+                .messages
+                .iter()
+                .map(|view| MessageLine {
+                    role: view.role,
+                    content: view.content.clone(),
+                    tool: view.tool.clone(),
+                    running: false,
+                    succeeded: view.succeeded,
+                    expanded: view.expanded,
+                    started_at: None,
+                })
+                .collect::<Vec<_>>();
+
+            self.state.messages = messages;
+            self.state.input_history = archive
+                .messages
+                .iter()
+                .filter(|message| message.role == MessageRole::User)
+                .map(|message| message.content.clone())
+                .collect();
+            self.state.fresh = self.state.messages.is_empty();
+            self.state.busy = false;
+            self.state.confirmation = None;
+            self.state.status = DEFAULT_STATUS.into();
+            self.started_at = None;
+            self.last_event = None;
+            self.pending = None;
+            self.chat_id = archive.id;
+            self.summary = archive.summary;
+            #[cfg(not(test))]
+            {
+                self.chat_created_at = archive.created_at;
+            }
+            return Ok(Some(format!("\0LUMA_RESTORE:{replay}")));
+        }
+        if text == "/restore" {
+            self.push_system("Usage: /restore <chat-id>");
+            return Ok(None);
+        }
+
+        if let Some(summary) = text.strip_prefix("/summary:add ") {
+            crate::chats::add_summary(&self.chat_id, summary.to_owned())?;
+            self.summary = Some(summary.trim().to_owned());
+            self.push_system("Summary saved for this chat.");
+            self.persist();
+            return Ok(None);
+        }
+
         match commands::Command::parse(&text) {
             Some(commands::Command::Quit) => {
                 self.push_system("Goodbye.");
@@ -423,6 +559,7 @@ impl Session {
                 self.state.input_history.clear();
                 self.state.fresh = true;
                 self.state.status = DEFAULT_STATUS.into();
+                self.persist();
 
                 Ok(None)
             }
@@ -433,7 +570,7 @@ impl Session {
                 Ok(None)
             }
 
-            Some(commands::Command::Init) | Some(commands::Command::Unknown(_)) | None => {
+            Some(commands::Command::Init) | Some(commands::Command::Unknown) | None => {
                 self.submit_prompt(text)
             }
         }
@@ -461,6 +598,8 @@ impl Session {
         self.state.busy = true;
         self.state.status = BUSY_STATUS.into();
         self.started_at = Some(Instant::now());
+
+        self.persist();
 
         Ok(Some(text))
     }
@@ -506,6 +645,7 @@ impl Session {
         }
 
         self.state.messages.truncate(index + 1);
+        self.persist();
 
         if self.state.busy {
             // The in-flight request will never resolve into this transcript.
@@ -552,6 +692,15 @@ impl Session {
 
     /// Fold an agent event into the session state.
     pub fn handle_event(&mut self, event: AgentEvent) {
+        let should_persist = !matches!(
+            &event,
+            AgentEvent::Thinking
+                | AgentEvent::ThinkingContent(_)
+                | AgentEvent::TextDelta(_)
+                | AgentEvent::Usage { .. }
+                | AgentEvent::Status { .. }
+                | AgentEvent::SessionInfo { .. }
+        );
         self.pending = Some(Pending::Emit);
         self.last_event = Some(event.clone());
 
@@ -572,6 +721,13 @@ impl Session {
             AgentEvent::PlanGenerated(content) => {
                 self.push(MessageLine::new(MessageRole::Plan, content));
                 self.state.status = BUSY_STATUS.into();
+            }
+
+            AgentEvent::ChangePreview { path, diff } => {
+                self.push(MessageLine::new(
+                    MessageRole::Preview,
+                    format!("{path}\n{diff}"),
+                ));
             }
 
             AgentEvent::ToolStarted { name, input } => {
@@ -656,6 +812,9 @@ impl Session {
 
             AgentEvent::SessionInfo { .. } => self.absorb(),
         }
+        if should_persist {
+            self.persist();
+        }
     }
 
     // --------------------------------------------------------------------
@@ -687,6 +846,31 @@ impl Session {
 
     fn push_system(&mut self, text: impl Into<String>) {
         self.push(MessageLine::new(MessageRole::System, text.into()));
+        self.persist();
+    }
+
+    fn persist(&self) {
+        #[cfg(test)]
+        return;
+
+        #[cfg(not(test))]
+        {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let archive = crate::chats::ChatArchive {
+                id: self.chat_id.clone(),
+                created_at: self.chat_created_at,
+                updated_at: now,
+                info: self.info.clone(),
+                messages: self.state.messages.iter().map(MessageLine::view).collect(),
+                summary: self.summary.clone(),
+            };
+            if let Err(error) = crate::chats::save(&archive) {
+                tracing::warn!(%error, "could not persist chat transcript");
+            }
+        }
     }
 
     fn help_text() -> String {
@@ -694,6 +878,12 @@ impl Session {
             "Commands:",
             "  /help    show this message",
             "  /clear   clear the transcript",
+            "  /history list recent saved chats",
+            "  /resume  resume the interrupted task in this workspace",
+            "  /plan <task> create an implementation plan for a task",
+            "  /restore <chat-id> restore a saved chat as the active conversation",
+            "  /summary:add <text> save a summary for this chat",
+            "  /model   show the current model; /model <model-id> switches it",
             "  /init    inspect the workspace and write GALAXY.md",
             "  /quit    exit",
         ]
@@ -751,6 +941,89 @@ mod tests {
         assert_eq!(
             session.submit("/init".into()).unwrap().as_deref(),
             Some("/init")
+        );
+    }
+
+    #[test]
+    fn restore_replaces_transcript_and_keeps_archive_identity_and_summary() {
+        let (mut session, _rx) = session();
+        let id = crate::chats::new_id();
+        let archive = crate::chats::ChatArchive {
+            id: id.clone(),
+            created_at: 123,
+            updated_at: 456,
+            info: SessionInfo::new("Archived provider", "old-model", "/old", vec![]),
+            messages: vec![
+                MessageView {
+                    role: MessageRole::User,
+                    content: "previous question".into(),
+                    tool: None,
+                    running: false,
+                    succeeded: None,
+                    expanded: false,
+                    elapsed_ms: None,
+                },
+                MessageView {
+                    role: MessageRole::Assistant,
+                    content: "previous answer".into(),
+                    tool: None,
+                    running: false,
+                    succeeded: None,
+                    expanded: false,
+                    elapsed_ms: None,
+                },
+            ],
+            summary: Some("kept summary".into()),
+        };
+        crate::chats::save(&archive).unwrap();
+
+        let replay = session.submit(format!("/restore {id}")).unwrap().unwrap();
+
+        assert!(replay.starts_with("\0LUMA_RESTORE:"));
+        assert_eq!(session.chat_id, id);
+        assert_eq!(session.info.model, "qwen3");
+        assert_eq!(session.state.messages.len(), 2);
+        assert_eq!(session.state.messages[0].content, "previous question");
+        assert_eq!(session.state.input_history, vec!["previous question"]);
+        assert_eq!(session.summary.as_deref(), Some("kept summary"));
+        assert!(!session.state.fresh);
+        assert_eq!(
+            session
+                .submit("continue from here".into())
+                .unwrap()
+                .as_deref(),
+            Some("continue from here")
+        );
+        assert_eq!(session.chat_id, archive.id);
+
+        std::fs::remove_file(crate::chats::chats_dir().join(format!("{}.json", archive.id)))
+            .unwrap();
+    }
+
+    #[test]
+    fn failed_restore_does_not_replace_active_transcript() {
+        let (mut session, _rx) = session();
+        session.state.messages.push(MessageLine::new(
+            MessageRole::User,
+            "keep this active".into(),
+        ));
+        let before = session.state.messages.clone();
+
+        assert!(
+            session
+                .submit("/restore missing-chat-id".into())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(session.state.messages[0].content, before[0].content);
+        assert!(
+            session
+                .state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("Could not restore chat")
         );
     }
 
@@ -988,7 +1261,21 @@ mod tests {
 
         assert_eq!(usage.prompt_tokens, 11);
         assert_eq!(usage.total_tokens, 17);
-        assert!((usage.cost_usd() - 0.75).abs() < f64::EPSILON);
+        assert_eq!(usage.cost_usd_micros, 750_000);
+    }
+
+    #[test]
+    fn changing_model_updates_session_info_and_transcript() {
+        let (mut session, _rx) = session();
+
+        session.set_model("anthropic", "claude-sonnet-4-5");
+
+        assert_eq!(session.info.provider, "anthropic");
+        assert_eq!(session.info.model, "claude-sonnet-4-5");
+        assert_eq!(
+            session.state().messages.last().unwrap().content,
+            "Switched to anthropic · claude-sonnet-4-5"
+        );
     }
 
     #[tokio::test]

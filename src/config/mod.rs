@@ -9,6 +9,9 @@ pub struct Config {
     pub model: ModelConfig,
 
     pub planner: ModelConfig,
+
+    #[serde(default)]
+    pub providers: Vec<crate::provider::SupportedProvider>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,6 +30,7 @@ impl Default for Config {
         Self {
             model: ModelConfig::default(),
             planner: ModelConfig::default(),
+            providers: Vec::new(),
         }
     }
 }

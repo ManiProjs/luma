@@ -263,12 +263,15 @@ fn sync_from_session(session: &Session, app: &mut App, info: &mut LumaInfo) {
                 MessageRole::Assistant => crate::tui::app::MessageRole::Assistant,
                 MessageRole::Tool => crate::tui::app::MessageRole::Tool,
                 MessageRole::Plan => crate::tui::app::MessageRole::Plan,
+                MessageRole::Preview => crate::tui::app::MessageRole::Plan,
                 MessageRole::System => crate::tui::app::MessageRole::System,
                 MessageRole::Error => crate::tui::app::MessageRole::Error,
             },
             content: message.content.clone(),
         })
         .collect();
+    app.input_history = state.input_history.clone();
+    app.history_index = None;
 
     // The tool panel tracks the most recent tool entry, running or finished,
     // but only for as long as the turn is alive — once the agent reports
@@ -498,7 +501,15 @@ async fn handle_enter(
     // `/clear` and `/quit` locally, and forwards `/init` to the agent as a
     // real request.
     match session.apply(AgentCommand::Submit(text)).await? {
-        Some(forwarded) => input_tx.send(forwarded).await?,
+        Some(forwarded) => {
+            let restoring = forwarded.starts_with("\0LUMA_RESTORE:");
+            input_tx.send(forwarded).await?;
+            if restoring {
+                sync_from_session(session, app, info);
+                app.scroll = 0;
+                app.auto_scroll = true;
+            }
+        }
 
         None => sync_from_session(session, app, info),
     }

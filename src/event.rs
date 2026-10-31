@@ -13,6 +13,12 @@ pub enum AgentEvent {
 
     PlanGenerated(String),
 
+    /// Proposed file contents, emitted before the corresponding approval request.
+    ChangePreview {
+        path: String,
+        diff: String,
+    },
+
     ToolStarted {
         name: String,
         input: String,

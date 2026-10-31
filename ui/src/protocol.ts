@@ -30,12 +30,38 @@ export type ClientMessage =
     }
   | {
       type: "get_session";
-    };
+    }
+  | {
+      type: "set_model";
+      data: { request_id: string; model: string };
+    }
+  | { type: "get_providers"; data: { request_id: string } }
+  | { type: "get_setup_config"; data: { request_id: string } }
+  | { type: "get_models"; data: { request_id: string; provider: SupportedProvider; api_key: string | null; endpoint: string | null } }
+  | { type: "save_setup_config"; data: { request_id: string; config: AppConfig } };
 
+export type SupportedProvider = {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  protocol: string;
+  endpoint: string;
+  requires_api_key: boolean;
+  supports_model_discovery: boolean;
+  api_key_env: string | null;
+};
+
+export type SupportedModel = { id: string; name: string; description: string | null; context_window: number | null };
+export type AppConfig = {
+  model: { provider: string; endpoint: string; name: string; api_key: string | null };
+  planner: { provider: string; endpoint: string; name: string; api_key: string | null };
+  providers?: SupportedProvider[];
+};
 export type SessionView = {
   info: SessionInfo;
   messages: Array<{
-    role: "user" | "assistant" | "tool" | "plan" | "system" | "error";
+    role: "user" | "assistant" | "tool" | "plan" | "preview" | "system" | "error";
     content: string;
     tool: string | null;
     running: boolean;
@@ -80,4 +106,13 @@ export type ServerEvent =
         message: string;
         category: string;
       };
-    };
+    }
+  | {
+      type: "model_changed";
+      data: { request_id: string; provider: string; model: string };
+    }
+  | { type: "providers"; data: { request_id: string; providers: SupportedProvider[] } }
+  | { type: "models"; data: { request_id: string; models: SupportedModel[] } }
+  | { type: "setup_config"; data: { request_id: string; config: AppConfig } }
+  | { type: "setup_saved"; data: { request_id: string } }
+  | { type: "provider_tested"; data: { request_id: string } };

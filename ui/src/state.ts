@@ -1,4 +1,4 @@
-export type Role = "user" | "assistant" | "tool" | "plan" | "system" | "error";
+export type Role = "user" | "assistant" | "tool" | "plan" | "preview" | "system" | "error";
 
 export type ToolStatus = "running" | "success" | "failed";
 
@@ -38,6 +38,18 @@ export interface UiState {
   messages: Message[];
   session: SessionInfo;
   status: Status;
+  activeTool: string | null;
+  confirmation: { name: string; input: string } | null;
+  modelPicker: {
+    stage: "providers" | "models";
+    providers: import("./protocol").SupportedProvider[];
+    models: import("./protocol").SupportedModel[];
+    selectedProvider: import("./protocol").SupportedProvider | null;
+    selectedApiKey: string | null;
+    config: import("./protocol").AppConfig | null;
+    loading: boolean;
+    error: string | null;
+  } | null;
 }
 
 export const initialState: UiState = {
@@ -53,4 +65,7 @@ export const initialState: UiState = {
   },
 
   status: "idle",
+  activeTool: null,
+  confirmation: null,
+  modelPicker: null,
 };

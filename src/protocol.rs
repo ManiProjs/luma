@@ -83,6 +83,12 @@ pub enum ClientMessage {
         endpoint: Option<String>,
         model: String,
     },
+
+    /// Switch the active agent model without restarting the core.
+    SetModel {
+        request_id: String,
+        model: String,
+    },
 }
 
 impl ClientMessage {
@@ -102,7 +108,8 @@ impl ClientMessage {
             | Self::SaveSetupConfig { request_id, .. }
             | Self::GetProviders { request_id }
             | Self::GetModels { request_id, .. }
-            | Self::TestProvider { request_id, .. } => Some(request_id),
+            | Self::TestProvider { request_id, .. }
+            | Self::SetModel { request_id, .. } => Some(request_id),
         }
     }
 }
@@ -135,7 +142,8 @@ impl ClientMessage {
             | Self::SaveSetupConfig { .. }
             | Self::GetProviders { .. }
             | Self::GetModels { .. }
-            | Self::TestProvider { .. } => None,
+            | Self::TestProvider { .. }
+            | Self::SetModel { .. } => None,
         }
     }
 }
@@ -193,6 +201,12 @@ pub enum ServerEvent {
 
     ProviderTested {
         request_id: String,
+    },
+
+    ModelChanged {
+        request_id: String,
+        provider: String,
+        model: String,
     },
 }
 
@@ -272,6 +286,19 @@ mod tests {
     fn conversation_messages_carry_no_request_id() {
         assert!(ClientMessage::Cancel.request_id().is_none());
         assert!(ClientMessage::GetSession.request_id().is_none());
+    }
+
+    #[test]
+    fn model_switch_requests_keep_the_request_id() {
+        let message = ClientMessage::SetModel {
+            request_id: "switch-1".into(),
+            model: "gpt-4.1".into(),
+        };
+        let line = encode(&message).unwrap();
+        let decoded = decode(line.trim_end()).unwrap();
+
+        assert_eq!(decoded.request_id(), Some("switch-1"));
+        assert!(matches!(decoded, ClientMessage::SetModel { model, .. } if model == "gpt-4.1"));
     }
 
     #[test]

@@ -20,6 +20,9 @@ Built to be small, fast, and practical — without requiring a massive model.
 - 📝 Full file creation and replacement with `write_file`
 - 💻 Shell command execution
 - 🔍 File and code search
+- 🧭 Symbol and reference search
+- 🧾 File-change previews with explicit approval
+- 🧠 Persistent task plans and recovery checkpoints
 - 🔄 Planner → Tool → Observation agent loop
 - ⚡ Streaming responses
 - 🖥️ Interactive terminal UI
@@ -105,7 +108,22 @@ Luma currently provides:
 | `search_files` | Search for files and code |
 | `write_file` | Create or replace complete files |
 | `patch_file` | Make precise edits to existing files |
-| `run_command` | Execute shell commands |
+| `run_command` | Execute shell commands (approval required) |
+| `find_symbols` | Find function, type, class, and module declarations |
+| `find_references` | Find usages of a symbol across the workspace |
+| `git_status` / `git_diff` | Inspect repository state and changes |
+| `git_log` | Review recent commit history |
+| `git_show` | Inspect a commit or file at a revision |
+| `git_blame` | Attribute individual lines to commits |
+| `git_branches` | List local and remote branches |
+| `file_metadata` | Inspect file type, size, timestamps, and permissions |
+| `find_todos` | Find TODO, FIXME, XXX, HACK, and NOTE markers |
+| `count_lines` | Count files and lines by extension |
+| `inspect_project` | Read project manifests and discover build targets/scripts |
+
+The inspection tools are read-only. Git and search output is bounded so a
+large repository cannot flood the model context. Luma can combine these tools
+with `run_command` when it needs to execute a build, test suite, or formatter.
 
 ### `patch_file`
 
@@ -123,7 +141,7 @@ Instead of rewriting an entire file, Luma can replace an exact piece of existing
 
 The old text must match **exactly once**. This prevents ambiguous edits and makes small code changes safer.
 
-The typical editing workflow is:
+The editing workflow is review-first:
 
 ```text
 read_file
@@ -132,7 +150,13 @@ read_file
 understand
     │
     ▼
-patch_file
+ preview diff
+    │
+    ▼
+approve / reject
+    │
+    ▼
+ patch_file
     │
     ▼
 run_command
@@ -235,8 +259,38 @@ It provides:
 - Workspace information
 - Interruptible generation
 - Interactive input
+- Persistent conversation archives and summaries
 
-The UI is built with **Ratatui** and is intentionally compact rather than trying to imitate a full IDE.
+### Saved chats
+
+Luma automatically archives each conversation under the platform's Luma
+configuration directory (`chats/`). Archives include the transcript, model,
+workspace, timestamps, and an optional summary.
+
+```bash
+luma-core history                 # list saved chats
+luma-core history show <chat-id>  # print a complete transcript
+luma-core summary add <chat-id> "What this chat accomplished"
+```
+
+Inside the chat, `/history` lists recent archives, `/restore <chat-id>` loads
+an archive as the active conversation (including its model context), and
+`/summary:add <text>` saves a summary for the current conversation. These
+commands do not require model setup when run from the CLI.
+
+Use `/plan <task>` to request an explicit implementation plan without starting
+implementation. For normal coding tasks, Luma can also propose a plan and wait
+for approval before editing. File edits display a diff preview and require
+approval; shell commands also require confirmation. Press `Y` to approve or
+`N` to reject a pending action. Task progress is checkpointed per workspace;
+after an interrupted or crashed run, `/resume` asks Luma to continue from the
+last saved observations and completed actions. Recovery re-checks the live
+workspace rather than assuming that an in-progress operation completed.
+
+The terminal UI is built with **Ink**. Slash commands autocomplete as you type; press
+`Tab` to complete a command. Open the model picker with `/model` (press Enter)
+or the `Ctrl+G` shortcut. Use `↑`/`↓` to choose a provider or model and `Esc`
+to close the picker.
 
 ---
 
@@ -362,18 +416,23 @@ Luma should be able to run with a relatively small local model while still perfo
 - [x] Project memory
 - [x] Interactive TUI
 - [x] Generation cancellation
+- [x] Git status and diff inspection
 
 ### Planned
 
-- [ ] Git integration
 - [ ] LSP support
 - [ ] Better project detection
 - [ ] Improved context management
 - [ ] Long-term memory
-- [ ] Tool confirmation system
+- [x] Tool confirmation system
+- [x] File-change preview and review
+- [x] Task plans and approval
+- [x] Task checkpoints and recovery
+- [x] Symbol and reference search
+- [x] Git history, commit inspection, blame, and branch listing
+- [x] Project manifest inspection, TODO scanning, metadata, and line counting
 - [ ] Plugin system
-- [ ] More specialized developer tools
-- [ ] Smarter planning and recovery
+- [ ] Language-server protocol (LSP) diagnostics and semantic navigation
 - [ ] Parallel tool execution
 
 ---

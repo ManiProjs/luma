@@ -13,7 +13,9 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::config;
 use crate::event::AgentEvent;
+use crate::model::DynamicModel;
 use crate::protocol::{
     ClientMessage, ErrorCategory, PROTOCOL_VERSION, ServerEvent, decode, encode,
 };
@@ -34,6 +36,7 @@ pub struct DesktopServer {
     session: Session,
     input_tx: mpsc::Sender<String>,
     cancel: CancellationToken,
+    model: DynamicModel,
 }
 
 impl DesktopServer {
@@ -41,11 +44,13 @@ impl DesktopServer {
         session: Session,
         input_tx: mpsc::Sender<String>,
         cancel: CancellationToken,
+        model: DynamicModel,
     ) -> Self {
         Self {
             session,
             input_tx,
             cancel,
+            model,
         }
     }
 
@@ -137,6 +142,10 @@ impl DesktopServer {
                 .await
             }
 
+            ClientMessage::SetModel { request_id, model } => {
+                self.change_model(request_id, model, stdout).await
+            }
+
             message if message.request_id().is_some() => serve(message, stdout).await,
 
             // Everything left is a conversation command, which the session
@@ -149,6 +158,118 @@ impl DesktopServer {
                 self.run_command(command, stdout).await
             }
         }
+    }
+
+    async fn change_model<W>(
+        &mut self,
+        request_id: String,
+        name: String,
+        stdout: &mut W,
+    ) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        let name = name.trim();
+        if name.is_empty() {
+            return report_error(
+                stdout,
+                Some(request_id),
+                "model name cannot be empty".into(),
+                ErrorCategory::Fatal,
+            )
+            .await;
+        }
+
+        let mut settings = match config::load() {
+            Ok(config) => config,
+            Err(error) => {
+                return report_error(
+                    stdout,
+                    Some(request_id),
+                    error.to_string(),
+                    ErrorCategory::Transient,
+                )
+                .await;
+            }
+        };
+        settings.model.name = name.to_string();
+
+        let provider = crate::provider::provider_by_id(&settings.model.provider)
+            .or_else(|| {
+                settings
+                    .providers
+                    .iter()
+                    .find(|provider| provider.id == settings.model.provider)
+                    .cloned()
+            })
+            .or_else(|| {
+                settings.model.provider.starts_with("custom-").then(|| {
+                    crate::provider::SupportedProvider {
+                        id: settings.model.provider.clone(),
+                        name: "Custom provider".into(),
+                        description: "Temporary custom OpenAI-compatible provider".into(),
+                        category: crate::provider::ProviderCategory::Custom,
+                        protocol: crate::provider::ProviderProtocol::OpenAiCompatible,
+                        endpoint: settings.model.endpoint.clone(),
+                        requires_api_key: settings.model.api_key.is_some(),
+                        supports_model_discovery: true,
+                        api_key_env: None,
+                    }
+                })
+            });
+        let Some(provider) = provider else {
+            return report_error(
+                stdout,
+                Some(request_id),
+                format!("Unknown configured provider: {}", settings.model.provider),
+                ErrorCategory::Fatal,
+            )
+            .await;
+        };
+        let request = ModelRequest {
+            provider,
+            api_key: settings.model.api_key.clone(),
+            endpoint: Some(settings.model.endpoint.clone()),
+        };
+        if let Err(error) = provider_for(&request.provider).test(&request, name).await {
+            return report_error(
+                stdout,
+                Some(request_id),
+                format!("Model test failed: {error}"),
+                ErrorCategory::Transient,
+            )
+            .await;
+        }
+
+        if let Err(error) = config::save(&settings) {
+            return report_error(
+                stdout,
+                Some(request_id),
+                error.to_string(),
+                ErrorCategory::Transient,
+            )
+            .await;
+        }
+
+        self.model.replace(&settings.model).await;
+        self.session
+            .set_model(settings.model.provider.clone(), settings.model.name.clone());
+        write_event(
+            stdout,
+            ServerEvent::ModelChanged {
+                request_id,
+                provider: settings.model.provider,
+                model: settings.model.name,
+            },
+        )
+        .await?;
+        write_event(
+            stdout,
+            ServerEvent::Session {
+                session: self.session.view(),
+            },
+        )
+        .await
     }
 
     /// Dispatch a session command, reporting rejections back to the client
@@ -255,11 +376,19 @@ where
         }
 
         ClientMessage::GetProviders { request_id } => {
+            let mut providers = supported_providers();
+            if let Ok(config) = crate::config::load_or_default() {
+                for saved in config.providers {
+                    if !providers.iter().any(|provider| provider.id == saved.id) {
+                        providers.push(saved);
+                    }
+                }
+            }
             write_event(
                 stdout,
                 ServerEvent::Providers {
                     request_id,
-                    providers: supported_providers(),
+                    providers,
                 },
             )
             .await?;
@@ -322,6 +451,10 @@ where
                     .await?;
                 }
             }
+        }
+
+        ClientMessage::SetModel { .. } => {
+            // Handled by DesktopServer because it owns the live model handle.
         }
 
         other => {

@@ -1,6 +1,8 @@
 use anyhow::Result;
 use std::collections::HashMap;
 
+pub mod code_intelligence;
+pub mod developer;
 pub mod filesystem;
 pub mod git;
 pub mod shell;

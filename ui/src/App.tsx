@@ -8,10 +8,11 @@ import { Composer } from "./components/Composer";
 import { Header } from "./components/Header";
 import { Mascot } from "./components/Mascot";
 import { Tips } from "./components/Tips";
+import { ModelPicker } from "./components/ModelPicker";
 import { theme } from "./theme";
 
 export function App() {
-  const { state, send } = useSession();
+  const { state, send, openModelPicker, selectProvider, chooseModel, closeModelPicker, confirm } = useSession();
 
   const [input, setInput] = useState("");
   const hasConversation = state.messages.some(
@@ -21,6 +22,17 @@ export function App() {
   return (
     <Box flexDirection="column" paddingX={1}>
       <Header session={state.session} />
+
+      {state.modelPicker ? <ModelPicker
+        providers={state.modelPicker.providers}
+        models={state.modelPicker.models}
+        stage={state.modelPicker.stage}
+        loading={state.modelPicker.loading}
+        error={state.modelPicker.error}
+        onSelectProvider={selectProvider}
+        onChooseModel={chooseModel}
+        onClose={closeModelPicker}
+      /> : null}
 
       <Box flexDirection="column">
         {!hasConversation ? (
@@ -45,9 +57,16 @@ export function App() {
       </Box>
 
       <Composer
+        disabled={Boolean(state.modelPicker)}
         status={state.status}
+        activeTool={state.activeTool}
+        confirmation={state.confirmation}
+        onConfirm={(allowed) => confirm(allowed)}
+        toolCalls={state.messages.filter((message) => message.role === "tool").length}
+        turns={state.messages.filter((message) => message.role === "user").length}
         value={input}
         onChange={setInput}
+        onOpenModelPicker={openModelPicker}
         onSubmit={() => {
           send(input);
           setInput("");

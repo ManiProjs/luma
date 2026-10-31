@@ -48,6 +48,164 @@ fn calculate_cost(prompt_tokens: u64, completion_tokens: u64) -> f64 {
         + (completion_tokens as f64 / 1_000_000.0) * OUTPUT_COST_PER_MILLION
 }
 
+fn checkpoint_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn preview_file_change(name: &str, input: &str) -> Result<(String, String)> {
+    let value: serde_json::Value = serde_json::from_str(input)?;
+    let path = value
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .filter(|path| !path.trim().is_empty())
+        .ok_or_else(|| anyhow!("{name}: missing file path"))?;
+    let old = match std::fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && name == "write_file" => {
+            String::new()
+        }
+        Err(error) => return Err(error.into()),
+    };
+    let new = match name {
+        "write_file" => value
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("write_file: missing content"))?
+            .to_owned(),
+        "patch_file" => {
+            let before = value
+                .get("old")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow!("patch_file: missing old text"))?;
+            let after = value
+                .get("new")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| anyhow!("patch_file: missing new text"))?;
+            if old.matches(before).count() != 1 {
+                return Err(anyhow!(
+                    "patch_file preview refused: old text must match exactly once"
+                ));
+            }
+            old.replacen(before, after, 1)
+        }
+        _ => return Err(anyhow!("unsupported preview operation: {name}")),
+    };
+    if old == new {
+        return Err(anyhow!("{name}: proposed file contents are unchanged"));
+    }
+    Ok((path.to_owned(), unified_preview(path, &old, &new)))
+}
+
+fn unified_preview(path: &str, old: &str, new: &str) -> String {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    if old_lines.len().saturating_mul(new_lines.len()) > 250_000 {
+        let mut output = format!("--- a/{path}\n+++ b/{path}\n");
+        for line in &old_lines {
+            output.push('-');
+            output.push_str(line);
+            output.push('\n');
+            if output.len() > 6_000 {
+                break;
+            }
+        }
+        for line in &new_lines {
+            output.push('+');
+            output.push_str(line);
+            output.push('\n');
+            if output.len() > 12_000 {
+                break;
+            }
+        }
+        output.push_str("… large diff truncated\n");
+        return output;
+    }
+    let width = new_lines.len() + 1;
+    let mut lcs = vec![0u32; (old_lines.len() + 1) * width];
+    for i in (0..old_lines.len()).rev() {
+        for j in (0..new_lines.len()).rev() {
+            let index = i * width + j;
+            lcs[index] = if old_lines[i] == new_lines[j] {
+                1 + lcs[(i + 1) * width + j + 1]
+            } else {
+                lcs[(i + 1) * width + j].max(lcs[i * width + j + 1])
+            };
+        }
+    }
+    let mut output = format!(
+        "--- a/{path}\n+++ b/{path}\n@@ -1,{} +1,{} @@\n",
+        old_lines.len(),
+        new_lines.len()
+    );
+    let (mut i, mut j) = (0, 0);
+    while i < old_lines.len() || j < new_lines.len() {
+        if i < old_lines.len() && j < new_lines.len() && old_lines[i] == new_lines[j] {
+            output.push(' ');
+            output.push_str(old_lines[i]);
+            output.push('\n');
+            i += 1;
+            j += 1;
+        } else if i < old_lines.len()
+            && (j == new_lines.len() || lcs[(i + 1) * width + j] >= lcs[i * width + j + 1])
+        {
+            output.push('-');
+            output.push_str(old_lines[i]);
+            output.push('\n');
+            i += 1;
+        } else {
+            output.push('+');
+            output.push_str(new_lines[j]);
+            output.push('\n');
+            j += 1;
+        }
+        if output.len() > 12_000 {
+            output.push_str("… diff truncated\n");
+            break;
+        }
+    }
+    if old.ends_with('\n') != new.ends_with('\n') {
+        if !old.ends_with('\n') {
+            output.push_str("\\ No newline at end of old file\n");
+        }
+        if !new.ends_with('\n') {
+            output.push_str("\\ No newline at end of new file\n");
+        }
+    }
+    output
+}
+
+#[cfg(test)]
+mod change_preview_tests {
+    use super::*;
+
+    #[test]
+    fn preview_shows_added_and_removed_lines() {
+        let diff = unified_preview("sample.txt", "before\nkeep\n", "after\nkeep\n");
+        assert!(diff.contains("--- a/sample.txt"));
+        assert!(diff.contains("-before"));
+        assert!(diff.contains("+after"));
+        assert!(diff.contains(" keep"));
+    }
+
+    #[test]
+    fn patch_preview_requires_one_exact_match() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sample.txt");
+        std::fs::write(&path, "same\nsame\n").unwrap();
+        let input = serde_json::json!({"path":path,"old":"same","new":"changed"}).to_string();
+        assert!(preview_file_change("patch_file", &input).is_err());
+    }
+
+    #[test]
+    fn preview_reports_missing_final_newline() {
+        let diff = unified_preview("sample.txt", "same", "same\n");
+        assert!(diff.contains("No newline at end of old file"));
+    }
+}
+
 // ============================================================================
 // Confirmation
 // ============================================================================
@@ -116,6 +274,8 @@ pub struct Agent<M, P> {
     /// Building them for every planner iteration wastes CPU and allocations,
     /// and more importantly makes it easy to accidentally grow the prompt.
     planner_system_prompt: String,
+    checkpoint: Option<crate::tasks::TaskCheckpoint>,
+    plan_only: bool,
 }
 
 impl<M, P> Agent<M, P>
@@ -162,6 +322,8 @@ where
             request_observations: Vec::new(),
 
             planner_system_prompt,
+            checkpoint: None,
+            plan_only: false,
         }
     }
 
@@ -203,6 +365,76 @@ where
             return Ok(());
         }
 
+        if let Some(snapshot) = input.strip_prefix("\0LUMA_RESTORE:") {
+            let messages: Vec<crate::session::MessageView> = serde_json::from_str(snapshot)?;
+            let restored = messages
+                .into_iter()
+                .map(|message| {
+                    let (role, content) = match message.role {
+                        crate::session::MessageRole::System => {
+                            (MessageRole::System, message.content)
+                        }
+                        crate::session::MessageRole::User => (MessageRole::User, message.content),
+                        crate::session::MessageRole::Assistant => {
+                            (MessageRole::Assistant, message.content)
+                        }
+                        crate::session::MessageRole::Tool => (
+                            MessageRole::Observation,
+                            format!(
+                                "Tool {}: {}",
+                                message.tool.unwrap_or_else(|| "output".into()),
+                                message.content
+                            ),
+                        ),
+                        crate::session::MessageRole::Plan => {
+                            (MessageRole::System, format!("Plan: {}", message.content))
+                        }
+                        crate::session::MessageRole::Preview => (
+                            MessageRole::Observation,
+                            format!("Previously proposed change:\n{}", message.content),
+                        ),
+                        crate::session::MessageRole::Error => (
+                            MessageRole::System,
+                            format!("Previous error: {}", message.content),
+                        ),
+                    };
+                    Message { role, content }
+                })
+                .collect::<Vec<_>>();
+            self.context.restore(restored);
+            return Ok(());
+        }
+
+        if let Some(snapshot) = input.strip_prefix("\0LUMA_RESUME:") {
+            let checkpoint: crate::tasks::TaskCheckpoint = serde_json::from_str(snapshot)?;
+            self.current_request = checkpoint.request.clone();
+            self.request_observations = checkpoint.observations.clone();
+            self.context.add(
+                MessageRole::System,
+                format!(
+                    "Resuming an interrupted task. Previously approved plan:\n{}\n\nCompleted actions: {}. Do not repeat completed work; inspect the current workspace state before continuing.",
+                    checkpoint.plan.as_deref().unwrap_or("No plan was saved."),
+                    checkpoint.completed_actions.join(", ")
+                ),
+            );
+            self.context
+                .add(MessageRole::User, checkpoint.request.clone());
+            self.planning_state = if checkpoint.plan_approved {
+                PlanningState::Implementing
+            } else {
+                PlanningState::Exploring
+            };
+            self.checkpoint = Some(checkpoint);
+            if let Some(checkpoint) = self.checkpoint.as_mut() {
+                checkpoint.status = crate::tasks::TaskStatus::InProgress;
+            }
+            self.save_checkpoint();
+            self.run_agent_loop(tx, cancel, confirmation_rx).await?;
+            self.finish_checkpoint(cancel);
+            self.finish(tx).await?;
+            return Ok(());
+        }
+
         if input == "/init" {
             self.initialize_workspace(tx, cancel, confirmation_rx)
                 .await?;
@@ -211,13 +443,23 @@ where
             return Ok(());
         }
 
-        self.begin_request(input)?;
+        self.plan_only = input.starts_with("/plan ");
+        let input = if let Some(task) = input.strip_prefix("/plan ") {
+            format!(
+                "Create an explicit implementation plan for this task, but do not implement it yet: {task}"
+            )
+        } else {
+            input.to_owned()
+        };
 
-        match ToolRouter::route(input) {
+        self.begin_request(&input)?;
+
+        match ToolRouter::route(&input) {
             RoutedAction::Tool { name, input } => {
                 self.run_direct_tool(&name, &input, tx, cancel, confirmation_rx)
                     .await?;
 
+                self.finish_checkpoint(cancel);
                 self.finish(tx).await?;
                 return Ok(());
             }
@@ -225,12 +467,13 @@ where
             RoutedAction::Planner => {}
         }
 
-        if self.needs_workspace(input) {
+        if self.plan_only || self.needs_workspace(&input) {
             self.run_agent_loop(tx, cancel, confirmation_rx).await?;
         } else {
             self.run_conversation(tx, cancel).await?;
         }
 
+        self.finish_checkpoint(cancel);
         self.finish(tx).await
     }
 
@@ -254,6 +497,22 @@ where
         self.current_request.push_str(input);
 
         self.context.add(MessageRole::User, input.to_owned());
+
+        let workspace = std::env::current_dir()?.display().to_string();
+        let is_task = self.needs_workspace(input)
+            || self.plan_only
+            || matches!(ToolRouter::route(input), RoutedAction::Tool { .. });
+        self.checkpoint = is_task.then(|| crate::tasks::TaskCheckpoint {
+            workspace: workspace.clone(),
+            request: input.to_owned(),
+            plan: None,
+            plan_approved: false,
+            observations: Vec::new(),
+            completed_actions: Vec::new(),
+            status: crate::tasks::TaskStatus::InProgress,
+            updated_at: checkpoint_now(),
+        });
+        self.save_checkpoint();
 
         self.history.messages.push(HistoryMessage {
             role: "user".into(),
@@ -389,6 +648,7 @@ or test results.
 
         for step in 0..MAX_STEPS {
             if cancel.is_cancelled() {
+                self.interrupt_checkpoint();
                 tx.send(AgentEvent::Error("Interrupted.".into())).await?;
                 return Ok(());
             }
@@ -431,6 +691,16 @@ or test results.
                 // Single tool
                 // --------------------------------------------------------
                 PlanAction::Tool { name, input } => {
+                    if self.planning_state == PlanningState::Exploring
+                        && matches!(name.as_str(), "write_file" | "patch_file")
+                    {
+                        let message = format!(
+                            "Cannot execute '{name}' before an implementation plan is approved. Ask Luma to propose a plan first."
+                        );
+                        tx.send(AgentEvent::Error(message.clone())).await?;
+                        self.record_observation("planning", &message);
+                        continue;
+                    }
                     self.execute_tool(&name, &input, tx, cancel, confirmation_rx)
                         .await?;
                 }
@@ -457,6 +727,11 @@ or test results.
                 PlanAction::Plan { content } => {
                     tx.send(AgentEvent::PlanGenerated(content.clone())).await?;
 
+                    if let Some(checkpoint) = self.checkpoint.as_mut() {
+                        checkpoint.plan = Some(content.clone());
+                    }
+                    self.save_checkpoint();
+
                     let display = format!("Plan:\n{}", content);
 
                     let allowed = self
@@ -464,7 +739,20 @@ or test results.
                         .await?;
 
                     if allowed {
+                        if self.plan_only {
+                            self.context.add(
+                                MessageRole::System,
+                                "Plan approved and saved. Implementation was not started because this was a plan-only request.",
+                            );
+                            return Ok(());
+                        }
                         self.planning_state = PlanningState::Implementing;
+
+                        if let Some(checkpoint) = self.checkpoint.as_mut() {
+                            checkpoint.plan = Some(content.clone());
+                            checkpoint.plan_approved = true;
+                        }
+                        self.save_checkpoint();
 
                         self.context.add(
                             MessageRole::System,
@@ -594,6 +882,11 @@ RULES:
 - Use exact registered tool names.
 - Never invent workspace facts.
 - Inspect before modifying an existing file.
+- Prefer focused read-only workspace and Git tools over shell commands for inspection.
+- Use git_log, git_show, git_blame, and git_branches for repository history and attribution.
+- Use inspect_project before guessing project languages, manifests, scripts, or build targets.
+- Use find_todos and count_lines for workspace-wide maintenance surveys.
+- Use file_metadata when file type, size, timestamps, or permissions matter.
 - Use patch_file for precise edits.
 - Use write_file for new files or full replacements.
 - Verify modifications when appropriate.
@@ -750,7 +1043,34 @@ RULES:
 
         let display = Self::format_tool_display(name, input);
 
-        if requires_confirmation(name) {
+        if matches!(name, "write_file" | "patch_file") {
+            let (path, diff) = match preview_file_change(name, input) {
+                Ok(preview) => preview,
+                Err(error) => {
+                    let message = format!("{name} failed: {error}");
+                    tx.send(AgentEvent::Error(message.clone())).await?;
+                    self.record_observation(name, &message);
+                    return Ok(());
+                }
+            };
+            tx.send(AgentEvent::ChangePreview {
+                path: path.clone(),
+                diff: diff.clone(),
+            })
+            .await?;
+            let allowed = self
+                .request_confirmation(
+                    "apply_changes",
+                    &format!("{path}\n{diff}"),
+                    tx,
+                    cancel,
+                    confirmation_rx,
+                )
+                .await?;
+            if !allowed {
+                return Ok(());
+            }
+        } else if requires_confirmation(name) {
             let allowed = self
                 .request_confirmation(name, &display, tx, cancel, confirmation_rx)
                 .await?;
@@ -762,7 +1082,7 @@ RULES:
 
         tx.send(AgentEvent::ToolStarted {
             name: name.to_owned(),
-            input: display,
+            input: display.clone(),
         })
         .await?;
 
@@ -812,6 +1132,13 @@ RULES:
 
         self.record_observation(name, &result);
 
+        if let Some(checkpoint) = self.checkpoint.as_mut() {
+            checkpoint
+                .completed_actions
+                .push(format!("{name}: {display}"));
+        }
+        self.save_checkpoint();
+
         Ok(())
     }
 
@@ -827,7 +1154,45 @@ RULES:
             .add(MessageRole::Observation, observation.clone());
 
         // Keep a separate request-local copy for the planner.
-        self.request_observations.push(observation);
+        self.request_observations.push(observation.clone());
+        if let Some(checkpoint) = self.checkpoint.as_mut() {
+            checkpoint.observations.push(observation);
+        }
+        self.save_checkpoint();
+    }
+
+    fn save_checkpoint(&self) {
+        if let Some(checkpoint) = &self.checkpoint {
+            let mut checkpoint = checkpoint.clone();
+            checkpoint.updated_at = checkpoint_now();
+            if let Err(error) = crate::tasks::save(&checkpoint) {
+                tracing::warn!(%error, "could not save task checkpoint");
+            }
+        }
+    }
+
+    fn interrupt_checkpoint(&mut self) {
+        if let Some(checkpoint) = self.checkpoint.as_mut() {
+            checkpoint.status = crate::tasks::TaskStatus::Interrupted;
+        }
+        self.save_checkpoint();
+    }
+
+    fn complete_checkpoint(&mut self) {
+        if let Some(checkpoint) = self.checkpoint.as_mut() {
+            if checkpoint.status == crate::tasks::TaskStatus::InProgress {
+                checkpoint.status = crate::tasks::TaskStatus::Completed;
+            }
+        }
+        self.save_checkpoint();
+    }
+
+    fn finish_checkpoint(&mut self, cancel: &CancellationToken) {
+        if cancel.is_cancelled() {
+            self.interrupt_checkpoint();
+        } else {
+            self.complete_checkpoint();
+        }
     }
 
     async fn execute_actions(

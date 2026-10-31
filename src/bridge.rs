@@ -90,6 +90,7 @@ fn to_role(role: MessageRole) -> crate::tui::app::MessageRole {
         MessageRole::Assistant => crate::tui::app::MessageRole::Assistant,
         MessageRole::Tool => crate::tui::app::MessageRole::Tool,
         MessageRole::Plan => crate::tui::app::MessageRole::Plan,
+        MessageRole::Preview => crate::tui::app::MessageRole::Plan,
         MessageRole::System => crate::tui::app::MessageRole::System,
         MessageRole::Error => crate::tui::app::MessageRole::Error,
     }
