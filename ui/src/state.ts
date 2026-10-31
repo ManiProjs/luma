@@ -16,10 +16,10 @@ export type PlanItem = {
   status: "pending" | "active" | "done";
 };
 
-export type SessionInfo = {
-  workspace: string;
-  provider: string;
-  model: string;
+import type { SessionInfo } from "./protocol";
+export type { SessionInfo } from "./protocol";
+
+export type UiSessionInfo = SessionInfo & {
   contextSize?: number;
   branch?: string;
   dirty?: boolean;
@@ -36,7 +36,7 @@ export type Status = "idle" | "thinking" | "working" | "streaming" | "waiting" |
 
 export interface UiState {
   messages: Message[];
-  session: SessionInfo;
+  session: UiSessionInfo;
   status: Status;
   activeTool: string | null;
   confirmation: { name: string; input: string } | null;
@@ -59,9 +59,7 @@ export const initialState: UiState = {
     workspace: process.cwd(),
     provider: "unknown",
     model: "unknown",
-    contextSize: undefined,
-    branch: undefined,
-    dirty: false,
+    tools: [],
   },
 
   status: "idle",

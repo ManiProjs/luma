@@ -1,5 +1,11 @@
 import { create } from "zustand";
 
+import type {
+  AppConfigInput,
+  SupportedModel,
+  SupportedProvider,
+} from "../../../shared/protocol";
+
 export type SetupStep = "welcome" | "provider" | "model" | "complete";
 
 /**
@@ -8,40 +14,9 @@ export type SetupStep = "welcome" | "provider" | "model" | "complete";
  * React does NOT define the provider registry.
  * Rust sends the actual providers and models.
  */
-export interface SetupProvider {
-  id: string;
-  category: "Local" | "Cloud" | "Custom";
-  protocol: "OpenAiCompatible" | "Anthropic" | "Gemini";
-  name: string;
-  description: string;
-  endpoint: string;
-  requires_api_key: boolean;
-  supports_model_discovery: boolean;
-  api_key_env: string | null;
-}
-
-export interface SetupModel {
-  id: string;
-  name: string;
-  description?: string;
-  context_window: number;
-}
-
-export interface SetupConfig {
-  model: {
-    provider: string;
-    endpoint: string;
-    name: string;
-    api_key?: string;
-  };
-
-  planner: {
-    provider: string;
-    endpoint: string;
-    name: string;
-    api_key?: string;
-  };
-}
+export type SetupProvider = SupportedProvider;
+export type SetupModel = SupportedModel;
+export type SetupConfig = AppConfigInput;
 
 interface SetupState {
   step: SetupStep;
@@ -52,6 +27,7 @@ interface SetupState {
 
   apiKey: string;
   endpoint: string;
+  providerApiKeys: Record<string, string>;
 
   availableProviders: SetupProvider[];
   availableModels: SetupModel[];
@@ -102,6 +78,7 @@ const initialState = {
 
   apiKey: "",
   endpoint: "",
+  providerApiKeys: {},
 
   availableProviders: [],
   availableModels: [],
@@ -276,17 +253,22 @@ export const useSetupStore = create<SetupState>((set, get) => ({
         return;
       }
 
+      const savedApiKey = config.model.api_key
+        ?? config.provider_api_keys?.[config.model.provider]
+        ?? "";
+
       set({
         provider,
-        apiKey: config.model.api_key ?? "",
+        apiKey: savedApiKey,
         endpoint: config.model.endpoint || provider.endpoint || "",
+        providerApiKeys: config.provider_api_keys ?? {},
       });
 
       let models: SetupModel[] = [];
 
       try {
         models = await window.luma.getModels(provider, {
-          apiKey: config.model.api_key || undefined,
+          apiKey: savedApiKey.trim() || undefined,
 
           endpoint: config.model.endpoint || provider.endpoint || undefined,
         });
@@ -352,7 +334,7 @@ export const useSetupStore = create<SetupState>((set, get) => ({
   },
 
   saveConfiguration: async () => {
-    const { provider, model, plannerModel, apiKey, endpoint } = get();
+    const { provider, model, plannerModel, apiKey, endpoint, providerApiKeys, availableProviders } = get();
 
     if (!provider) {
       throw new Error("No provider selected.");
@@ -389,6 +371,12 @@ export const useSetupStore = create<SetupState>((set, get) => ({
           name: planner.id,
 
           api_key: apiKey.trim() || undefined,
+        },
+
+        providers: availableProviders.filter((item) => item.category === "Custom"),
+        provider_api_keys: {
+          ...providerApiKeys,
+          ...(apiKey.trim() ? { [provider.id]: apiKey.trim() } : {}),
         },
       };
 

@@ -37,6 +37,7 @@ pub struct DesktopServer {
     input_tx: mpsc::Sender<String>,
     cancel: CancellationToken,
     model: DynamicModel,
+    planner_model: DynamicModel,
 }
 
 impl DesktopServer {
@@ -45,12 +46,14 @@ impl DesktopServer {
         input_tx: mpsc::Sender<String>,
         cancel: CancellationToken,
         model: DynamicModel,
+        planner_model: DynamicModel,
     ) -> Self {
         Self {
             session,
             input_tx,
             cancel,
             model,
+            planner_model,
         }
     }
 
@@ -252,6 +255,7 @@ impl DesktopServer {
         }
 
         self.model.replace(&settings.model).await;
+        self.planner_model.replace(&settings.planner).await;
         self.session
             .set_model(settings.model.provider.clone(), settings.model.name.clone());
         write_event(

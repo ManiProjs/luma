@@ -6,7 +6,7 @@ import { LumaClient } from "./client";
 
 import { initialState, type UiState } from "./state";
 
-import type { ServerEvent } from "./protocol";
+import type { AgentEvent, ServerEvent } from "./protocol";
 import type { AppConfig, SupportedProvider } from "./protocol";
 
 const client = new LumaClient();
@@ -35,20 +35,20 @@ export function useSession() {
     }));
   }
 
-  function handleAgentEvent(event: any) {
+  function handleAgentEvent(event: AgentEvent) {
     setState((current) => {
       const messages = [...current.messages];
       let status = current.status;
       let activeTool = current.activeTool;
       let confirmation = current.confirmation;
 
-      switch (event.event?.type) {
+      switch (event.type) {
         case "Thinking":
           status = "thinking";
           break;
 
         case "Status": {
-          const state = String(event.event.data?.state ?? "").toLowerCase();
+          const state = event.data.state.toLowerCase();
           status = state === "doing" ? "working"
             : state === "talking" ? "streaming"
               : state === "waiting" ? "waiting"
@@ -59,7 +59,7 @@ export function useSession() {
 
         case "TextDelta": {
           status = "streaming";
-          const delta = event.event.data;
+          const delta = event.data;
 
           const lastIndex = messages.length - 1;
           const last = messages[lastIndex];
@@ -81,7 +81,7 @@ export function useSession() {
           messages.push({
             id: crypto.randomUUID(),
             role: "plan",
-            content: event.event.data,
+            content: event.data,
             timestamp: Date.now(),
           });
           status = "thinking";
@@ -91,7 +91,7 @@ export function useSession() {
           messages.push({
             id: crypto.randomUUID(),
             role: "preview",
-            content: `${event.event.data.path}\n${event.event.data.diff}`,
+            content: `${event.data.path}\n${event.data.diff}`,
             timestamp: Date.now(),
           });
           break;
@@ -100,11 +100,11 @@ export function useSession() {
           messages.push({
             id: crypto.randomUUID(),
             role: "tool",
-            content: `${event.event.data.name}: ${event.event.data.input}`,
+            content: `${event.data.name}: ${event.data.input}`,
             timestamp: Date.now(),
           });
           status = "working";
-          activeTool = event.event.data.name;
+          activeTool = event.data.name;
           break;
 
         case "ToolFinished": {
@@ -113,7 +113,7 @@ export function useSession() {
             const index = messages.findIndex((message) => message.id === tool.id);
             messages[index] = {
               ...tool,
-              content: `${event.event.data.name} — ${event.event.data.duration_ms} ms${event.event.data.failed ? " (failed)" : ""}`,
+              content: `${event.data.name} — ${event.data.duration_ms} ms${event.data.failed ? " (failed)" : ""}`,
             };
           }
           status = "thinking";
@@ -123,14 +123,14 @@ export function useSession() {
 
         case "ConfirmationRequired":
           status = "waiting";
-          confirmation = { name: event.event.data.name, input: event.event.data.input };
+          confirmation = { name: event.data.name, input: event.data.input };
           break;
 
         case "SystemMessage":
           messages.push({
             id: crypto.randomUUID(),
             role: "system",
-            content: event.event.data,
+            content: event.data,
             timestamp: Date.now(),
           });
           break;
@@ -139,7 +139,7 @@ export function useSession() {
           messages.push({
             id: crypto.randomUUID(),
             role: "error",
-            content: event.event.data,
+            content: event.data,
             timestamp: Date.now(),
           });
           status = "error";
@@ -185,7 +185,7 @@ export function useSession() {
         break;
 
       case "agent":
-        handleAgentEvent(event.data);
+        handleAgentEvent(event.data.event);
         break;
 
       case "model_changed":
@@ -276,20 +276,26 @@ export function useSession() {
   }
 
   useEffect(() => {
+    let mounted = true;
+    const unsubscribe = client.subscribe((event) => {
+      if (mounted) handleEvent(event);
+    });
+
     try {
       startDesktopServer();
-      client.connect();
+      void client.connect().then(() => {
+        if (mounted) client.send({ type: "get_session" });
+      }).catch((error) => {
+        if (mounted) addMessage("error", error instanceof Error ? error.message : String(error));
+      });
     } catch (error) {
       addMessage("error", String(error));
-
-      return;
     }
 
-    const unsubscribe = client.subscribe(handleEvent);
-    client.send({ type: "get_session" });
-
     return () => {
+      mounted = false;
       unsubscribe();
+      client.disconnect();
       stopDesktopServer();
     };
   }, []);

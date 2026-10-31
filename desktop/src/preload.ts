@@ -1,27 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { parseServerEvent, type ServerEvent } from "../../shared/protocol";
 
-export type LumaAgentEvent =
-  | { type: "ready"; data: { version: number } }
-  | {
-      type: "error";
-      data: {
-        request_id?: string | null;
-        message: string;
-        category?: string;
-      };
-    }
-  | { type: "process_exited"; data: { code: number | null } }
-  | { type: "agent"; data: { event: { type: string; data?: unknown } } }
-  | {
-      type: "session";
-      data: {
-        session: {
-          messages: Array<{ role: string; content: string; tool: string | null; running: boolean; succeeded: boolean | null; elapsed_ms: number | null }>;
-          busy: boolean;
-          confirmation: { name: string; input: string } | null;
-        };
-      };
-    };
+export type LumaAgentEvent = ServerEvent;
 
 contextBridge.exposeInMainWorld("luma", {
   getWorkspace: () => ipcRenderer.invoke("luma:get-workspace"),
@@ -51,6 +31,7 @@ contextBridge.exposeInMainWorld("luma", {
   cancel: () => ipcRenderer.invoke("luma:cancel"),
 
   getStatus: () => ipcRenderer.invoke("luma:status"),
+  getSession: () => ipcRenderer.invoke("luma:get-session"),
 
   onOpenSettings: (callback: () => void) => {
     const listener = () => {
@@ -64,9 +45,9 @@ contextBridge.exposeInMainWorld("luma", {
     };
   },
 
-  onEvent: (callback: (event: unknown) => void) => {
+  onEvent: (callback: (event: ServerEvent) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, data: unknown) => {
-      callback(data);
+      callback(parseServerEvent(JSON.stringify(data)));
     };
 
     ipcRenderer.on("luma:event", listener);

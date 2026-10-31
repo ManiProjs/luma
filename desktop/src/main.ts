@@ -1,24 +1,28 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 
 import path from "node:path";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
 import readline from "node:readline";
 
 import { randomUUID } from "node:crypto";
+import {
+  assertProtocolVersion,
+  encodeClientMessage,
+  isAppConfigInput,
+  isSupportedProvider,
+  parseServerEvent,
+  type ClientMessage,
+  type ServerEvent,
+} from "../../shared/protocol";
 
 type PendingRequest = {
-  resolve: (value: unknown) => void;
+  expectedType: "setup_config" | "setup_saved" | "providers" | "models" | "provider_tested" | "model_changed";
+  resolve: (value: ServerEvent) => void;
   reject: (reason?: unknown) => void;
 };
-
-type LumaRequestType =
-  | "get_providers"
-  | "get_models"
-  | "get_setup_config"
-  | "save_setup_config"
-  | "test_provider";
 
 let mainWindow: BrowserWindow | null = null;
 let workspaceRoot = path.resolve(process.env.LUMA_WORKSPACE || process.cwd());
@@ -32,12 +36,36 @@ const pendingRequests = new Map<string, PendingRequest>();
 
 let isLumaReady = false;
 let lumaReadyResolver: (() => void) | null = null;
-let lumaReadyPromise = new Promise<void>((resolve) => {
+let lumaReadyRejecter: ((error: Error) => void) | null = null;
+let lumaReadyPromise = new Promise<void>((resolve, reject) => {
   lumaReadyResolver = resolve;
+  lumaReadyRejecter = reject;
 });
+void lumaReadyPromise.catch(() => undefined);
+let startupTimer: ReturnType<typeof setTimeout> | null = null;
+let respawnTimer: ReturnType<typeof setTimeout> | null = null;
 
 function getLumaBinary(): string {
-  return process.env.LUMA_BINARY || "luma";
+  if (process.env.LUMA_BINARY) return process.env.LUMA_BINARY;
+
+  if (app.isPackaged) {
+    const packagedBinary = path.join(
+      process.resourcesPath,
+      process.platform === "win32" ? "luma-core.exe" : "luma-core",
+    );
+    if (existsSync(packagedBinary)) return packagedBinary;
+  }
+
+  if (!app.isPackaged) {
+    const localBuilds = [
+      path.resolve(__dirname, "../../../target/debug/luma-core"),
+      path.resolve(__dirname, "../../../target/release/luma-core"),
+    ];
+    const localBinary = localBuilds.find((candidate) => existsSync(candidate));
+    if (localBinary) return localBinary;
+  }
+
+  return "luma-core";
 }
 
 function resolveWorkspacePath(relativePath: string): string {
@@ -80,21 +108,22 @@ async function readWorkspaceTree(directory: string, relative = "", depth = 0): P
   return nodes;
 }
 
-function sendToLuma(message: unknown) {
-  if (!lumaProcess || lumaProcess.killed) {
-    throw new Error("Luma desktop server is not running.");
+function sendToLuma(message: ClientMessage) {
+  if (!lumaProcess || lumaProcess.killed || !isLumaReady || !lumaProcess.stdin.writable) {
+    throw new Error("Luma core is not ready. Wait for it to finish starting, then retry.");
   }
 
-  lumaProcess.stdin.write(`${JSON.stringify(message)}\n`);
+  lumaProcess.stdin.write(encodeClientMessage(message));
 }
 
 async function requestLuma(
-  type: LumaRequestType,
-  data: Record<string, unknown> = {},
-): Promise<unknown> {
+  expectedType: "setup_config" | "setup_saved" | "providers" | "models" | "provider_tested" | "model_changed",
+  createMessage: (requestId: string) => ClientMessage,
+): Promise<ServerEvent> {
   if (!isLumaReady) {
     await lumaReadyPromise;
   }
+  if (!isLumaReady) throw new Error("Luma core stopped before the request could be sent.");
 
   return new Promise((resolve, reject) => {
     const requestId = randomUUID();
@@ -103,11 +132,12 @@ async function requestLuma(
     const timeout = setTimeout(() => {
       if (pendingRequests.has(requestId)) {
         pendingRequests.delete(requestId);
-        reject(new Error(`Luma request timed out: ${type}`));
+        reject(new Error(`Luma request timed out: ${expectedType}`));
       }
     }, TIMEOUT_MS);
 
     pendingRequests.set(requestId, {
+      expectedType,
       resolve: (value) => {
         clearTimeout(timeout);
         resolve(value);
@@ -119,13 +149,7 @@ async function requestLuma(
     });
 
     try {
-      sendToLuma({
-        type,
-        data: {
-          ...data,
-          request_id: requestId,
-        },
-      });
+      sendToLuma(createMessage(requestId));
     } catch (error) {
       clearTimeout(timeout);
       pendingRequests.delete(requestId);
@@ -141,21 +165,41 @@ function startLuma() {
 
   intentionalShutdown = false;
   isLumaReady = false;
-  lumaReadyPromise = new Promise<void>((resolve) => {
+  lumaReadyPromise = new Promise<void>((resolve, reject) => {
     lumaReadyResolver = resolve;
+    lumaReadyRejecter = reject;
   });
+  void lumaReadyPromise.catch(() => undefined);
 
   const binary = getLumaBinary();
 
   console.log(`[luma] Starting: ${binary} desktop-server`);
 
-  const child = spawn(binary, ["desktop-server"], {
-    cwd: workspaceRoot,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  let child: ChildProcessWithoutNullStreams;
+  try {
+    child = spawn(binary, ["desktop-server"], {
+      cwd: workspaceRoot,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch (error) {
+    handleLumaProcessFailure(error instanceof Error ? error : new Error(String(error)));
+    return;
+  }
   lumaProcess = child;
 
+  startupTimer = setTimeout(() => {
+    if (lumaProcess === child && !isLumaReady) {
+      handleLumaProcessFailure(new Error("Luma core did not complete its startup handshake."));
+      child.kill();
+    }
+  }, 15000);
+
   child.on("error", (error) => {
+    if (lumaProcess !== child) return;
+    handleLumaProcessFailure(error);
+  });
+
+  child.stdin.on("error", (error) => {
     if (lumaProcess !== child) return;
     handleLumaProcessFailure(error);
   });
@@ -171,24 +215,42 @@ function startLuma() {
       return;
     }
 
-    let event: any;
-
+    let event: ServerEvent;
     try {
-      event = JSON.parse(line);
-    } catch {
-      console.error("[luma] Invalid JSON:", line);
-
+      event = parseServerEvent(line);
+    } catch (error) {
+      handleLumaProcessFailure(
+        new Error(`Invalid message from Luma core: ${error instanceof Error ? error.message : String(error)}`),
+      );
+      child.kill();
       return;
     }
 
     if (event.type === "ready") {
+      try {
+        assertProtocolVersion(event.data.version);
+      } catch (error) {
+        handleLumaProcessFailure(error instanceof Error ? error : new Error(String(error)));
+        child.kill();
+        return;
+      }
+      if (startupTimer) clearTimeout(startupTimer);
+      startupTimer = null;
       isLumaReady = true;
       respawnAttempts = 0;
       lumaReadyResolver?.();
+      lumaReadyResolver = null;
+      lumaReadyRejecter = null;
+      mainWindow?.webContents.send("luma:event", event);
       return;
     }
 
-    const requestId = event?.data?.request_id;
+    const requestId = "data" in event
+      && typeof event.data === "object"
+      && event.data !== null
+      && "request_id" in event.data
+      ? event.data.request_id
+      : null;
 
     if (typeof requestId === "string" && pendingRequests.has(requestId)) {
       const pending = pendingRequests.get(requestId);
@@ -199,8 +261,10 @@ function startLuma() {
         pending?.reject(
           new Error(event.data?.message ?? "Luma request failed."),
         );
+      } else if (event.type !== pending?.expectedType) {
+        pending?.reject(new Error(`Unexpected response to request: ${event.type}.`));
       } else {
-        pending?.resolve(event.data);
+        pending?.resolve(event);
       }
 
       return;
@@ -220,23 +284,22 @@ function startLuma() {
       return;
     }
 
-    if (code !== 0) {
-      handleLumaProcessFailure(
-        `Luma exited with code=${code}, signal=${signal}`,
-      );
-      return;
-    }
-
-    lumaProcess = null;
+    handleLumaProcessFailure(`Luma exited with code=${code}, signal=${signal}`);
   });
 }
 
 function stopLuma() {
+  intentionalShutdown = true;
+  if (respawnTimer) clearTimeout(respawnTimer);
+  respawnTimer = null;
   if (!lumaProcess) {
     return;
   }
 
-  intentionalShutdown = true;
+  if (startupTimer) clearTimeout(startupTimer);
+  startupTimer = null;
+  lumaReadyRejecter?.(new Error("Luma core stopped before becoming ready."));
+  lumaReadyRejecter = null;
 
   for (const pending of pendingRequests.values()) {
     pending.reject(new Error("Luma desktop server stopped."));
@@ -244,9 +307,10 @@ function stopLuma() {
 
   pendingRequests.clear();
 
-  lumaProcess.kill();
-
+  const child = lumaProcess;
   lumaProcess = null;
+  isLumaReady = false;
+  child.kill();
 }
 
 function handleLumaProcessFailure(error: Error | string) {
@@ -256,6 +320,12 @@ function handleLumaProcessFailure(error: Error | string) {
 
   console.error("[luma] Process failure:", error);
 
+  if (startupTimer) clearTimeout(startupTimer);
+  startupTimer = null;
+  isLumaReady = false;
+  lumaReadyRejecter?.(typeof error === "string" ? new Error(error) : error);
+  lumaReadyRejecter = null;
+
   for (const pending of pendingRequests.values()) {
     pending.reject(
       typeof error === "string" ? new Error(error) : error,
@@ -263,14 +333,17 @@ function handleLumaProcessFailure(error: Error | string) {
   }
 
   pendingRequests.clear();
+  const failedProcess = lumaProcess;
   lumaProcess = null;
+  failedProcess?.kill();
 
   mainWindow?.webContents.send("luma:event", {
     type: "error",
     data: {
       message:
         typeof error === "string" ? error : `Luma error: ${error.message}`,
-      category: "transient",
+      request_id: null,
+      category: "initialization_failed",
     },
   });
 
@@ -279,7 +352,10 @@ function handleLumaProcessFailure(error: Error | string) {
     console.log(
       `[luma] Respawning (attempt ${respawnAttempts}/${MAX_RESPAWN_ATTEMPTS})...`,
     );
-    setTimeout(startLuma, 1000 * respawnAttempts);
+    respawnTimer = setTimeout(() => {
+      respawnTimer = null;
+      if (!intentionalShutdown) startLuma();
+    }, 1000 * respawnAttempts);
   }
 }
 
@@ -427,8 +503,13 @@ app.whenReady().then(async () => {
   createApplicationMenu();
 
   ipcMain.handle("luma:status", () => ({
-    connected: lumaProcess !== null && !lumaProcess.killed,
+    connected: isLumaReady,
   }));
+
+  ipcMain.handle("luma:get-session", () => {
+    sendToLuma({ type: "get_session" });
+    return { ok: true };
+  });
 
   ipcMain.handle("luma:get-workspace", () => ({ path: workspaceRoot }));
   ipcMain.handle("luma:choose-workspace", async () => {
@@ -462,11 +543,11 @@ app.whenReady().then(async () => {
   });
 
   ipcMain.handle("luma:get-providers", async () => {
-    const response = (await requestLuma("get_providers")) as {
-      providers?: unknown;
-    };
-
-    return Array.isArray(response.providers) ? response.providers : [];
+    const response = await requestLuma("providers", (request_id) => ({
+      type: "get_providers", data: { request_id },
+    }));
+    if (response.type !== "providers") throw new Error("Unexpected response to get_providers.");
+    return response.data.providers;
   });
 
   ipcMain.handle(
@@ -479,32 +560,35 @@ app.whenReady().then(async () => {
         endpoint?: string;
       },
     ) => {
-      const response = (await requestLuma("get_models", {
-        provider,
-
-        api_key: options?.apiKey ?? null,
-
-        endpoint: options?.endpoint ?? null,
-      })) as {
-        models?: unknown;
-      };
-
-      return Array.isArray(response.models) ? response.models : [];
+      if (!isSupportedProvider(provider)) throw new Error("Invalid provider payload.");
+      const response = await requestLuma("models", (request_id) => ({
+        type: "get_models",
+        data: { request_id, provider, api_key: options?.apiKey ?? null, endpoint: options?.endpoint ?? null },
+      }));
+      if (response.type !== "models") throw new Error("Unexpected response to get_models.");
+      return response.data.models;
     },
   );
 
   ipcMain.handle("luma:get-setup-config", async () => {
-    const response = (await requestLuma("get_setup_config")) as {
-      config?: unknown;
-    };
-
-    return response.config ?? null;
+    const response = await requestLuma("setup_config", (request_id) => ({
+      type: "get_setup_config", data: { request_id },
+    }));
+    if (response.type !== "setup_config") throw new Error("Unexpected response to get_setup_config.");
+    return response.data.config;
   });
 
   ipcMain.handle("luma:save-setup-config", async (_event, config: unknown) => {
-    await requestLuma("save_setup_config", {
-      config,
-    });
+    if (!isAppConfigInput(config)) throw new Error("Invalid setup configuration payload.");
+    const response = await requestLuma("setup_saved", (request_id) => ({
+      type: "save_setup_config", data: { request_id, config },
+    }));
+    if (response.type !== "setup_saved") throw new Error("Unexpected response to save_setup_config.");
+
+    const changed = await requestLuma("model_changed", (request_id) => ({
+      type: "set_model", data: { request_id, model: config.model.name },
+    }));
+    if (changed.type !== "model_changed") throw new Error("Unexpected response to set_model.");
 
     return {
       ok: true,
@@ -522,15 +606,12 @@ app.whenReady().then(async () => {
         model: string;
       },
     ) => {
-      await requestLuma("test_provider", {
-        provider,
-
-        api_key: options.apiKey ?? null,
-
-        endpoint: options.endpoint ?? null,
-
-        model: options.model,
-      });
+      if (!isSupportedProvider(provider)) throw new Error("Invalid provider payload.");
+      const response = await requestLuma("provider_tested", (request_id) => ({
+        type: "test_provider",
+        data: { request_id, provider, api_key: options.apiKey ?? null, endpoint: options.endpoint ?? null, model: options.model },
+      }));
+      if (response.type !== "provider_tested") throw new Error("Unexpected response to test_provider.");
 
       return {
         ok: true,

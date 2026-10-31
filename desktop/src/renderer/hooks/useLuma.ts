@@ -39,6 +39,17 @@ export function useLuma() {
   );
 
   const activeToolIds = useRef<string[]>([]);
+  const mountedRef = useRef(false);
+
+  const requestSession = useCallback(async () => {
+    try {
+      await window.luma.getSession();
+    } catch (error) {
+      if (mountedRef.current) {
+        setError(error instanceof Error ? error.message : "Failed to load the current session.");
+      }
+    }
+  }, []);
 
   // ----------------------------------------------------------
   // Agent events
@@ -49,29 +60,24 @@ export function useLuma() {
       case "ready": {
         setConnected(true);
         setError(null);
+        void requestSession();
         break;
       }
 
       case "error": {
         setError(event.data.message);
         setThinking(false);
+        if (event.data.category === "initialization_failed") setConnected(false);
         announce(`Error: ${event.data.message}`, 'assertive');
         break;
       }
 
-      case "process_exited": {
-        setConnected(false);
-        setThinking(false);
-
-        if (event.data.code !== 0 && event.data.code !== null) {
-          setError(`Luma exited with code ${event.data.code}.`);
-        }
-
-        break;
-      }
-
       case "agent": {
-        handleAgentEvent(event.data.event.type, event.data.event.data);
+        const agentEvent = event.data.event;
+        handleAgentEvent(
+          agentEvent.type,
+          "data" in agentEvent ? agentEvent.data : undefined,
+        );
 
         break;
       }
@@ -100,7 +106,7 @@ export function useLuma() {
         break;
       }
     }
-  }, []);
+  }, [requestSession]);
 
   const handleAgentEvent = useCallback((type: string, data: unknown) => {
     switch (type) {
@@ -313,12 +319,14 @@ export function useLuma() {
 
   useEffect(() => {
     let mounted = true;
+    mountedRef.current = true;
 
     window.luma
       .getStatus()
       .then((status) => {
         if (mounted) {
           setConnected(status.connected);
+          if (status.connected) void requestSession();
         }
       })
       .catch(() => {
@@ -335,9 +343,10 @@ export function useLuma() {
 
     return () => {
       mounted = false;
+      mountedRef.current = false;
       unsubscribe();
     };
-  }, [handleEvent]);
+  }, [handleEvent, requestSession]);
 
   // ----------------------------------------------------------
   // Send prompt

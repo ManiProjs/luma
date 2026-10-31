@@ -45,6 +45,8 @@ declare global {
         connected: boolean;
       }>;
 
+      getSession(): Promise<{ ok: boolean }>;
+
       onOpenSettings(callback: () => void): () => void;
 
       onEvent(callback: (event: LumaAgentEvent) => void): () => void;

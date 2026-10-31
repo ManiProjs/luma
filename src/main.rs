@@ -49,7 +49,10 @@ use tools::{
     skills::{ListSkills, LoadSkill},
 };
 
-use crate::{model::create_model, session::SessionInfo};
+use crate::{
+    model::{DynamicModel, create_model},
+    session::SessionInfo,
+};
 
 use dialoguer::Confirm;
 
@@ -464,7 +467,7 @@ async fn run_desktop_server() -> Result<()> {
     // Configuration
     // ========================================================
 
-    let config = config::load()?;
+    let config = config::load_or_default()?;
 
     // ========================================================
     // Tools
@@ -499,9 +502,9 @@ async fn run_desktop_server() -> Result<()> {
     // Planner
     // ========================================================
 
-    let planner_model = create_model(&config.planner);
+    let planner_model = DynamicModel::new(&config.planner);
 
-    let planner = planner::Planner::new(planner_model, &tools);
+    let planner = planner::Planner::new(planner_model.clone(), &tools);
 
     // ========================================================
     // History / Workspace
@@ -561,7 +564,7 @@ async fn run_desktop_server() -> Result<()> {
     // Desktop protocol
     // ========================================================
 
-    desktop::DesktopServer::new(session, input_tx, cancel, model)
+    desktop::DesktopServer::new(session, input_tx, cancel, model, planner_model)
         .run(event_rx)
         .await?;
 

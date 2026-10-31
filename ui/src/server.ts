@@ -26,15 +26,19 @@ export function startDesktopServer() {
   const binary = getBinary();
 
   try {
-    serverProcess = spawn([binary, "desktop-server"], {
+    const child = spawn([binary, "desktop-server"], {
       stdin: "pipe",
       stdout: "pipe",
       // Keep startup failures and diagnostic output visible, and avoid
       // blocking the child on an stderr pipe nobody reads.
       stderr: "inherit",
     });
+    serverProcess = child;
+    void child.exited.then(() => {
+      if (serverProcess === child) serverProcess = null;
+    });
 
-    return serverProcess;
+    return child;
   } catch {
     throw new Error(
       [

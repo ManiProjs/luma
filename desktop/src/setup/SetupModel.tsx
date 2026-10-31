@@ -389,7 +389,7 @@ export default function SetupModel() {
                           </div>
                         </div>
 
-                        {item.context_window > 0 && (
+                        {item.context_window !== null && item.context_window > 0 && (
                           <div className="shrink-0 text-[12px] text-[var(--luma-text-muted)]">
                             {item.context_window.toLocaleString()} ctx
                           </div>
@@ -490,7 +490,7 @@ export default function SetupModel() {
                   {model.id}
                 </div>
 
-                {model.context_window > 0 && (
+                {model.context_window !== null && model.context_window > 0 && (
                   <div className="mt-2 text-[12px] text-[var(--luma-text-muted)]">
                     {model.context_window.toLocaleString()} token context
                   </div>

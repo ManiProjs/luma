@@ -1,4 +1,7 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { MakerSquirrel } from "@electron-forge/maker-squirrel";
 import { MakerZIP } from "@electron-forge/maker-zip";
 import { MakerDeb } from "@electron-forge/maker-deb";
@@ -7,9 +10,43 @@ import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 
+const repositoryRoot = path.resolve(process.cwd(), "..");
+const coreBinaryName = process.platform === "win32" ? "luma-core.exe" : "luma-core";
+const coreBinaryPath = path.join(repositoryRoot, "target", "release", coreBinaryName);
+
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    extraResource: [coreBinaryPath],
+  },
+  hooks: {
+    prePackage: async (_forgeConfig, platform, arch) => {
+      if (platform !== process.platform || arch !== process.arch) {
+        throw new Error(
+          `The bundled Luma core is built for ${process.platform}/${process.arch}; ` +
+          `package the desktop app for that same target or cross-compile the Rust core first.`,
+        );
+      }
+      execFileSync("cargo", ["build", "--release", "--no-default-features"], {
+        cwd: repositoryRoot,
+        stdio: "inherit",
+      });
+    },
+    postPackage: async (_forgeConfig, { outputPaths, platform }) => {
+      if (outputPaths.length === 0) {
+        throw new Error("Electron Forge completed without producing a packaged application.");
+      }
+      for (const outputPath of outputPaths) {
+        const resourcesPath = platform === "darwin"
+          ? path.join(outputPath, "Contents", "Resources")
+          : path.join(outputPath, "resources");
+        const bundledCore = path.join(resourcesPath, coreBinaryName);
+        if (!existsSync(bundledCore)) {
+          throw new Error(`Packaged Luma core is missing from ${resourcesPath}.`);
+        }
+      }
+      console.log(`Verified bundled Luma core in ${outputPaths.length} packaged app(s).`);
+    },
   },
   rebuildConfig: {},
   makers: [

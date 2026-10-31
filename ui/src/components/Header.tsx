@@ -1,10 +1,10 @@
 import { Box, Text } from "ink";
 
 import { glyphs, theme } from "../theme";
-import type { SessionInfo } from "../state";
+import type { UiSessionInfo } from "../state";
 
 type Props = {
-  session: SessionInfo;
+  session: UiSessionInfo;
 };
 
 export function Header({ session }: Props) {
