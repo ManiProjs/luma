@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
 
 import path from "node:path";
+import fs from "node:fs/promises";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
 import readline from "node:readline";
@@ -12,7 +13,15 @@ type PendingRequest = {
   reject: (reason?: unknown) => void;
 };
 
+type LumaRequestType =
+  | "get_providers"
+  | "get_models"
+  | "get_setup_config"
+  | "save_setup_config"
+  | "test_provider";
+
 let mainWindow: BrowserWindow | null = null;
+let workspaceRoot = path.resolve(process.env.LUMA_WORKSPACE || process.cwd());
 
 let lumaProcess: ChildProcessWithoutNullStreams | null = null;
 let respawnAttempts = 0;
@@ -31,6 +40,46 @@ function getLumaBinary(): string {
   return process.env.LUMA_BINARY || "luma";
 }
 
+function resolveWorkspacePath(relativePath: string): string {
+  if (typeof relativePath !== "string" || path.isAbsolute(relativePath)) {
+    throw new Error("Invalid workspace path.");
+  }
+  const resolved = path.resolve(workspaceRoot, relativePath);
+  if (resolved !== workspaceRoot && !resolved.startsWith(`${workspaceRoot}${path.sep}`)) {
+    throw new Error("Workspace paths cannot escape the selected folder.");
+  }
+  return resolved;
+}
+
+async function assertInsideWorkspace(filePath: string): Promise<string> {
+  const realPath = await fs.realpath(filePath);
+  if (realPath !== workspaceRoot && !realPath.startsWith(`${workspaceRoot}${path.sep}`)) {
+    throw new Error("Workspace symlinks cannot access files outside the selected folder.");
+  }
+  return realPath;
+}
+
+async function readWorkspaceTree(directory: string, relative = "", depth = 0): Promise<unknown[]> {
+  if (depth > 8) return [];
+  const ignored = new Set([".git", "node_modules", "target", ".next", "dist", "build", ".venv"]);
+  const visibleHiddenDirectories = new Set([".github", ".agents", ".vscode", ".husky", ".devcontainer"]);
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  entries.sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
+  const nodes: unknown[] = [];
+  for (const entry of entries.slice(0, 2000)) {
+    if (entry.name === ".DS_Store" || ignored.has(entry.name)) continue;
+    if (entry.isDirectory() && entry.name.startsWith(".") && !visibleHiddenDirectories.has(entry.name)) continue;
+    if (entry.isSymbolicLink()) continue;
+    const relativePath = relative ? path.posix.join(relative, entry.name) : entry.name;
+    if (entry.isDirectory()) {
+      nodes.push({ type: "folder", name: entry.name, path: relativePath, children: await readWorkspaceTree(path.join(directory, entry.name), relativePath, depth + 1) });
+    } else if (entry.isFile()) {
+      nodes.push({ type: "file", name: entry.name, path: relativePath });
+    }
+  }
+  return nodes;
+}
+
 function sendToLuma(message: unknown) {
   if (!lumaProcess || lumaProcess.killed) {
     throw new Error("Luma desktop server is not running.");
@@ -40,7 +89,7 @@ function sendToLuma(message: unknown) {
 }
 
 async function requestLuma(
-  type: string,
+  type: LumaRequestType,
   data: Record<string, unknown> = {},
 ): Promise<unknown> {
   if (!isLumaReady) {
@@ -100,21 +149,24 @@ function startLuma() {
 
   console.log(`[luma] Starting: ${binary} desktop-server`);
 
-  lumaProcess = spawn(binary, ["desktop-server"], {
-    cwd: process.cwd(),
+  const child = spawn(binary, ["desktop-server"], {
+    cwd: workspaceRoot,
     stdio: ["pipe", "pipe", "pipe"],
   });
+  lumaProcess = child;
 
-  lumaProcess.on("error", (error) => {
+  child.on("error", (error) => {
+    if (lumaProcess !== child) return;
     handleLumaProcessFailure(error);
   });
 
   const stdout = readline.createInterface({
-    input: lumaProcess.stdout,
+    input: child.stdout,
     crlfDelay: Infinity,
   });
 
   stdout.on("line", (line) => {
+    if (lumaProcess !== child) return;
     if (!line.trim()) {
       return;
     }
@@ -129,7 +181,7 @@ function startLuma() {
       return;
     }
 
-    if (event.type === "Ready") {
+    if (event.type === "ready") {
       isLumaReady = true;
       respawnAttempts = 0;
       lumaReadyResolver?.();
@@ -143,7 +195,7 @@ function startLuma() {
 
       pendingRequests.delete(requestId);
 
-      if (event.type === "Error") {
+      if (event.type === "error") {
         pending?.reject(
           new Error(event.data?.message ?? "Luma request failed."),
         );
@@ -157,11 +209,13 @@ function startLuma() {
     mainWindow?.webContents.send("luma:event", event);
   });
 
-  lumaProcess.stderr.on("data", (chunk) => {
+  child.stderr.on("data", (chunk) => {
+    if (lumaProcess !== child) return;
     console.error("[luma]", chunk.toString());
   });
 
-  lumaProcess.on("exit", (code, signal) => {
+  child.on("exit", (code, signal) => {
+    if (lumaProcess !== child) return;
     if (intentionalShutdown) {
       return;
     }
@@ -212,7 +266,7 @@ function handleLumaProcessFailure(error: Error | string) {
   lumaProcess = null;
 
   mainWindow?.webContents.send("luma:event", {
-    type: "Error",
+    type: "error",
     data: {
       message:
         typeof error === "string" ? error : `Luma error: ${error.message}`,
@@ -343,7 +397,32 @@ function createApplicationMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  const workspaceSettings = path.join(app.getPath("userData"), "workspace.json");
+  let hasSavedWorkspace = false;
+  try {
+    const saved = JSON.parse(await fs.readFile(workspaceSettings, "utf8")) as { path?: unknown };
+    if (typeof saved.path === "string") {
+      workspaceRoot = saved.path;
+      hasSavedWorkspace = true;
+    }
+  } catch {
+    // First launch or an unavailable previous workspace: use the launch directory.
+  }
+  if (!process.env.LUMA_WORKSPACE && !hasSavedWorkspace) {
+    const parent = path.resolve(process.cwd(), "..");
+    try {
+      await fs.access(path.join(parent, "Cargo.toml"));
+      if (path.basename(process.cwd()) === "desktop") workspaceRoot = parent;
+    } catch {
+      // The launch directory is not a Luma repository; keep it as the workspace.
+    }
+  }
+  try {
+    workspaceRoot = await fs.realpath(workspaceRoot);
+  } catch {
+    workspaceRoot = await fs.realpath(process.cwd());
+  }
   startLuma();
   createApplicationMenu();
 
@@ -351,8 +430,39 @@ app.whenReady().then(() => {
     connected: lumaProcess !== null && !lumaProcess.killed,
   }));
 
+  ipcMain.handle("luma:get-workspace", () => ({ path: workspaceRoot }));
+  ipcMain.handle("luma:choose-workspace", async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      title: "Choose workspace folder",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (result.canceled || !result.filePaths[0]) return { path: workspaceRoot, canceled: true };
+    workspaceRoot = await fs.realpath(result.filePaths[0]);
+    await fs.mkdir(app.getPath("userData"), { recursive: true });
+    await fs.writeFile(path.join(app.getPath("userData"), "workspace.json"), JSON.stringify({ path: workspaceRoot }), "utf8");
+    stopLuma();
+    startLuma();
+    return { path: workspaceRoot, canceled: false };
+  });
+  ipcMain.handle("luma:list-workspace-files", async () => readWorkspaceTree(workspaceRoot));
+  ipcMain.handle("luma:read-workspace-file", async (_event, relativePath: string) => {
+    const target = await assertInsideWorkspace(resolveWorkspacePath(relativePath));
+    const stat = await fs.stat(target);
+    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) throw new Error("Only files up to 2 MiB can be opened in the editor.");
+    const contents = await fs.readFile(target);
+    if (contents.includes(0)) throw new Error("Binary files cannot be opened in the text editor.");
+    return contents.toString("utf8");
+  });
+  ipcMain.handle("luma:write-workspace-file", async (_event, relativePath: string, content: string) => {
+    const target = await assertInsideWorkspace(resolveWorkspacePath(relativePath));
+    const stat = await fs.stat(target);
+    if (!stat.isFile()) throw new Error("The selected path is not a file.");
+    await fs.writeFile(target, content, "utf8");
+    return { ok: true };
+  });
+
   ipcMain.handle("luma:get-providers", async () => {
-    const response = (await requestLuma("GetProviders")) as {
+    const response = (await requestLuma("get_providers")) as {
       providers?: unknown;
     };
 
@@ -369,7 +479,7 @@ app.whenReady().then(() => {
         endpoint?: string;
       },
     ) => {
-      const response = (await requestLuma("GetModels", {
+      const response = (await requestLuma("get_models", {
         provider,
 
         api_key: options?.apiKey ?? null,
@@ -384,7 +494,7 @@ app.whenReady().then(() => {
   );
 
   ipcMain.handle("luma:get-setup-config", async () => {
-    const response = (await requestLuma("GetSetupConfig")) as {
+    const response = (await requestLuma("get_setup_config")) as {
       config?: unknown;
     };
 
@@ -392,7 +502,7 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle("luma:save-setup-config", async (_event, config: unknown) => {
-    await requestLuma("SaveSetupConfig", {
+    await requestLuma("save_setup_config", {
       config,
     });
 
@@ -412,7 +522,7 @@ app.whenReady().then(() => {
         model: string;
       },
     ) => {
-      await requestLuma("TestProvider", {
+      await requestLuma("test_provider", {
         provider,
 
         api_key: options.apiKey ?? null,
@@ -430,7 +540,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle("luma:prompt", async (_event, text: string) => {
     sendToLuma({
-      type: "Prompt",
+      type: "prompt",
 
       data: {
         text,
@@ -444,7 +554,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle("luma:confirm", async (_event, allowed: boolean) => {
     sendToLuma({
-      type: "Confirm",
+      type: "confirm",
 
       data: {
         allowed,
@@ -458,7 +568,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle("luma:cancel", async () => {
     sendToLuma({
-      type: "Cancel",
+      type: "cancel",
     });
 
     return {

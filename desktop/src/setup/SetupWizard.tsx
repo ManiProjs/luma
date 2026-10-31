@@ -1,6 +1,4 @@
-import { AnimatePresence, motion } from "motion/react";
-
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import LumaWordmark from "../components/LumaWordmark";
 
@@ -24,6 +22,19 @@ const STEP_LABELS = {
 
 export default function SetupWizard({ onComplete }: SetupWizardProps) {
   const step = useSetupStore((state) => state.step);
+  const previousStep = useRef(step);
+  const [hasNavigated, setHasNavigated] = useState(false);
+  const stepOrder = ["welcome", "provider", "model", "complete"] as const;
+  const direction = stepOrder.indexOf(step) >= stepOrder.indexOf(previousStep.current)
+    ? "forward"
+    : "backward";
+
+  useEffect(() => {
+    if (previousStep.current !== step) {
+      setHasNavigated(true);
+    }
+    previousStep.current = step;
+  }, [step]);
 
   const finished = useSetupStore((state) => state.finished);
 
@@ -51,7 +62,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   }, [finished, onComplete]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-[var(--luma-bg)] text-[var(--luma-text)]">
+    <div id="setup-wizard" className="h-screen w-screen overflow-hidden bg-[var(--luma-bg)] text-[var(--luma-text)]">
       <div className="flex h-full w-full flex-col">
         <header
           className="
@@ -62,60 +73,19 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
             pl-[82px] pr-5
           "
         >
-          <motion.div
-            initial={{
-              opacity: 0,
-              x: -8,
-            }}
-            animate={{
-              opacity: 1,
-              x: 0,
-            }}
-            transition={{
-              duration: 0.25,
-            }}
-            className="pointer-events-none"
-          >
+          <div className="pointer-events-none">
             <LumaWordmark />
-          </motion.div>
+          </div>
 
-          <motion.div
-            initial={{
-              opacity: 0,
-            }}
-            animate={{
-              opacity: 1,
-            }}
-            transition={{
-              delay: 0.15,
-            }}
-            className="ml-auto text-[12px] text-[var(--luma-text-muted)]"
-          >
+          <div className="ml-auto text-[12px] text-[var(--luma-text-muted)]">
             {finished ? "Ready" : STEP_LABELS[step]}
-          </motion.div>
+          </div>
         </header>
 
         <main className="min-h-0 flex-1">
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
+            <div
               key={step}
-              className="h-full"
-              initial={{
-                opacity: 0,
-                x: 18,
-              }}
-              animate={{
-                opacity: 1,
-                x: 0,
-              }}
-              exit={{
-                opacity: 0,
-                x: -12,
-              }}
-              transition={{
-                duration: 0.25,
-                ease: [0.22, 1, 0.36, 1],
-              }}
+              className={`${hasNavigated ? `setup-page-transition setup-page-${direction}` : ""} h-full`}
             >
               {step === "welcome" && <SetupWelcome />}
 
@@ -124,8 +94,7 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
               {step === "model" && <SetupModel />}
 
               {step === "complete" && <SetupComplete />}
-            </motion.div>
-          </AnimatePresence>
+            </div>
         </main>
       </div>
     </div>

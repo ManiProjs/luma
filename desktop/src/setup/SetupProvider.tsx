@@ -59,7 +59,7 @@ export default function SetupProvider() {
 
     return safeProviders.filter((provider) => {
       if (filter !== "All") {
-        const type = provider.provider_type.toLowerCase();
+        const type = provider.category.toLowerCase();
 
         if (type !== filter.toLowerCase()) {
           return false;
@@ -74,7 +74,7 @@ export default function SetupProvider() {
         provider.name.toLowerCase().includes(normalized) ||
         provider.id.toLowerCase().includes(normalized) ||
         provider.description.toLowerCase().includes(normalized) ||
-        provider.provider_type.toLowerCase().includes(normalized)
+        provider.category.toLowerCase().includes(normalized)
       );
     });
   }, [safeProviders, query, filter]);
@@ -315,7 +315,7 @@ export default function SetupProvider() {
 
                     <div className="mt-3 flex items-center gap-2">
                       <span className="rounded-md bg-[var(--luma-surface-raised)] px-1.5 py-0.5 text-[11px] text-[var(--luma-text-secondary)]">
-                        {provider.provider_type}
+                        {provider.category}
                       </span>
 
                       <span className="truncate rounded-md bg-[var(--luma-surface-raised)] px-1.5 py-0.5 text-[11px] text-[var(--luma-text-muted)]">

@@ -10,10 +10,14 @@ export type SetupStep = "welcome" | "provider" | "model" | "complete";
  */
 export interface SetupProvider {
   id: string;
-  provider_type: string;
+  category: "Local" | "Cloud" | "Custom";
+  protocol: "OpenAiCompatible" | "Anthropic" | "Gemini";
   name: string;
   description: string;
   endpoint: string;
+  requires_api_key: boolean;
+  supports_model_discovery: boolean;
+  api_key_env: string | null;
 }
 
 export interface SetupModel {
@@ -260,7 +264,7 @@ export const useSetupStore = create<SetupState>((set, get) => ({
         providers.find(
           (item) =>
             item.id === config.model.provider ||
-            item.provider_type === config.model.provider ||
+            item.category === config.model.provider ||
             item.name === config.model.provider,
         ) ?? null;
 

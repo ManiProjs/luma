@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFocusTrap } from "./hooks/useFocusTrap";
 
 import Editor from "@monaco-editor/react";
@@ -20,10 +20,11 @@ import { useWorkspaceStore, type Chat } from "./stores/workspaceStore";
 
 type AppMode = "agent" | "ide" | "changes";
 
-type WorkspaceNode =
+export type WorkspaceNode =
   | {
       type: "folder";
       name: string;
+      path: string;
       children: WorkspaceNode[];
     }
   | {
@@ -32,86 +33,15 @@ type WorkspaceNode =
       path: string;
     };
 
-const workspace: WorkspaceNode[] = [
-  {
-    type: "folder",
-    name: "src",
-    children: [
-      {
-        type: "folder",
-        name: "agent",
-        children: [
-          {
-            type: "file",
-            name: "mod.rs",
-            path: "src/agent/mod.rs",
-          },
-          {
-            type: "file",
-            name: "runner.rs",
-            path: "src/agent/runner.rs",
-          },
-        ],
-      },
-      {
-        type: "folder",
-        name: "workspace",
-        children: [
-          {
-            type: "file",
-            name: "mod.rs",
-            path: "src/workspace/mod.rs",
-          },
-          {
-            type: "file",
-            name: "bootstrap.rs",
-            path: "src/workspace/bootstrap.rs",
-          },
-        ],
-      },
-      {
-        type: "file",
-        name: "main.rs",
-        path: "src/main.rs",
-      },
-      {
-        type: "file",
-        name: "event.rs",
-        path: "src/event.rs",
-      },
-      {
-        type: "file",
-        name: "desktop.rs",
-        path: "src/desktop.rs",
-      },
-    ],
-  },
-  {
-    type: "folder",
-    name: "tests",
-    children: [
-      {
-        type: "file",
-        name: "agent.rs",
-        path: "tests/agent.rs",
-      },
-    ],
-  },
-  {
-    type: "file",
-    name: "Cargo.toml",
-    path: "Cargo.toml",
-  },
-  {
-    type: "file",
-    name: "GALAXY.md",
-    path: "GALAXY.md",
-  },
-  {
-    type: "file",
-    name: "README.md",
-    path: "README.md",
-  },
+const SLASH_COMMANDS = [
+  { command: "/help", description: "Show available commands" },
+  { command: "/clear", description: "Clear the conversation" },
+  { command: "/history", description: "List recent saved chats" },
+  { command: "/resume", description: "Resume an interrupted task" },
+  { command: "/plan", description: "Create a plan without implementing" },
+  { command: "/restore", description: "Restore a saved chat" },
+  { command: "/summary:add", description: "Save a chat summary" },
+  { command: "/init", description: "Initialize workspace instructions" },
 ];
 
 function ChevronIcon({ open }: { open: boolean }) {
@@ -277,7 +207,7 @@ function TopBar({
     <header
       className="
         drag-region
-        flex h-[44px] shrink-0 items-center
+        flex h-[48px] shrink-0 items-center
         border-b border-[var(--luma-border)]
         bg-[var(--luma-surface)]
       "
@@ -293,7 +223,16 @@ function TopBar({
           <LumaWordmark compact />
         </div>
 
-        <div className="no-drag pointer-events-auto ml-6 flex h-full items-center gap-0.5">
+        <div className="no-drag pointer-events-auto relative ml-6 grid h-9 w-[228px] grid-cols-3 items-center rounded-lg border border-[var(--luma-border)] bg-[var(--luma-bg)] p-1">
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute bottom-1 left-1 top-1 w-[calc((100%_-_8px)_/_3)] rounded-md bg-[var(--luma-accent-soft)] shadow-[inset_0_0_0_1px_var(--luma-border)] transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+            style={{
+              transform: `translateX(${(
+                mode === "agent" ? 0 : mode === "ide" ? 1 : 2
+              ) * 100}%)`,
+            }}
+          />
           <ModeButton
             active={mode === "agent"}
             onClick={() => setMode("agent")}
@@ -317,6 +256,8 @@ function TopBar({
           <div
             className="
               flex items-center gap-1.5
+              rounded-full border border-[var(--luma-border)]
+              bg-[var(--luma-bg)] px-2.5 py-1
               text-[12px]
               text-[var(--luma-text-secondary)]
             "
@@ -338,8 +279,8 @@ function TopBar({
             onClick={onSettings}
             aria-label="Settings"
             className="
-              flex h-7 w-7 items-center justify-center
-              rounded-md
+              flex h-8 w-8 items-center justify-center
+              rounded-lg
               text-[var(--luma-text-muted)]
               transition-colors
               hover:bg-[var(--luma-surface-hover)]
@@ -368,13 +309,12 @@ function ModeButton({
       type="button"
       onClick={onClick}
       className={`
-        h-7 rounded-md px-2.5
+        relative z-10 h-7 rounded-md px-2.5
         text-[13px] font-medium
         transition-colors
         ${
           active
             ? `
-              bg-[var(--luma-surface-hover)]
               text-[var(--luma-text)]
             `
             : `
@@ -394,12 +334,14 @@ function SettingsPanel({
   onClose,
   connected,
   setupConfig,
+  workspacePath,
   onReconfigure,
 }: {
   open: boolean;
   onClose: () => void;
   connected: boolean;
   setupConfig: SetupConfig | null;
+  workspacePath: string;
   onReconfigure: () => void;
 }) {
   const { theme, setTheme, definition } = useTheme();
@@ -563,7 +505,7 @@ function SettingsPanel({
               <SettingsRow
                 title="Workspace"
                 description="Files shown in the IDE panel"
-                value="~/projs/luma"
+                value={workspacePath || "Loading…"}
               />
 
               <SettingsRow
@@ -899,7 +841,7 @@ function ChatRow({
         <button
           type="button"
           onClick={onRename}
-          aria-label={`Rename chat ${chat.name}`}
+          aria-label={`Rename chat ${chat.title}`}
           className="px-1 text-[11px] text-[var(--luma-text-muted)] hover:text-[var(--luma-text-secondary)] focus:text-[var(--luma-text-secondary)]"
         >
           Rename
@@ -907,7 +849,7 @@ function ChatRow({
         <button
           type="button"
           onClick={onDelete}
-          aria-label={`Delete chat ${chat.name}`}
+          aria-label={`Delete chat ${chat.title}`}
           className="px-1 text-[11px] text-[var(--luma-text-muted)] hover:text-[var(--luma-danger)] focus:text-[var(--luma-danger)]"
         >
           Delete
@@ -937,6 +879,19 @@ function Sidebar({ onOpenChat }: { onOpenChat: () => void }) {
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [creatingProject, setCreatingProject] = useState(false);
   const [projectName, setProjectName] = useState("");
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        createChat();
+        onOpenChat();
+      }
+    };
+
+    window.addEventListener("keydown", handleShortcut);
+    return () => window.removeEventListener("keydown", handleShortcut);
+  }, [createChat, onOpenChat]);
 
   const projectById = useMemo(() => {
     const map = new Map<string, string>();
@@ -1030,7 +985,7 @@ function Sidebar({ onOpenChat }: { onOpenChat: () => void }) {
   return (
     <aside
       className="
-        flex w-[240px] shrink-0 flex-col
+        flex w-[256px] shrink-0 flex-col
         border-r border-[var(--luma-border)]
         bg-[var(--luma-surface)]
       "
@@ -1045,13 +1000,17 @@ function Sidebar({ onOpenChat }: { onOpenChat: () => void }) {
             onOpenChat();
           }}
           className="
-            luma-btn-primary
-            flex h-8 w-full items-center justify-center gap-1.5
-            text-[12px]
+            flex h-9 w-full items-center justify-center gap-2
+            rounded-lg border border-[var(--luma-border-strong)]
+            bg-[var(--luma-surface-raised)] px-3
+            text-[12px] font-medium text-[var(--luma-text)]
+            shadow-sm transition-colors
+            hover:border-[var(--luma-accent)] hover:bg-[var(--luma-surface-hover)]
           "
         >
-          <PlusIcon />
+          <span className="text-[var(--luma-accent)]"><PlusIcon /></span>
           New chat
+          <span className="ml-auto text-[10px] font-normal text-[var(--luma-text-muted)]">⌘ N</span>
         </button>
       </div>
 
@@ -1380,68 +1339,54 @@ function FolderRow({
   );
 }
 
-function GalaxyField() {
-  return (
-    <div className="pointer-events-none absolute inset-0 overflow-hidden opacity-40">
-      <div
-        className="
-          absolute left-[15%] top-[20%]
-          h-px w-[35%]
-          bg-gradient-to-r
-          from-transparent
-          via-[var(--luma-border-strong)]
-          to-transparent
-        "
-      />
-
-      <div
-        className="
-          absolute right-[10%] top-[48%]
-          h-px w-[28%]
-          bg-gradient-to-r
-          from-transparent
-          via-[var(--luma-border)]
-          to-transparent
-        "
-      />
-
-      <div
-        className="
-          absolute left-[40%] bottom-[24%]
-          h-px w-[25%]
-          bg-gradient-to-r
-          from-transparent
-          via-[var(--luma-border)]
-          to-transparent
-        "
-      />
-    </div>
-  );
-}
-
-function EmptyAgentState() {
+function EmptyAgentState({ onPrompt }: { onPrompt: (prompt: string) => void }) {
   return (
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-      <div className="mb-20 text-center">
+      <div className="pointer-events-auto mb-16 max-w-[560px] px-6 text-center">
         <div
           className="
-            mx-auto mb-3
-            flex h-9 w-9 items-center justify-center
-            rounded-lg
+            mx-auto mb-5
+            flex h-11 w-11 items-center justify-center
+            rounded-xl border border-[var(--luma-border-strong)]
             bg-[var(--luma-accent-soft)]
             text-[var(--luma-accent)]
+            shadow-sm
           "
         >
           <SparkIcon />
         </div>
 
-        <h1 className="text-[15px] font-medium tracking-tight">
+        <div className="luma-kicker mb-2">YOUR CODING WORKSPACE</div>
+        <h1 className="text-[25px] font-semibold tracking-[-0.04em]">
           What are we building?
         </h1>
 
-        <p className="mt-1 text-[12px] text-[var(--luma-text-muted)]">
-          Ask Luma to inspect, change, or explain your code.
+        <p className="mx-auto mt-2 max-w-[390px] text-[13px] leading-6 text-[var(--luma-text-muted)]">
+          Work through a tricky bug, understand an unfamiliar codebase, or turn an idea into working software.
         </p>
+
+        <div className="mt-7 flex flex-wrap justify-center gap-2">
+          {[
+            { label: "Understand this codebase", prompt: "Give me a high-level overview of this codebase and its architecture." },
+            { label: "Find a bug", prompt: "Inspect this project for likely bugs and explain the most important findings." },
+            { label: "Build a feature", prompt: "Help me plan and implement a feature in this project." },
+          ].map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              onClick={() => onPrompt(item.prompt)}
+              className="
+                rounded-full border border-[var(--luma-border-strong)]
+                bg-[var(--luma-surface)] px-3.5 py-2
+                text-[12px] text-[var(--luma-text-secondary)]
+                transition-colors hover:border-[var(--luma-accent)]
+                hover:bg-[var(--luma-accent-soft)] hover:text-[var(--luma-text)]
+              "
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1497,18 +1442,18 @@ function AgentMessageView({
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
-              code({ node, inline, className, children, ...props }) {
-                const match = /language-(\w+)/.exec(className || '');
-                return !inline && match ? (
-                  <pre className="my-2 overflow-x-auto rounded border border-[var(--luma-border)] bg-[var(--luma-surface)] p-2">
-                    <code className={className} {...props}>
-                      {children}
-                    </code>
-                  </pre>
-                ) : (
+              code({ className, children, ...props }) {
+                return (
                   <code className={className} {...props}>
                     {children}
                   </code>
+                );
+              },
+              pre({ children }) {
+                return (
+                  <pre className="my-2 overflow-x-auto rounded border border-[var(--luma-border)] bg-[var(--luma-surface)] p-3">
+                    {children}
+                  </pre>
                 );
               },
               p({ children }) {
@@ -1730,12 +1675,27 @@ function Composer({
   thinking,
   onSend,
   onCancel,
+  value,
+  onChange,
 }: {
   thinking: boolean;
   onSend: (text: string) => void;
   onCancel: () => void;
+  value: string;
+  onChange: (value: string) => void;
 }) {
-  const [value, setValue] = useState("");
+  const [selectedCommand, setSelectedCommand] = useState(0);
+  const matches = useMemo(() => {
+    if (!value.startsWith("/") || value.includes(" ") || value.length < 2) return [];
+    const query = value.toLowerCase();
+    return SLASH_COMMANDS.filter((item) => item.command.startsWith(query));
+  }, [value]);
+
+  useEffect(() => setSelectedCommand(0), [value]);
+
+  function chooseCommand(command: string) {
+    onChange(`${command} `);
+  }
 
   function submit() {
     const text = value.trim();
@@ -1745,28 +1705,51 @@ function Composer({
     }
 
     onSend(text);
-    setValue("");
+    onChange("");
   }
 
   return (
-    <div className="border-t border-[var(--luma-border)] p-3">
+    <div className="border-t border-[var(--luma-border)] bg-[var(--luma-surface)] px-4 pb-4 pt-3">
       <div
         className="
-          mx-auto flex max-w-[820px]
+          mx-auto flex max-w-[860px]
           items-end gap-2
-          rounded-lg
+          rounded-xl
           border border-[var(--luma-border-strong)]
           bg-[var(--luma-surface-raised)]
-          px-3 py-2
-          shadow-lg
+          px-3.5 py-3
+          shadow-sm transition-colors
+          focus-within:border-[var(--luma-accent)]
         "
       >
         <textarea
           value={value}
-          onChange={(event) => setValue(event.target.value)}
+          onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
+            if (matches.length > 0 && event.key === "ArrowDown") {
+              event.preventDefault();
+              setSelectedCommand((current) => (current + 1) % matches.length);
+              return;
+            }
+            if (matches.length > 0 && event.key === "ArrowUp") {
+              event.preventDefault();
+              setSelectedCommand((current) => (current - 1 + matches.length) % matches.length);
+              return;
+            }
+            if (matches.length > 0 && event.key === "Tab") {
+              event.preventDefault();
+              chooseCommand(matches[selectedCommand].command);
+              return;
+            }
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
+              if (matches.length > 0) {
+                const selected = matches[selectedCommand].command;
+                if (selected !== value.trim()) {
+                  chooseCommand(selected);
+                  return;
+                }
+              }
               submit();
             }
           }}
@@ -1774,7 +1757,7 @@ function Composer({
           placeholder={thinking ? "Luma is working..." : "Ask Luma anything..."}
           disabled={thinking}
           className="
-            min-h-[26px] max-h-28 flex-1
+            min-h-[28px] max-h-32 flex-1
             resize-none
             bg-transparent
             py-1
@@ -1792,7 +1775,7 @@ function Composer({
             type="button"
             onClick={onCancel}
             className="
-              flex h-7 w-7 shrink-0
+              flex h-8 w-8 shrink-0
               items-center justify-center
               rounded-md
               bg-[var(--luma-surface-hover)]
@@ -1809,7 +1792,7 @@ function Composer({
             onClick={submit}
             disabled={!value.trim()}
             className="
-              flex h-7 w-7 shrink-0
+              flex h-8 w-8 shrink-0
               items-center justify-center
               rounded-md
               bg-[var(--luma-accent)]
@@ -1824,14 +1807,34 @@ function Composer({
         )}
       </div>
 
-      <div className="mt-1.5 text-center text-[12px] text-[var(--luma-text-muted)]">
-        Enter to send · Shift+Enter for a new line
+      {matches.length > 0 && !thinking && (
+        <div className="mx-auto mb-2 w-full max-w-[860px] overflow-hidden rounded-lg border border-[var(--luma-border-strong)] bg-[var(--luma-surface-raised)] shadow-xl">
+          {matches.map((item, index) => (
+            <button
+              key={item.command}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => chooseCommand(item.command)}
+              className={`flex w-full items-center gap-3 px-3 py-2 text-left text-[12px] ${index === selectedCommand ? "bg-[var(--luma-accent-soft)] text-[var(--luma-text)]" : "text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)]"}`}
+            >
+              <code className="min-w-[104px] text-[var(--luma-accent)]">{item.command}</code>
+              <span>{item.description}</span>
+              {index === selectedCommand && <span className="ml-auto text-[10px] text-[var(--luma-text-muted)]">↵</span>}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="mx-auto mt-2 flex max-w-[860px] items-center justify-between px-1 text-[11px] text-[var(--luma-text-muted)]">
+        <span>Enter to send · Shift+Enter for a new line</span>
+        <span className="hidden sm:inline">Luma can make mistakes. Review important changes.</span>
       </div>
     </div>
   );
 }
 
 function AgentView() {
+  const [draft, setDraft] = useState("");
   const {
     messages,
     tools,
@@ -1896,8 +1899,7 @@ function AgentView() {
       <div className="min-h-0 flex-1 overflow-auto">
         {!hasContent && (
           <>
-            <GalaxyField />
-            <EmptyAgentState />
+            <EmptyAgentState onPrompt={setDraft} />
           </>
         )}
 
@@ -1927,7 +1929,13 @@ function AgentView() {
         )}
       </div>
 
-      <Composer thinking={thinking} onSend={sendPrompt} onCancel={cancel} />
+      <Composer
+        thinking={thinking}
+        onSend={sendPrompt}
+        onCancel={cancel}
+        value={draft}
+        onChange={setDraft}
+      />
     </div>
   );
 }
@@ -1979,14 +1987,20 @@ function getLanguage(file: string | null) {
 function FilesPanel({
   selectedFile,
   onFileSelect,
+  nodes,
+  workspacePath,
+  onChooseWorkspace,
 }: {
   selectedFile: string | null;
   onFileSelect: (path: string) => void;
+  nodes: WorkspaceNode[];
+  workspacePath: string;
+  onChooseWorkspace: () => void;
 }) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
 
-  const visible = filterWorkspace(workspace, query);
+  const visible = filterWorkspace(nodes, query);
 
   return (
     <aside
@@ -2002,6 +2016,15 @@ function FilesPanel({
         <span className="luma-kicker">Files</span>
 
         <div className="ml-auto flex items-center">
+          <button
+            type="button"
+            onClick={onChooseWorkspace}
+            title="Choose workspace folder"
+            aria-label="Choose workspace folder"
+            className="flex h-6 items-center rounded px-1.5 text-[10px] text-[var(--luma-text-muted)] hover:bg-[var(--luma-surface-hover)] hover:text-[var(--luma-text)]"
+          >
+            Open folder
+          </button>
           <button
             type="button"
             className="
@@ -2049,7 +2072,7 @@ function FilesPanel({
           text-[var(--luma-text-muted)]
         "
       >
-        <span className="truncate">~/projs/luma</span>
+        <span className="truncate" title={workspacePath}>{workspacePath}</span>
       </div>
     </aside>
   );
@@ -2058,11 +2081,104 @@ function FilesPanel({
 function IDEView({
   selectedFile,
   onFileSelect,
+  onWorkspaceChange,
 }: {
   selectedFile: string | null;
   onFileSelect: (path: string) => void;
+  onWorkspaceChange: (path: string) => void;
 }) {
   const { theme } = useTheme();
+  const [nodes, setNodes] = useState<WorkspaceNode[]>([]);
+  const [workspacePath, setWorkspacePath] = useState("");
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+
+  const refreshWorkspace = useCallback(async () => {
+    const [workspaceInfo, tree] = await Promise.all([
+      window.luma.getWorkspace(),
+      window.luma.listWorkspaceFiles(),
+    ]);
+    setWorkspacePath(workspaceInfo.path);
+    setNodes(tree);
+    onWorkspaceChange(workspaceInfo.path);
+  }, [onWorkspaceChange]);
+
+  useEffect(() => {
+    void refreshWorkspace().catch((error: unknown) => {
+      setFileError(error instanceof Error ? error.message : String(error));
+    });
+  }, [refreshWorkspace]);
+
+  useEffect(() => {
+    let active = true;
+    if (!selectedFile) {
+      setContent("");
+      setDirty(false);
+      setFileError(null);
+      return () => { active = false; };
+    }
+    setLoading(true);
+    setFileError(null);
+    window.luma.readWorkspaceFile(selectedFile)
+      .then((value) => {
+        if (active) {
+          setContent(value);
+          setDirty(false);
+        }
+      })
+      .catch((error: unknown) => {
+        if (active) setFileError(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [selectedFile]);
+
+  const saveFile = useCallback(async () => {
+    if (!selectedFile || !dirty || saving) return;
+    setSaving(true);
+    setFileError(null);
+    try {
+      await window.luma.writeWorkspaceFile(selectedFile, content);
+      setDirty(false);
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSaving(false);
+    }
+  }, [content, dirty, saving, selectedFile]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        void saveFile();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [saveFile]);
+
+  const chooseWorkspace = async () => {
+    if (dirty && !window.confirm("Discard unsaved changes before opening another workspace?")) return;
+    try {
+      const result = await window.luma.chooseWorkspace();
+      if (!result.canceled) {
+        onFileSelect("");
+        setWorkspacePath(result.path);
+        await refreshWorkspace();
+      }
+    } catch (error) {
+      setFileError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const selectFile = (path: string) => {
+    if (dirty && !window.confirm("Discard unsaved changes in the current file?")) return;
+    onFileSelect(path);
+  };
 
   const fileName = selectedFile
     ? (selectedFile.split("/").pop() ?? selectedFile)
@@ -2074,7 +2190,13 @@ function IDEView({
 
   return (
     <div className="flex h-full min-w-0">
-      <FilesPanel selectedFile={selectedFile} onFileSelect={onFileSelect} />
+      <FilesPanel
+        selectedFile={selectedFile}
+        onFileSelect={selectFile}
+        nodes={nodes}
+        workspacePath={workspacePath}
+        onChooseWorkspace={chooseWorkspace}
+      />
 
       <div className="flex min-w-0 flex-1 flex-col bg-[var(--luma-bg)]">
       <div
@@ -2105,20 +2227,32 @@ function IDEView({
         )}
 
         <div className="ml-auto px-3 text-[12px] text-[var(--luma-text-muted)]">
-          {language}
+          {dirty ? "Modified" : language}
         </div>
+        <button
+          type="button"
+          onClick={() => void saveFile()}
+          disabled={!dirty || saving}
+          className="mr-2 rounded-md border border-[var(--luma-border)] px-2 py-1 text-[11px] text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)] disabled:opacity-40"
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
       </div>
 
       <div className="min-h-0 flex-1">
-        <Editor
+        {fileError ? (
+          <div className="p-4"><ErrorMessage error={fileError} /></div>
+        ) : loading ? (
+          <div className="p-4 text-[12px] text-[var(--luma-text-muted)]">Loading file…</div>
+        ) : selectedFile ? <Editor
           height="100%"
           language={language}
           theme={monacoTheme}
-          defaultValue={
-            selectedFile
-              ? `// ${selectedFile}\n\n`
-              : "// Select a file from the workspace\n"
-          }
+          value={content}
+          onChange={(value) => {
+            setContent(value ?? "");
+            setDirty(true);
+          }}
           options={{
             automaticLayout: true,
 
@@ -2177,7 +2311,7 @@ function IDEView({
               indentation: true,
             },
           }}
-        />
+        /> : <div className="flex h-full items-center justify-center text-[12px] text-[var(--luma-text-muted)]">Choose a file to start editing.</div>}
       </div>
 
       <div
@@ -2200,7 +2334,7 @@ function IDEView({
 
         <span>Spaces: 2</span>
 
-        <span className="ml-auto">Luma Editor</span>
+        <span className="ml-auto">{dirty ? "Unsaved changes · ⌘S to save" : "Luma Editor"}</span>
       </div>
       </div>
     </div>
@@ -2225,6 +2359,7 @@ export default function App() {
   const [mode, setMode] = useState<AppMode>("agent");
 
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [workspacePath, setWorkspacePath] = useState("");
 
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -2235,6 +2370,9 @@ export default function App() {
   const [setupConfig, setSetupConfig] = useState<SetupConfig | null>(null);
 
   useEffect(() => {
+    window.luma.getWorkspace().then((workspaceInfo) => {
+      setWorkspacePath(workspaceInfo.path);
+    }).catch(() => undefined);
     window.luma.getSetupConfig().then((config) => {
       if (config) {
         setSetupConfig(config);
@@ -2268,11 +2406,11 @@ export default function App() {
         type?: string;
       };
 
-      if (message.type === "Ready") {
+      if (message.type === "ready") {
         setConnected(true);
       }
 
-      if (message.type === "ProcessExited") {
+      if (message.type === "process_exited") {
         setConnected(false);
       }
     });
@@ -2334,6 +2472,7 @@ export default function App() {
         onClose={() => setSettingsOpen(false)}
         connected={connected}
         setupConfig={setupConfig}
+        workspacePath={workspacePath}
         onReconfigure={() => {
           setSettingsOpen(false);
           setSetupComplete(false);
@@ -2350,6 +2489,7 @@ export default function App() {
             <IDEView
               selectedFile={selectedFile}
               onFileSelect={setSelectedFile}
+              onWorkspaceChange={setWorkspacePath}
             />
           )}
 

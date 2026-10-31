@@ -277,6 +277,7 @@ mod tests {
         };
 
         let line = encode(&message).unwrap();
+        assert!(line.contains(r#""type":"get_providers""#), "got {line}");
         let decoded: ClientMessage = decode(line.trim_end()).unwrap();
 
         assert_eq!(decoded.request_id(), Some("abc-123"));

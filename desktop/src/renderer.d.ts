@@ -3,10 +3,16 @@ import type {
   SetupModel,
   SetupProvider,
 } from "./stores/setupStore";
+import type { LumaAgentEvent } from "./preload";
 
 declare global {
   interface Window {
     luma: {
+      getWorkspace(): Promise<{ path: string }>;
+      chooseWorkspace(): Promise<{ path: string; canceled?: boolean }>;
+      listWorkspaceFiles(): Promise<import("./App").WorkspaceNode[]>;
+      readWorkspaceFile(path: string): Promise<string>;
+      writeWorkspaceFile(path: string, content: string): Promise<{ ok: boolean }>;
       getProviders(): Promise<SetupProvider[]>;
 
       getModels(
@@ -41,7 +47,7 @@ declare global {
 
       onOpenSettings(callback: () => void): () => void;
 
-      onEvent(callback: (event: unknown) => void): () => void;
+      onEvent(callback: (event: LumaAgentEvent) => void): () => void;
     };
   }
 }

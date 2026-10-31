@@ -46,20 +46,20 @@ export function useLuma() {
 
   const handleEvent = useCallback((event: LumaAgentEvent) => {
     switch (event.type) {
-      case "Ready": {
+      case "ready": {
         setConnected(true);
         setError(null);
         break;
       }
 
-      case "Error": {
+      case "error": {
         setError(event.data.message);
         setThinking(false);
         announce(`Error: ${event.data.message}`, 'assertive');
         break;
       }
 
-      case "ProcessExited": {
+      case "process_exited": {
         setConnected(false);
         setThinking(false);
 
@@ -70,9 +70,33 @@ export function useLuma() {
         break;
       }
 
-      case "Agent": {
-        handleAgentEvent(event.data.type, event.data.data);
+      case "agent": {
+        handleAgentEvent(event.data.event.type, event.data.event.data);
 
+        break;
+      }
+
+      case "session": {
+        const snapshot = event.data.session;
+        setMessages(snapshot.messages
+          .filter((message) => message.role !== "tool")
+          .map((message, index) => ({
+            id: `session-${index}-${message.role}`,
+            role: message.role === "user" ? "user" : "assistant",
+            content: message.content,
+          })));
+        setTools(snapshot.messages
+          .filter((message) => message.role === "tool")
+          .map((message, index) => ({
+            id: `session-tool-${index}`,
+            name: message.tool ?? "Tool",
+            input: message.content,
+            finished: !message.running,
+            durationMs: message.elapsed_ms ?? undefined,
+          })));
+        setThinking(snapshot.busy);
+        setConfirmation(snapshot.confirmation);
+        setError(null);
         break;
       }
     }
