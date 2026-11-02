@@ -13,6 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::chats::{ChatArchive, ChatSummary};
 use crate::config::Config;
 use crate::event::AgentEvent;
 use crate::provider::{SupportedModel, SupportedProvider};
@@ -89,6 +90,31 @@ pub enum ClientMessage {
         request_id: String,
         model: String,
     },
+
+    /// List archived conversations without loading the agent model.
+    HistoryList {
+        request_id: String,
+    },
+
+    /// Load one archived conversation by its stable id.
+    HistoryShow {
+        request_id: String,
+        id: String,
+    },
+
+    /// Save or replace the summary attached to an archived conversation.
+    SummaryAdd {
+        request_id: String,
+        id: String,
+        summary: String,
+    },
+
+    /// Start the browser dashboard within this core process.
+    StartDashboard {
+        request_id: String,
+        host: String,
+        port: u16,
+    },
 }
 
 impl ClientMessage {
@@ -109,7 +135,11 @@ impl ClientMessage {
             | Self::GetProviders { request_id }
             | Self::GetModels { request_id, .. }
             | Self::TestProvider { request_id, .. }
-            | Self::SetModel { request_id, .. } => Some(request_id),
+            | Self::SetModel { request_id, .. }
+            | Self::HistoryList { request_id }
+            | Self::HistoryShow { request_id, .. }
+            | Self::SummaryAdd { request_id, .. }
+            | Self::StartDashboard { request_id, .. } => Some(request_id),
         }
     }
 }
@@ -143,7 +173,11 @@ impl ClientMessage {
             | Self::GetProviders { .. }
             | Self::GetModels { .. }
             | Self::TestProvider { .. }
-            | Self::SetModel { .. } => None,
+            | Self::SetModel { .. }
+            | Self::HistoryList { .. }
+            | Self::HistoryShow { .. }
+            | Self::SummaryAdd { .. }
+            | Self::StartDashboard { .. } => None,
         }
     }
 }
@@ -208,9 +242,26 @@ pub enum ServerEvent {
         provider: String,
         model: String,
     },
+
+    HistoryList {
+        request_id: String,
+        chats: Vec<ChatSummary>,
+    },
+    HistoryChat {
+        request_id: String,
+        chat: ChatArchive,
+    },
+    SummarySaved {
+        request_id: String,
+        id: String,
+    },
+    DashboardStarted {
+        request_id: String,
+        address: String,
+    },
 }
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -300,6 +351,36 @@ mod tests {
 
         assert_eq!(decoded.request_id(), Some("switch-1"));
         assert!(matches!(decoded, ClientMessage::SetModel { model, .. } if model == "gpt-4.1"));
+    }
+
+    #[test]
+    fn archive_and_dashboard_requests_keep_their_ids() {
+        let requests = [
+            ClientMessage::HistoryList {
+                request_id: "history-list".into(),
+            },
+            ClientMessage::HistoryShow {
+                request_id: "history-show".into(),
+                id: "chat-1".into(),
+            },
+            ClientMessage::SummaryAdd {
+                request_id: "summary-add".into(),
+                id: "chat-1".into(),
+                summary: "summary".into(),
+            },
+            ClientMessage::StartDashboard {
+                request_id: "dashboard".into(),
+                host: "127.0.0.1".into(),
+                port: 3000,
+            },
+        ];
+
+        for request in requests {
+            let expected = request.request_id().unwrap().to_owned();
+            let encoded = encode(&request).unwrap();
+            let decoded = decode(encoded.trim_end()).unwrap();
+            assert_eq!(decoded.request_id(), Some(expected.as_str()));
+        }
     }
 
     #[test]

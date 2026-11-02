@@ -1,9 +1,6 @@
-import React from "react";
-import { render } from "ink";
-import { App } from "./App";
+import { runCli } from "./cli";
 
-render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);
+void runCli(process.argv.slice(2)).catch((error) => {
+  process.stderr.write(`luma: ${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+});

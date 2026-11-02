@@ -26,10 +26,8 @@ mod tui;
 use std::process::ExitCode;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
 
 use agent::Agent;
-use dashboard::{DashboardCommand, DashboardServer};
 use event::AgentEvent;
 use history::History;
 use tokio_util::sync::CancellationToken;
@@ -55,58 +53,6 @@ use crate::{
 };
 
 use dialoguer::Confirm;
-
-#[derive(Parser, Debug)]
-#[command(
-    name = "luma-core",
-    version,
-    about = "The Luma core: agent, tools, and the JSONL protocol server"
-)]
-struct Args {
-    #[command(subcommand)]
-    command: Option<Commands>,
-
-    #[arg(trailing_var_arg = true)]
-    prompt: Vec<String>,
-}
-
-#[derive(Subcommand, Debug)]
-enum Commands {
-    Setup,
-
-    /// Browse saved conversations.
-    History {
-        #[command(subcommand)]
-        command: Option<HistoryCommands>,
-    },
-
-    /// Manage saved conversation summaries.
-    Summary {
-        #[command(subcommand)]
-        command: SummaryCommands,
-    },
-
-    Dashboard {
-        #[arg(long, default_value = "127.0.0.1")]
-        host: String,
-
-        #[arg(long, default_value_t = 3000)]
-        port: u16,
-    },
-
-    DesktopServer,
-}
-
-#[derive(Subcommand, Debug)]
-enum HistoryCommands {
-    List,
-    Show { id: String },
-}
-
-#[derive(Subcommand, Debug)]
-enum SummaryCommands {
-    Add { id: String, summary: Vec<String> },
-}
 
 fn confirm_setup() -> Result<bool> {
     Ok(Confirm::new()
@@ -145,62 +91,26 @@ async fn run() -> Result<()> {
     // CLI
     // ========================================================
 
-    let args = Args::parse();
-
-    // Archive commands are standalone and must work without model setup.
-    match args.command.as_ref() {
-        Some(Commands::History { command }) => {
-            match command.as_ref().unwrap_or(&HistoryCommands::List) {
-                HistoryCommands::List => {
-                    let chats = chats::list()?;
-                    if chats.is_empty() {
-                        println!("No saved chats yet.");
-                    }
-                    for chat in chats {
-                        println!("{}  {}  ({} messages)", chat.id, chat.title, chat.messages);
-                        if let Some(summary) = chat.summary {
-                            println!("  Summary: {summary}");
-                        }
-                    }
-                }
-                HistoryCommands::Show { id } => {
-                    let chat = chats::load(id)?;
-                    println!(
-                        "Chat {} · {} · {}",
-                        chat.id, chat.info.model, chat.info.workspace
-                    );
-                    if let Some(summary) = chat.summary {
-                        println!("\nSummary\n{summary}");
-                    }
-                    for message in chat.messages {
-                        println!("\n[{:?}]\n{}", message.role, message.content);
-                    }
-                }
-            }
-            return Ok(());
-        }
-        Some(Commands::Summary {
-            command: SummaryCommands::Add { id, summary },
-        }) => {
-            chats::add_summary(id, summary.join(" "))?;
-            println!("Summary saved for chat {id}.");
-            return Ok(());
-        }
-        _ => {}
-    }
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
 
     // The desktop server receives JSONL over stdin. It must never run the
     // interactive setup prompt on that stream, or an unconfigured install
     // will wait forever instead of returning a protocol error.
-    if matches!(args.command, Some(Commands::DesktopServer)) {
+    if args.as_slice() == ["desktop-server"] {
         return run_desktop_server().await;
+    }
+
+    if !args.is_empty() {
+        anyhow::bail!(
+            "CLI commands are provided by the Ink app. Invoke `luma` instead of `luma-core`."
+        );
     }
 
     // ========================================================
     // Setup
     // ========================================================
 
-    if !config::exists() && !matches!(args.command, Some(Commands::Setup)) {
+    if !config::exists() {
         if confirm_setup()? {
             config::setup::run().await?;
 
@@ -211,24 +121,6 @@ async fn run() -> Result<()> {
 
         return Ok(());
     }
-
-    if let Some(Commands::Setup) = args.command {
-        config::setup::run().await?;
-
-        return Ok(());
-    }
-
-    // ========================================================
-    // Mode
-    // ========================================================
-
-    let dashboard_requested = matches!(args.command, Some(Commands::Dashboard { .. }));
-
-    let (dashboard_host, dashboard_port) = match args.command {
-        Some(Commands::Dashboard { host, port }) => (host, port),
-
-        _ => ("127.0.0.1".to_string(), 3000),
-    };
 
     // ========================================================
     // Configuration
@@ -303,77 +195,16 @@ async fn run() -> Result<()> {
 
     let cancel = CancellationToken::new();
 
-    // ========================================================
-    // Dashboard
-    // ========================================================
-
-    let (dashboard, mut dashboard_commands) = DashboardServer::new("dashboard", 256);
-
-    // --------------------------------------------------------
-    // Dashboard commands -> Agent
-    // --------------------------------------------------------
-
-    let dashboard_input_tx = input_tx.clone();
-
-    let dashboard_confirmation_tx = confirmation_tx.clone();
-
-    tokio::spawn(async move {
-        while let Some(command) = dashboard_commands.recv().await {
-            match command {
-                DashboardCommand::Chat(text) => {
-                    if dashboard_input_tx.send(text).await.is_err() {
-                        break;
-                    }
-                }
-
-                DashboardCommand::Confirm { allowed } => {
-                    let confirmation = if allowed {
-                        agent::Confirmation::Allow
-                    } else {
-                        agent::Confirmation::Deny
-                    };
-
-                    if dashboard_confirmation_tx.send(confirmation).await.is_err() {
-                        break;
-                    }
-                }
-            }
-        }
-    });
-
-    // ========================================================
-    // Agent events -> Dashboard broadcast
-    // ========================================================
-
-    let dashboard_events = dashboard.events.clone();
-
+    // The legacy Ratatui client consumes a broadcast stream. The dashboard
+    // now runs through the same JSONL desktop server as the Ink client.
+    let (ui_events, _) = tokio::sync::broadcast::channel::<AgentEvent>(256);
+    let ui_events_for_bridge = ui_events.clone();
     tokio::spawn(async move {
         let mut event_rx = event_rx;
-
         while let Some(event) = event_rx.recv().await {
-            let _ = dashboard_events.send(event);
+            let _ = ui_events_for_bridge.send(event);
         }
     });
-
-    // ========================================================
-    // Dashboard server
-    // ========================================================
-
-    if dashboard_requested {
-        let addr = format!("{}:{}", dashboard_host, dashboard_port);
-
-        let dashboard_server = dashboard.clone();
-
-        let value = addr.clone();
-
-        tokio::spawn(async move {
-            if let Err(error) = dashboard_server.run(&value).await {
-                tracing::error!("Dashboard failed: {}", error);
-            }
-        });
-
-        println!("Luma Dashboard: http://{}", addr);
-    }
 
     // ========================================================
     // Session
@@ -386,7 +217,7 @@ async fn run() -> Result<()> {
         tool_names,
     );
 
-    let mut session = session::Session::new(info, confirmation_tx, cancel.clone());
+    let session = session::Session::new(info, confirmation_tx, cancel.clone());
 
     // ========================================================
     // Agent
@@ -403,35 +234,13 @@ async fn run() -> Result<()> {
         }
     });
 
-    // --------------------------------------------------------
-    // One-shot prompt from the command line.
-    // --------------------------------------------------------
-
-    if !args.prompt.is_empty() {
-        let prompt = args.prompt.join(" ");
-
-        if let Some(forwarded) = session.submit(prompt)? {
-            input_tx.send(forwarded).await?;
-        }
-    }
-
-    // ========================================================
-    // Dashboard mode
-    // ========================================================
-
-    if dashboard_requested {
-        tokio::signal::ctrl_c().await?;
-
-        return Ok(());
-    }
-
     // ========================================================
     // TUI mode
     // ========================================================
 
     #[cfg(feature = "tui")]
     {
-        return run_tui(session, dashboard.events.subscribe(), input_tx, cancel).await;
+        return run_tui(session, ui_events.subscribe(), input_tx, cancel).await;
     }
 
     // Without the Ratatui front end there is no terminal UI to fall back to.
@@ -440,6 +249,7 @@ async fn run() -> Result<()> {
     #[cfg(not(feature = "tui"))]
     {
         drop(session);
+        drop(input_tx);
 
         anyhow::bail!(
             "this build has no terminal UI (built without the `tui` feature); \
@@ -543,7 +353,7 @@ async fn run_desktop_server() -> Result<()> {
         tool_names,
     );
 
-    let session = session::Session::new(info, confirmation_tx, cancel.clone());
+    let session = session::Session::new(info, confirmation_tx.clone(), cancel.clone());
 
     // ========================================================
     // Agent
@@ -564,9 +374,16 @@ async fn run_desktop_server() -> Result<()> {
     // Desktop protocol
     // ========================================================
 
-    desktop::DesktopServer::new(session, input_tx, cancel, model, planner_model)
-        .run(event_rx)
-        .await?;
+    desktop::DesktopServer::new(
+        session,
+        input_tx,
+        cancel,
+        model,
+        planner_model,
+        confirmation_tx,
+    )
+    .run(event_rx)
+    .await?;
 
     Ok(())
 }

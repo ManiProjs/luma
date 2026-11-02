@@ -274,13 +274,17 @@ cd luma
 cargo build --release
 ```
 
-### Run
+### Run the Ink CLI
 
 ```bash
-cargo run --release
+cargo build --release
+cd ui
+bun install
+bun run start
 ```
 
-Then create a config if you don't have one.
+The Ink client discovers `target/release/luma-core` (or `luma-core` on `PATH`).
+Run `luma setup` to configure a provider and model on first launch.
 
 ---
 
@@ -306,15 +310,23 @@ configuration directory (`chats/`). Archives include the transcript, model,
 workspace, timestamps, and an optional summary.
 
 ```bash
-luma-core history                 # list saved chats
-luma-core history show <chat-id>  # print a complete transcript
-luma-core summary add <chat-id> "What this chat accomplished"
+luma setup                                      # open the Ink provider/model setup
+luma history                                    # list saved chats
+luma history show <chat-id>                     # print a complete transcript
+luma summary add <chat-id> "What this chat accomplished"
+luma dashboard --host 127.0.0.1 --port 3000      # launch the browser dashboard
+luma ask "Inspect this project and explain its architecture" # one-shot prompt
 ```
 
-Inside the chat, `/history` lists recent archives, `/restore <chat-id>` loads
-an archive as the active conversation (including its model context), and
-`/summary:add <text>` saves a summary for the current conversation. These
-commands do not require model setup when run from the CLI.
+The public CLI is provided by the Ink app using Commander. These archive
+commands do not require model setup; they call the Rust core's JSONL desktop
+server. The core no longer defines public subcommands; Ink starts it in the
+internal `desktop-server` mode. Its no-argument legacy Ratatui entrypoint remains
+available for now.
+
+Inside the interactive chat, `/history` lists recent archives, `/restore
+<chat-id>` loads an archive as the active conversation (including its model
+context), and `/summary:add <text>` saves a summary for the current conversation.
 
 Use `/plan <task>` to request an explicit implementation plan without starting
 implementation. For normal coding tasks, Luma can also propose a plan and wait

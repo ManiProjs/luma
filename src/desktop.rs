@@ -9,11 +9,14 @@
 //! one.
 
 use anyhow::Result;
+use std::path::PathBuf;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use crate::chats;
 use crate::config;
+use crate::dashboard::{DashboardCommand, DashboardServer};
 use crate::event::AgentEvent;
 use crate::model::DynamicModel;
 use crate::protocol::{
@@ -28,6 +31,10 @@ use crate::session::{AgentCommand, Session};
 /// sized generously rather than tuned for throughput.
 const READ_BUFFER_BYTES: usize = 64 * 1024;
 
+fn dashboard_assets_dir() -> Option<PathBuf> {
+    std::env::var_os("LUMA_DASHBOARD_DIR").map(PathBuf::from)
+}
+
 // ============================================================
 // Server
 // ============================================================
@@ -38,6 +45,8 @@ pub struct DesktopServer {
     cancel: CancellationToken,
     model: DynamicModel,
     planner_model: DynamicModel,
+    confirmation_tx: mpsc::Sender<crate::agent::Confirmation>,
+    dashboard: Option<std::sync::Arc<DashboardServer>>,
 }
 
 impl DesktopServer {
@@ -47,6 +56,7 @@ impl DesktopServer {
         cancel: CancellationToken,
         model: DynamicModel,
         planner_model: DynamicModel,
+        confirmation_tx: mpsc::Sender<crate::agent::Confirmation>,
     ) -> Self {
         Self {
             session,
@@ -54,6 +64,8 @@ impl DesktopServer {
             cancel,
             model,
             planner_model,
+            confirmation_tx,
+            dashboard: None,
         }
     }
 
@@ -92,6 +104,9 @@ impl DesktopServer {
                 }
 
                 Some(event) = events.recv() => {
+                    if let Some(dashboard) = &self.dashboard {
+                        let _ = dashboard.events.send(event.clone());
+                    }
                     // The session is the core's view of the conversation, so
                     // it folds every event first. The session then decides
                     // which events are worth putting on the wire; a client
@@ -148,6 +163,12 @@ impl DesktopServer {
             ClientMessage::SetModel { request_id, model } => {
                 self.change_model(request_id, model, stdout).await
             }
+
+            ClientMessage::StartDashboard {
+                request_id,
+                host,
+                port,
+            } => self.start_dashboard(request_id, host, port, stdout).await,
 
             message if message.request_id().is_some() => serve(message, stdout).await,
 
@@ -271,6 +292,82 @@ impl DesktopServer {
             stdout,
             ServerEvent::Session {
                 session: self.session.view(),
+            },
+        )
+        .await
+    }
+
+    async fn start_dashboard<W>(
+        &mut self,
+        request_id: String,
+        host: String,
+        port: u16,
+        stdout: &mut W,
+    ) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        if self.dashboard.is_some() {
+            return report_error(
+                stdout,
+                Some(request_id),
+                "Dashboard is already running in this core process.".into(),
+                ErrorCategory::Fatal,
+            )
+            .await;
+        }
+
+        let (dashboard, mut dashboard_commands) = DashboardServer::new(dashboard_assets_dir(), 256);
+        let listener = match tokio::net::TcpListener::bind((host.as_str(), port)).await {
+            Ok(listener) => listener,
+            Err(error) => {
+                return report_error(
+                    stdout,
+                    Some(request_id),
+                    error.to_string(),
+                    ErrorCategory::Transient,
+                )
+                .await;
+            }
+        };
+        let address = listener.local_addr()?.to_string();
+
+        let input_tx = self.input_tx.clone();
+        let confirmation_tx = self.confirmation_tx.clone();
+        tokio::spawn(async move {
+            while let Some(command) = dashboard_commands.recv().await {
+                match command {
+                    DashboardCommand::Chat(text) => {
+                        if input_tx.send(text).await.is_err() {
+                            break;
+                        }
+                    }
+                    DashboardCommand::Confirm { allowed } => {
+                        let confirmation = if allowed {
+                            crate::agent::Confirmation::Allow
+                        } else {
+                            crate::agent::Confirmation::Deny
+                        };
+                        if confirmation_tx.send(confirmation).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
+        self.dashboard = Some(dashboard.clone());
+        tokio::spawn(async move {
+            if let Err(error) = dashboard.run_listener(listener).await {
+                tracing::error!(%error, "Dashboard server stopped");
+            }
+        });
+
+        write_event(
+            stdout,
+            ServerEvent::DashboardStarted {
+                request_id,
+                address,
             },
         )
         .await
@@ -460,6 +557,59 @@ where
         ClientMessage::SetModel { .. } => {
             // Handled by DesktopServer because it owns the live model handle.
         }
+
+        ClientMessage::StartDashboard { .. } => {
+            // Handled by DesktopServer because it owns the live dashboard task.
+        }
+
+        ClientMessage::HistoryList { request_id } => match chats::list() {
+            Ok(chats) => {
+                write_event(stdout, ServerEvent::HistoryList { request_id, chats }).await?;
+            }
+            Err(error) => {
+                report_error(
+                    stdout,
+                    Some(request_id),
+                    error.to_string(),
+                    ErrorCategory::Transient,
+                )
+                .await?;
+            }
+        },
+
+        ClientMessage::HistoryShow { request_id, id } => match chats::load(&id) {
+            Ok(chat) => {
+                write_event(stdout, ServerEvent::HistoryChat { request_id, chat }).await?;
+            }
+            Err(error) => {
+                report_error(
+                    stdout,
+                    Some(request_id),
+                    error.to_string(),
+                    ErrorCategory::Transient,
+                )
+                .await?;
+            }
+        },
+
+        ClientMessage::SummaryAdd {
+            request_id,
+            id,
+            summary,
+        } => match chats::add_summary(&id, summary) {
+            Ok(()) => {
+                write_event(stdout, ServerEvent::SummarySaved { request_id, id }).await?;
+            }
+            Err(error) => {
+                report_error(
+                    stdout,
+                    Some(request_id),
+                    error.to_string(),
+                    ErrorCategory::Transient,
+                )
+                .await?;
+            }
+        },
 
         other => {
             tracing::debug!(?other, "unhandled client message");

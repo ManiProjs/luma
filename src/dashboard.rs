@@ -33,7 +33,7 @@ const MAX_TREE_DEPTH: usize = 8;
 pub struct DashboardServer {
     pub events: broadcast::Sender<AgentEvent>,
     pub commands: mpsc::Sender<DashboardCommand>,
-    pub dashboard_dir: PathBuf,
+    pub dashboard_dir: Option<PathBuf>,
     pub workspace_dir: PathBuf,
 }
 
@@ -115,7 +115,7 @@ struct ApiError {
 
 impl DashboardServer {
     pub fn new(
-        dashboard_dir: impl Into<PathBuf>,
+        dashboard_dir: Option<PathBuf>,
         capacity: usize,
     ) -> (Arc<Self>, mpsc::Receiver<DashboardCommand>) {
         let (events, _) = broadcast::channel(capacity);
@@ -129,14 +129,17 @@ impl DashboardServer {
         let server = Arc::new(Self {
             events,
             commands,
-            dashboard_dir: dashboard_dir.into(),
+            dashboard_dir,
             workspace_dir,
         });
 
         (server, commands_rx)
     }
 
-    pub async fn run(self: Arc<Self>, addr: &str) -> anyhow::Result<()> {
+    pub async fn run_listener(
+        self: Arc<Self>,
+        listener: tokio::net::TcpListener,
+    ) -> anyhow::Result<()> {
         let app = Router::new()
             .route("/", get(index))
             .route("/assets/app.js", get(app_js))
@@ -153,9 +156,10 @@ impl DashboardServer {
             .route("/api/terminal", post(api_terminal))
             .with_state(self.clone());
 
-        let listener = tokio::net::TcpListener::bind(addr).await?;
-
-        tracing::info!("Luma Dashboard listening on http://{}", addr);
+        tracing::info!(
+            "Luma Dashboard listening on http://{}",
+            listener.local_addr()?
+        );
 
         axum::serve(listener, app).await?;
 
@@ -176,39 +180,57 @@ impl DashboardServer {
 // ============================================================================
 
 async fn index(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse {
-    serve_file(
-        state.dashboard_dir.join("index.html"),
+    serve_asset(
+        state.dashboard_dir.as_deref(),
+        "index.html",
+        include_bytes!("../dashboard/index.html"),
         "text/html; charset=utf-8",
     )
     .await
 }
 
 async fn app_js(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse {
-    serve_file(
-        state.dashboard_dir.join("app.js"),
+    serve_asset(
+        state.dashboard_dir.as_deref(),
+        "app.js",
+        include_bytes!("../dashboard/app.js"),
         "application/javascript; charset=utf-8",
     )
     .await
 }
 
 async fn style_css(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse {
-    serve_file(
-        state.dashboard_dir.join("style.css"),
+    serve_asset(
+        state.dashboard_dir.as_deref(),
+        "style.css",
+        include_bytes!("../dashboard/style.css"),
         "text/css; charset=utf-8",
     )
     .await
 }
 
-async fn serve_file(path: PathBuf, content_type: &'static str) -> impl IntoResponse {
-    match fs::read(path).await {
-        Ok(bytes) => ([(axum::http::header::CONTENT_TYPE, content_type)], bytes).into_response(),
+async fn serve_asset(
+    override_dir: Option<&Path>,
+    filename: &str,
+    embedded: &'static [u8],
+    content_type: &'static str,
+) -> axum::response::Response {
+    let bytes = if let Some(directory) = override_dir {
+        match fs::read(directory.join(filename)).await {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    format!("Dashboard override asset {filename} not found: {error}"),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        embedded.to_vec()
+    };
 
-        Err(error) => (
-            StatusCode::NOT_FOUND,
-            format!("Dashboard file not found: {error}"),
-        )
-            .into_response(),
-    }
+    ([(axum::http::header::CONTENT_TYPE, content_type)], bytes).into_response()
 }
 
 // ============================================================================
@@ -1131,4 +1153,48 @@ fn relative_display(root: &Path, path: &Path) -> String {
         .unwrap_or(path)
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::serve_asset;
+    use axum::{body::to_bytes, http::StatusCode};
+
+    #[tokio::test]
+    async fn serves_embedded_dashboard_assets_without_a_filesystem_directory() {
+        let assets = [
+            (
+                "index.html",
+                include_bytes!("../dashboard/index.html").as_slice(),
+                "text/html; charset=utf-8",
+            ),
+            (
+                "app.js",
+                include_bytes!("../dashboard/app.js").as_slice(),
+                "application/javascript; charset=utf-8",
+            ),
+            (
+                "style.css",
+                include_bytes!("../dashboard/style.css").as_slice(),
+                "text/css; charset=utf-8",
+            ),
+        ];
+
+        for (filename, embedded, content_type) in assets {
+            let response = serve_asset(None, filename, embedded, content_type).await;
+
+            assert_eq!(response.status(), StatusCode::OK, "{filename}");
+            assert_eq!(
+                response.headers()[axum::http::header::CONTENT_TYPE],
+                content_type,
+                "{filename}"
+            );
+            assert!(
+                !to_bytes(response.into_body(), usize::MAX)
+                    .await
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+    }
 }

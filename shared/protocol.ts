@@ -5,7 +5,7 @@
  * Both the Ink and Electron clients import these definitions directly.
  */
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export type ProviderProtocol = "OpenAiCompatible" | "Anthropic" | "Gemini";
 export type ProviderCategory = "Local" | "Cloud" | "Custom";
@@ -87,6 +87,27 @@ export type SessionView = {
   elapsed_ms: number | null;
 };
 
+export type ChatSummary = {
+  id: string;
+  created_at: number;
+  updated_at: number;
+  workspace: string;
+  title: string;
+  messages: number;
+  summary: string | null;
+};
+
+export type ArchivedMessage = SessionMessage;
+
+export type ChatArchive = {
+  id: string;
+  created_at: number;
+  updated_at: number;
+  info: SessionInfo;
+  messages: ArchivedMessage[];
+  summary: string | null;
+};
+
 export type ClientMessage =
   | { type: "prompt"; data: { text: string } }
   | { type: "confirm"; data: { allowed: boolean } }
@@ -116,7 +137,11 @@ export type ClientMessage =
         model: string;
       };
     }
-  | { type: "set_model"; data: { request_id: string; model: string } };
+  | { type: "set_model"; data: { request_id: string; model: string } }
+  | { type: "history_list"; data: { request_id: string } }
+  | { type: "history_show"; data: { request_id: string; id: string } }
+  | { type: "summary_add"; data: { request_id: string; id: string; summary: string } }
+  | { type: "start_dashboard"; data: { request_id: string; host: string; port: number } };
 
 export type AgentEvent =
   | { type: "Status"; data: { state: "idle" | "thinking" | "doing" | "talking" | "waiting" | "error" } }
@@ -145,7 +170,11 @@ export type ServerEvent =
   | { type: "providers"; data: { request_id: string; providers: SupportedProvider[] } }
   | { type: "models"; data: { request_id: string; models: SupportedModel[] } }
   | { type: "provider_tested"; data: { request_id: string } }
-  | { type: "model_changed"; data: { request_id: string; provider: string; model: string } };
+  | { type: "model_changed"; data: { request_id: string; provider: string; model: string } }
+  | { type: "history_list"; data: { request_id: string; chats: ChatSummary[] } }
+  | { type: "history_chat"; data: { request_id: string; chat: ChatArchive } }
+  | { type: "summary_saved"; data: { request_id: string; id: string } }
+  | { type: "dashboard_started"; data: { request_id: string; address: string } };
 
 export function encodeClientMessage(message: ClientMessage): string {
   return `${JSON.stringify(message)}\n`;
@@ -279,6 +308,28 @@ function isSessionView(value: unknown): value is SessionView {
   return true;
 }
 
+function isChatSummary(value: unknown): value is ChatSummary {
+  return isRecord(value) && isString(value.id) && isNumber(value.created_at)
+    && isNumber(value.updated_at) && isString(value.workspace) && isString(value.title)
+    && isNumber(value.messages) && isNullableString(value.summary);
+}
+
+function isChatArchive(value: unknown): value is ChatArchive {
+  return isRecord(value) && isString(value.id) && isNumber(value.created_at)
+    && isNumber(value.updated_at) && isRecord(value.info)
+    && isString(value.info.workspace) && isString(value.info.provider)
+    && isString(value.info.model) && Array.isArray(value.info.tools)
+    && value.info.tools.every(isString) && Array.isArray(value.messages)
+    && value.messages.every((message) => isRecord(message)
+      && ["user", "assistant", "tool", "plan", "preview", "system", "error"].includes(String(message.role))
+      && isString(message.content) && isNullableString(message.tool)
+      && typeof message.running === "boolean"
+      && (message.succeeded === null || typeof message.succeeded === "boolean")
+      && typeof message.expanded === "boolean"
+      && (message.elapsed_ms === null || isNumber(message.elapsed_ms)))
+    && isNullableString(value.summary);
+}
+
 /** Parse and validate the complete JSONL event payload before either client handles it. */
 export function parseServerEvent(line: string): ServerEvent {
   const value: unknown = JSON.parse(line);
@@ -302,6 +353,11 @@ export function parseServerEvent(line: string): ServerEvent {
       && data.models.every(isModel); break;
     case "model_changed": valid = isString(data.request_id) && isString(data.provider)
       && isString(data.model); break;
+    case "history_list": valid = isString(data.request_id) && Array.isArray(data.chats)
+      && data.chats.every(isChatSummary); break;
+    case "history_chat": valid = isString(data.request_id) && isChatArchive(data.chat); break;
+    case "summary_saved": valid = isString(data.request_id) && isString(data.id); break;
+    case "dashboard_started": valid = isString(data.request_id) && isString(data.address); break;
     default: throw new Error(`Core sent an unsupported protocol event: ${value.type}.`);
   }
   if (!valid) throw new Error(`Core sent an invalid ${value.type} event payload.`);

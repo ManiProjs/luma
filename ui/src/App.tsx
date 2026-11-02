@@ -11,8 +11,8 @@ import { Tips } from "./components/Tips";
 import { ModelPicker } from "./components/ModelPicker";
 import { theme } from "./theme";
 
-export function App() {
-  const { state, send, openModelPicker, selectProvider, chooseModel, closeModelPicker, confirm } = useSession();
+export function App({ initialSetup = false }: { initialSetup?: boolean }) {
+  const { state, send, openModelPicker, selectProvider, chooseModel, closeModelPicker, confirm } = useSession(initialSetup);
 
   const [input, setInput] = useState("");
   const hasConversation = state.messages.some(

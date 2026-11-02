@@ -11,7 +11,7 @@ import type { AppConfig, SupportedProvider } from "./protocol";
 
 const client = new LumaClient();
 
-export function useSession() {
+export function useSession(initialSetup = false) {
   const [state, setState] = useState<UiState>(initialState);
   const pendingModel = useRef<{ provider: string; model: string } | null>(null);
 
@@ -284,7 +284,10 @@ export function useSession() {
     try {
       startDesktopServer();
       void client.connect().then(() => {
-        if (mounted) client.send({ type: "get_session" });
+        if (mounted) {
+          client.send({ type: "get_session" });
+          if (initialSetup) openModelPicker();
+        }
       }).catch((error) => {
         if (mounted) addMessage("error", error instanceof Error ? error.message : String(error));
       });
