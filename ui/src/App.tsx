@@ -1,5 +1,6 @@
-import { Box, Text } from "ink";
-import { useState } from "react";
+import { Box, Text, measureElement, useInput, useStdin, useStdout } from "ink";
+import type { DOMElement } from "ink";
+import { useEffect, useRef, useState } from "react";
 
 import { useSession } from "./session";
 
@@ -16,14 +17,56 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
 
   const [input, setInput] = useState("");
   const [toolsExpanded, setToolsExpanded] = useState(false);
+  const rootElement = useRef<DOMElement>(null);
+  const toolActivityTrigger = useRef<DOMElement>(null);
+  const terminalOriginRow = useRef(0);
+  const { isRawModeSupported } = useStdin();
+  const { stdout } = useStdout();
   const lastUserIndex = state.messages.map((message) => message.role).lastIndexOf("user");
   const toolMessages = state.messages.slice(lastUserIndex + 1).filter((message) => message.role === "tool");
   const hasConversation = state.messages.some(
     (message) => message.role !== "system",
   );
 
+  useInput((input) => {
+    const cursorReport = /^\u001B\[(\d+);(\d+)R$/.exec(input);
+    if (cursorReport) {
+      const rootHeight = rootElement.current ? measureElement(rootElement.current).height : 0;
+      terminalOriginRow.current = stdout.isTTY && rootHeight >= stdout.rows
+        ? 0
+        : Math.max(0, Number(cursorReport[1]) - rootHeight - 1);
+      return;
+    }
+
+    const match = /^\u001B\[<(\d+);(\d+);(\d+)([Mm])$/.exec(input);
+    if (!match || match[4] !== "M" || Number(match[1]) !== 0) return;
+    const element = toolActivityTrigger.current;
+    if (!element) return;
+
+    let top = 0;
+    let left = 0;
+    for (let node: DOMElement | undefined = element; node; node = node.parentNode) {
+      top += node.yogaNode?.getComputedTop() ?? 0;
+      left += node.yogaNode?.getComputedLeft() ?? 0;
+    }
+    const { width, height } = measureElement(element);
+    const x = Number(match[2]) - 1;
+    const y = Number(match[3]) - 1 - terminalOriginRow.current;
+    if (x >= left && x < left + width && y >= top && y < top + height) {
+      setToolsExpanded((expanded) => !expanded);
+    }
+  });
+
+  useEffect(() => {
+    if (!isRawModeSupported || !stdout.isTTY) return;
+    stdout.write("\u001B[?1000h\u001B[?1006h\u001B[6n");
+    return () => {
+      stdout.write("\u001B[?1000l\u001B[?1006l");
+    };
+  }, [isRawModeSupported, stdout]);
+
   return (
-    <Box flexDirection="column" paddingX={1}>
+    <Box ref={rootElement} flexDirection="column" paddingX={1}>
       <Header session={state.session} />
 
       {state.modelPicker ? <ModelPicker
@@ -65,7 +108,9 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
           />
         ))}
         {toolMessages.length > 0 ? <Box flexDirection="column" marginTop={1}>
-          <Text color={theme.muted} bold>{toolsExpanded ? "⌄" : "›"} {toolMessages.length} tool{toolMessages.length === 1 ? "" : "s"} ran · Ctrl+O to toggle</Text>
+          <Box ref={toolActivityTrigger}>
+            <Text color={theme.muted} bold>{toolsExpanded ? "⌄" : "›"} {toolMessages.length} tool{toolMessages.length === 1 ? "" : "s"} ran · click or Ctrl+O</Text>
+          </Box>
           {toolsExpanded ? toolMessages.map((message) => <Message key={message.id} message={message} running={message.content.startsWith(`${state.activeTool}:`)} />) : null}
         </Box> : null}
       </Box>

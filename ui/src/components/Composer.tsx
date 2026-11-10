@@ -67,6 +67,7 @@ export function Composer({
 
   useInput((input, key) => {
     if (disabled) return;
+    if (/^\u001B\[(?:<\d+;\d+;\d+[Mm]|\d+;\d+R)$/.test(input)) return;
     if (confirmation) {
       if (input.toLowerCase() === "y" || key.return) onConfirm(true);
       else if (input.toLowerCase() === "n" || key.escape) onConfirm(false);
