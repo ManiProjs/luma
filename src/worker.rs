@@ -270,39 +270,16 @@ async fn write_worker_output<W: AsyncWriteExt + Unpin>(
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-pub enum SupervisorCommand {
-    Cancel {
-        task_id: String,
-    },
-    Confirm {
-        task_id: String,
-        approval_id: String,
-        allowed: bool,
-    },
-}
-
 /// Single-host task supervisor. Work is deliberately serialized at first:
 /// this avoids concurrent edits to the same checkout until workspace leases
 /// and isolated worktrees are implemented.
 pub struct RuntimeSupervisor {
     store: RuntimeStore,
-    commands: mpsc::Receiver<SupervisorCommand>,
-    command_tx: mpsc::Sender<SupervisorCommand>,
 }
 
 impl RuntimeSupervisor {
     pub fn new(store: RuntimeStore) -> Self {
-        let (command_tx, commands) = mpsc::channel(64);
-        Self {
-            store,
-            commands,
-            command_tx,
-        }
-    }
-
-    pub fn sender(&self) -> mpsc::Sender<SupervisorCommand> {
-        self.command_tx.clone()
+        Self { store }
     }
 
     pub async fn run(mut self, shutdown: CancellationToken) {
@@ -310,11 +287,6 @@ impl RuntimeSupervisor {
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,
-                Some(command) = self.commands.recv() => {
-                    if let Err(error) = self.handle_idle_command(command) {
-                        tracing::warn!(%error, "runtime supervisor rejected command");
-                    }
-                }
                 _ = interval.tick() => {
                     if let Err(error) = self.enqueue_due_schedules() {
                         tracing::error!(%error, "failed to enqueue due schedules");
@@ -323,12 +295,22 @@ impl RuntimeSupervisor {
                         Ok(tasks) => {
                             let mut eligible = None;
                             for task in tasks.into_iter().filter(|task| task.status == TaskStatus::Queued) {
-                                let agent = self.store.get_agent(&task.agent_id);
-                                if agent.ok().flatten().is_some_and(|agent| {
-                                    !matches!(agent.status, AgentStatus::Paused | AgentStatus::Stopped)
-                                }) {
-                                    eligible = Some(task);
-                                    break;
+                                match self.store.get_agent(&task.agent_id) {
+                                    Ok(Some(agent)) if agent.status == AgentStatus::Stopped => {
+                                        if let Err(error) = self.store.transition_task(
+                                            &task.id,
+                                            TaskStatus::Cancelled,
+                                            None,
+                                            None,
+                                        ) {
+                                            tracing::warn!(task_id = %task.id, %error, "failed to cancel queued work for a stopped teammate");
+                                        }
+                                    }
+                                    Ok(Some(agent)) if agent.status != AgentStatus::Paused => {
+                                        eligible = Some(task);
+                                        break;
+                                    }
+                                    _ => {}
                                 }
                             }
                             eligible
@@ -359,18 +341,6 @@ impl RuntimeSupervisor {
         let timestamp = super::runtime::unix_now();
         for schedule in self.store.due_schedules(timestamp)? {
             self.store.enqueue_due_schedule(&schedule.id, timestamp)?;
-        }
-        Ok(())
-    }
-
-    fn handle_idle_command(&self, command: SupervisorCommand) -> Result<()> {
-        if let SupervisorCommand::Cancel { task_id } = command {
-            if let Some(task) = self.store.get_task(&task_id)? {
-                if task.status == TaskStatus::Queued || task.status == TaskStatus::Paused {
-                    self.store
-                        .transition_task(&task_id, TaskStatus::Cancelled, None, None)?;
-                }
-            }
         }
         Ok(())
     }
@@ -432,6 +402,7 @@ impl RuntimeSupervisor {
         let mut failure: Option<String> = None;
         let mut cancelled = false;
         let mut pending_approval_id: Option<String> = None;
+        let mut command_interval = tokio::time::interval(std::time::Duration::from_millis(150));
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => {
@@ -441,26 +412,30 @@ impl RuntimeSupervisor {
                     cancelled = true;
                     break;
                 }
-                command = self.commands.recv() => {
-                    if let Some(command) = command {
-                        match command {
-                            SupervisorCommand::Cancel { task_id: target } if target == task_id => {
+                _ = command_interval.tick() => {
+                    for command in self.store.pending_gateway_commands(task_id)? {
+                        match command.command {
+                            crate::runtime::GatewayCommand::Cancel => {
                                 child_stdin.write_all(br#"{"type":"cancel"}"#).await?;
                                 child_stdin.write_all(b"\n").await?;
                                 child_stdin.flush().await?;
+                                self.store.mark_gateway_command_processed(&command.id)?;
                                 cancelled = true;
                                 pending_approval_id = None;
                             }
-                            SupervisorCommand::Confirm { task_id: target, approval_id, allowed } if target == task_id && pending_approval_id.as_deref() == Some(approval_id.as_str()) => {
+                            crate::runtime::GatewayCommand::Confirm { approval_id, allowed }
+                                if pending_approval_id.as_deref() == Some(approval_id.as_str()) =>
+                            {
                                 let payload = serde_json::json!({"type":"confirm","allowed":allowed});
                                 child_stdin.write_all(serde_json::to_string(&payload)?.as_bytes()).await?;
                                 child_stdin.write_all(b"\n").await?;
                                 child_stdin.flush().await?;
+                                self.store.mark_gateway_command_processed(&command.id)?;
                                 pending_approval_id = None;
                                 let _ = self.store.transition_task(task_id, TaskStatus::Running, None, None);
                                 let _ = self.store.set_agent_status(&agent.id, AgentStatus::Active);
                             }
-                            other => self.handle_idle_command(other)?,
+                            crate::runtime::GatewayCommand::Confirm { .. } => {}
                         }
                     }
                 }

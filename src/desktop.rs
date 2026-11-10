@@ -25,7 +25,6 @@ use crate::protocol::{
 use crate::provider::{ModelRequest, provider_for, supported_providers};
 use crate::runtime::{RuntimeStore, TaskStatus};
 use crate::session::{AgentCommand, Session};
-use crate::worker::{RuntimeSupervisor, SupervisorCommand};
 
 /// How much input to buffer ahead of the reader.
 ///
@@ -56,8 +55,6 @@ pub struct DesktopServer {
     confirmation_tx: mpsc::Sender<crate::agent::Confirmation>,
     dashboard: Option<std::sync::Arc<DashboardServer>>,
     runtime: RuntimeStore,
-    supervisor: Option<RuntimeSupervisor>,
-    supervisor_tx: mpsc::Sender<SupervisorCommand>,
 }
 
 impl DesktopServer {
@@ -69,8 +66,6 @@ impl DesktopServer {
         confirmation_tx: mpsc::Sender<crate::agent::Confirmation>,
         runtime: RuntimeStore,
     ) -> Self {
-        let supervisor = RuntimeSupervisor::new(runtime.clone());
-        let supervisor_tx = supervisor.sender();
         Self {
             session,
             input_tx,
@@ -79,16 +74,11 @@ impl DesktopServer {
             confirmation_tx,
             dashboard: None,
             runtime,
-            supervisor: Some(supervisor),
-            supervisor_tx,
         }
     }
 
     /// Run the read/write loop until stdin closes or the core is cancelled.
     pub async fn run(mut self, mut events: mpsc::Receiver<AgentEvent>) -> Result<()> {
-        if let Some(supervisor) = self.supervisor.take() {
-            tokio::spawn(supervisor.run(self.cancel.clone()));
-        }
         let stdout = tokio::io::stdout();
 
         let mut stdout = tokio::io::BufWriter::new(stdout);
@@ -108,6 +98,7 @@ impl DesktopServer {
                     "event_replay".into(),
                     "permission_profiles".into(),
                     "restart_reconciliation".into(),
+                    "persistent_gateway".into(),
                 ],
             },
         )
@@ -280,14 +271,6 @@ impl DesktopServer {
                 anyhow::bail!("resume the agent before resolving its approval");
             }
             let approval = self.runtime.resolve_approval(id, *allowed)?;
-            self.supervisor_tx
-                .send(SupervisorCommand::Confirm {
-                    task_id: approval.task_id.clone(),
-                    approval_id: approval.id.clone(),
-                    allowed: *allowed,
-                })
-                .await
-                .map_err(|_| anyhow::anyhow!("task supervisor is unavailable"))?;
             return write_event(
                 stdout,
                 ServerEvent::ApprovalResolved {
@@ -347,20 +330,6 @@ impl DesktopServer {
                         anyhow::bail!("clients may only set an agent to idle, paused, or stopped");
                     }
                     self.runtime.set_agent_status(&id, status)?;
-                    if status == crate::runtime::AgentStatus::Stopped {
-                        for task in self.runtime.list_tasks(Some(&id), 500)? {
-                            if matches!(
-                                task.status,
-                                TaskStatus::Running | TaskStatus::WaitingForApproval
-                            ) {
-                                self.supervisor_tx
-                                    .try_send(SupervisorCommand::Cancel { task_id: task.id })
-                                    .map_err(|_| {
-                                        anyhow::anyhow!("task supervisor is unavailable")
-                                    })?;
-                            }
-                        }
-                    }
                     let agent = self
                         .runtime
                         .get_agent(&id)?
@@ -403,11 +372,7 @@ impl DesktopServer {
                     if task.status == TaskStatus::Running
                         || task.status == TaskStatus::WaitingForApproval
                     {
-                        self.supervisor_tx
-                            .try_send(SupervisorCommand::Cancel {
-                                task_id: id.clone(),
-                            })
-                            .map_err(|_| anyhow::anyhow!("task supervisor is unavailable"))?;
+                        self.runtime.enqueue_gateway_cancel(&id)?;
                         ServerEvent::TaskSaved { request_id, task }
                     } else if task.status == TaskStatus::Queued || task.status == TaskStatus::Paused
                     {
@@ -534,8 +499,9 @@ impl DesktopServer {
                             "event_replay".into(),
                             "permission_profiles".into(),
                             "restart_reconciliation".into(),
+                            "persistent_gateway".into(),
                         ],
-                        storage_schema: 1,
+                        storage_schema: 2,
                     }
                 }
                 _ => anyhow::bail!("not a runtime request"),
@@ -700,12 +666,8 @@ impl DesktopServer {
             return report_error(stdout, Some(request_id), "Unauthenticated dashboard access is restricted to loopback. Remote access requires authenticated transport.".into(), ErrorCategory::Fatal).await;
         }
 
-        let (dashboard, mut dashboard_commands) = DashboardServer::new(
-            dashboard_assets_dir(),
-            256,
-            self.runtime.clone(),
-            self.supervisor_tx.clone(),
-        );
+        let (dashboard, mut dashboard_commands) =
+            DashboardServer::new(dashboard_assets_dir(), 256, self.runtime.clone());
         let listener = match tokio::net::TcpListener::bind((bind_address, port)).await {
             Ok(listener) => listener,
             Err(error) => {

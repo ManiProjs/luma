@@ -6,6 +6,7 @@ pub mod context;
 pub mod dashboard;
 pub mod desktop;
 pub mod event;
+pub mod gateway;
 pub mod history;
 pub mod logging;
 pub mod model;

@@ -18,7 +18,6 @@ use axum::{
 use crate::{
     chats,
     runtime::{AgentConfiguration, AgentKind, AgentStatus, MemoryScope, RuntimeStore, TaskStatus},
-    worker::SupervisorCommand,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -45,7 +44,6 @@ pub struct DashboardServer {
     pub dashboard_dir: Option<PathBuf>,
     pub workspace_dir: PathBuf,
     pub runtime: RuntimeStore,
-    pub supervisor: mpsc::Sender<SupervisorCommand>,
 }
 
 #[derive(Debug)]
@@ -131,7 +129,6 @@ impl DashboardServer {
         dashboard_dir: Option<PathBuf>,
         capacity: usize,
         runtime: RuntimeStore,
-        supervisor: mpsc::Sender<SupervisorCommand>,
     ) -> (Arc<Self>, mpsc::Receiver<DashboardCommand>) {
         let (events, _) = broadcast::channel(capacity);
         let (commands, commands_rx) = mpsc::channel(64);
@@ -147,7 +144,6 @@ impl DashboardServer {
             dashboard_dir,
             workspace_dir,
             runtime,
-            supervisor,
         });
 
         (server, commands_rx)
@@ -974,41 +970,6 @@ async fn api_set_agent_status(
         )
             .into_response();
     }
-    if request.status == AgentStatus::Stopped {
-        match state.runtime.list_tasks(Some(&id), 500) {
-            Ok(tasks) => {
-                for task in tasks.into_iter().filter(|task| {
-                    matches!(
-                        task.status,
-                        TaskStatus::Running | TaskStatus::WaitingForApproval
-                    )
-                }) {
-                    if let Err(error) = state
-                        .supervisor
-                        .send(SupervisorCommand::Cancel { task_id: task.id })
-                        .await
-                    {
-                        return (
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            Json(ApiError {
-                                error: error.to_string(),
-                            }),
-                        )
-                            .into_response();
-                    }
-                }
-            }
-            Err(error) => {
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ApiError {
-                        error: error.to_string(),
-                    }),
-                )
-                    .into_response();
-            }
-        }
-    }
     match state.runtime.get_agent(&id) {
         Ok(Some(agent)) => Json(agent).into_response(),
         Ok(None) => (
@@ -1099,11 +1060,7 @@ async fn api_cancel_task(
             if task.status == TaskStatus::Running
                 || task.status == TaskStatus::WaitingForApproval =>
         {
-            if let Err(error) = state
-                .supervisor
-                .send(SupervisorCommand::Cancel { task_id: id })
-                .await
-            {
+            if let Err(error) = state.runtime.enqueue_gateway_cancel(&id) {
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
                     Json(ApiError {
@@ -1285,23 +1242,6 @@ async fn api_resolve_approval(
                 .into_response();
         }
     };
-    if let Err(error) = state
-        .supervisor
-        .send(SupervisorCommand::Confirm {
-            task_id: approval.task_id.clone(),
-            approval_id: approval.id.clone(),
-            allowed: request.allowed,
-        })
-        .await
-    {
-        return (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(ApiError {
-                error: error.to_string(),
-            }),
-        )
-            .into_response();
-    }
     Json(approval).into_response()
 }
 

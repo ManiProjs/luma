@@ -6,6 +6,7 @@ mod context;
 mod dashboard;
 mod desktop;
 mod event;
+mod gateway;
 mod history;
 mod logging;
 mod model;
@@ -81,6 +82,10 @@ async fn run() -> Result<()> {
     // will wait forever instead of returning a protocol error.
     if args.as_slice() == ["desktop-server"] {
         return run_desktop_server().await;
+    }
+
+    if args.as_slice() == ["gateway"] {
+        return gateway::run().await;
     }
 
     if args.len() == 2 && args[0] == "task-worker" {
@@ -249,17 +254,10 @@ async fn run_desktop_server() -> Result<()> {
 
     let config = config::load_or_default()?;
 
-    // Persistent identities and queued work belong to the core process, not
-    // to the client connection. Reconcile unfinished work before accepting
-    // new requests.
+    // The gateway owns scheduled/background work independently from this
+    // short-lived UI protocol process.
+    gateway::ensure_running().await?;
     let runtime = runtime::RuntimeStore::open_default()?;
-    let recovered = runtime.recover_after_restart()?;
-    if !recovered.is_empty() {
-        tracing::warn!(
-            count = recovered.len(),
-            "reconciled unfinished runtime tasks after restart"
-        );
-    }
 
     // ========================================================
     // Tools

@@ -13,7 +13,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 pub const GLOBAL_AGENT_ID: &str = "agent_global";
 
 fn now() -> i64 {
@@ -301,6 +301,21 @@ pub struct RuntimeEvent {
     pub created_at: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum GatewayCommand {
+    Cancel,
+    Confirm { approval_id: String, allowed: bool },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingGatewayCommand {
+    pub id: String,
+    pub task_id: String,
+    pub command: GatewayCommand,
+    pub created_at: i64,
+}
+
 #[derive(Clone)]
 pub struct RuntimeStore {
     connection: Arc<Mutex<Connection>>,
@@ -428,6 +443,21 @@ impl RuntimeStore {
                 CREATE INDEX events_agent_sequence ON events(agent_id, sequence);
                 PRAGMA user_version = 1;
                 COMMIT;"
+            )?;
+        }
+        if version < 2 {
+            db.execute_batch(
+                "BEGIN IMMEDIATE;
+                CREATE TABLE gateway_commands (
+                    id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                    command TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    processed_at INTEGER
+                );
+                CREATE INDEX gateway_commands_pending ON gateway_commands(task_id, processed_at, created_at);
+                PRAGMA user_version = 2;
+                COMMIT;",
             )?;
         }
         Ok(())
@@ -612,12 +642,8 @@ impl RuntimeStore {
         if current_status == AgentStatus::Stopped && status != AgentStatus::Stopped {
             bail!("a stopped agent cannot be resumed; create a new agent instead");
         }
-        if matches!(
-            status,
-            AgentStatus::Paused | AgentStatus::Stopped | AgentStatus::Idle
-        ) && active_tasks > 0
-        {
-            bail!("cancel or finish active tasks before pausing, stopping, or idling this agent");
+        if status == AgentStatus::Idle && active_tasks > 0 {
+            bail!("cancel or finish active tasks before setting this agent to idle");
         }
         if matches!(status, AgentStatus::Active | AgentStatus::Waiting) && active_tasks == 0 {
             bail!("an agent can only become active or waiting while it owns an active task");
@@ -626,6 +652,25 @@ impl RuntimeStore {
             && matches!(status, AgentStatus::Active | AgentStatus::Waiting)
         {
             bail!("resume the agent before starting work");
+        }
+        if matches!(status, AgentStatus::Paused | AgentStatus::Stopped) && active_tasks > 0 {
+            let task_ids = {
+                let mut statement = transaction.prepare(
+                    "SELECT id FROM tasks WHERE agent_id=?1 AND json_extract(status, '$') IN ('running','waiting_for_approval')",
+                )?;
+                let rows = statement.query_map([id], |row| row.get::<_, String>(0))?;
+                rows.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let command = serde_json::to_string(&GatewayCommand::Cancel)?;
+            for task_id in task_ids {
+                transaction.execute(
+                    "INSERT INTO gateway_commands (id,task_id,command,created_at,processed_at) VALUES (?1,?2,?3,?4,NULL)",
+                    params![new_id("gateway_cmd"), task_id, command, timestamp],
+                )?;
+            }
+        }
+        if status == AgentStatus::Stopped {
+            transaction.execute("UPDATE schedules SET enabled=0 WHERE agent_id=?1", [id])?;
         }
         let changed = transaction.execute(
             "UPDATE agents SET status=?2,updated_at=?3 WHERE id=?1",
@@ -774,6 +819,8 @@ impl RuntimeStore {
                 | TaskStatus::Interrupted
         ) {
             self.expire_pending_approvals(id)?;
+            let db = self.db()?;
+            db.execute("DELETE FROM gateway_commands WHERE task_id=?1", [id])?;
         }
         Ok(task)
     }
@@ -921,6 +968,14 @@ impl RuntimeStore {
             bail!("approval not found or already resolved: {id}");
         }
         let record = transaction.query_row("SELECT id,agent_id,task_id,tool,arguments,status,created_at,resolved_at FROM approvals WHERE id=?1", [id], |row| Ok(ApprovalRecord { id: row.get(0)?, agent_id: row.get(1)?, task_id: row.get(2)?, tool: row.get(3)?, arguments: row.get(4)?, status: row.get(5)?, created_at: row.get(6)?, resolved_at: row.get(7)? }))?;
+        let command = GatewayCommand::Confirm {
+            approval_id: record.id.clone(),
+            allowed,
+        };
+        transaction.execute(
+            "INSERT INTO gateway_commands (id,task_id,command,created_at,processed_at) VALUES (?1,?2,?3,?4,NULL)",
+            params![new_id("gateway_cmd"), record.task_id, serde_json::to_string(&command)?, timestamp],
+        )?;
         transaction.commit()?;
         drop(db);
         self.append_event(
@@ -930,6 +985,52 @@ impl RuntimeStore {
             serde_json::to_value(&record)?,
         )?;
         Ok(record)
+    }
+
+    pub fn enqueue_gateway_cancel(&self, task_id: &str) -> Result<()> {
+        let task = self
+            .get_task(task_id)?
+            .ok_or_else(|| anyhow!("task not found: {task_id}"))?;
+        if !matches!(
+            task.status,
+            TaskStatus::Running | TaskStatus::WaitingForApproval
+        ) {
+            bail!("only active tasks can receive a gateway cancellation");
+        }
+        let command = GatewayCommand::Cancel;
+        let db = self.db()?;
+        db.execute(
+            "INSERT INTO gateway_commands (id,task_id,command,created_at,processed_at) VALUES (?1,?2,?3,?4,NULL)",
+            params![new_id("gateway_cmd"), task_id, serde_json::to_string(&command)?, now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn pending_gateway_commands(&self, task_id: &str) -> Result<Vec<PendingGatewayCommand>> {
+        let db = self.db()?;
+        let mut statement = db.prepare(
+            "SELECT id,task_id,command,created_at FROM gateway_commands WHERE task_id=?1 AND processed_at IS NULL ORDER BY created_at ASC",
+        )?;
+        let rows = statement.query_map([task_id], |row| {
+            let command: String = row.get(2)?;
+            Ok(PendingGatewayCommand {
+                id: row.get(0)?,
+                task_id: row.get(1)?,
+                command: serde_json::from_str(&command).map_err(to_sql_error)?,
+                created_at: row.get(3)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn mark_gateway_command_processed(&self, id: &str) -> Result<()> {
+        let db = self.db()?;
+        db.execute(
+            "UPDATE gateway_commands SET processed_at=?2 WHERE id=?1 AND processed_at IS NULL",
+            params![id, now()],
+        )?;
+        Ok(())
     }
 
     /// Mark approvals belonging to a worker that disappeared during restart.
@@ -1385,6 +1486,51 @@ mod tests {
     }
 
     #[test]
+    fn schema_v1_is_upgraded_with_the_gateway_command_queue() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("runtime.sqlite3");
+        let legacy = Connection::open(&path).unwrap();
+        legacy
+            .execute_batch(
+                "CREATE TABLE agents (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
+                    kind TEXT NOT NULL, status TEXT NOT NULL, configuration TEXT NOT NULL,
+                    configuration_revision INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE tasks (
+                    id TEXT PRIMARY KEY, agent_id TEXT NOT NULL REFERENCES agents(id),
+                    title TEXT NOT NULL, request TEXT NOT NULL, status TEXT NOT NULL, workspace TEXT,
+                    checkpoint TEXT, error TEXT, attempt INTEGER NOT NULL DEFAULT 0,
+                    recover_on_restart INTEGER NOT NULL DEFAULT 0, schedule_id TEXT,
+                    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE events (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT, event_id TEXT NOT NULL UNIQUE,
+                    agent_id TEXT, task_id TEXT, event_type TEXT NOT NULL,
+                    payload TEXT NOT NULL, created_at INTEGER NOT NULL
+                );
+                PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        drop(legacy);
+
+        let store = RuntimeStore::open(&path).unwrap();
+        let db = store.db().unwrap();
+        let version: i64 = db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        let table_exists: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='gateway_commands')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, 2);
+        assert!(table_exists);
+    }
+
+    #[test]
     fn global_teammate_is_seeded_once_and_cannot_be_deleted() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("runtime.sqlite3");
@@ -1692,11 +1838,59 @@ mod tests {
             .unwrap();
         let resolved = store.resolve_approval(&approval.id, true).unwrap();
         assert_eq!(resolved.status, "approved");
+        let commands = store.pending_gateway_commands(&task.id).unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command,
+            GatewayCommand::Confirm {
+                approval_id: approval.id.clone(),
+                allowed: true,
+            }
+        );
+        store
+            .mark_gateway_command_processed(&commands[0].id)
+            .unwrap();
+        assert!(store.pending_gateway_commands(&task.id).unwrap().is_empty());
         assert!(store.resolve_approval(&approval.id, false).is_err());
     }
 
     #[test]
-    fn agent_cannot_pause_or_stop_while_a_task_is_active() {
+    fn gateway_cancel_commands_survive_store_reopen_until_acknowledged() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("runtime.sqlite3");
+        let (agent_id, task_id) = {
+            let store = RuntimeStore::open(&path).unwrap();
+            let agent = store
+                .create_agent(
+                    "Persistent worker",
+                    None,
+                    AgentKind::Teammates,
+                    AgentConfiguration::default(),
+                )
+                .unwrap();
+            let task = store
+                .create_task(&agent.id, "Run until cancelled", None, None, false, None)
+                .unwrap();
+            store
+                .transition_task(&task.id, TaskStatus::Running, None, None)
+                .unwrap();
+            store.enqueue_gateway_cancel(&task.id).unwrap();
+            (agent.id, task.id)
+        };
+
+        let store = RuntimeStore::open(&path).unwrap();
+        assert!(store.get_agent(&agent_id).unwrap().is_some());
+        let commands = store.pending_gateway_commands(&task_id).unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].command, GatewayCommand::Cancel);
+        store
+            .mark_gateway_command_processed(&commands[0].id)
+            .unwrap();
+        assert!(store.pending_gateway_commands(&task_id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn pausing_or_stopping_an_active_agent_persists_gateway_cancellation() {
         let store = RuntimeStore::in_memory();
         let agent = store
             .create_agent(
@@ -1710,24 +1904,19 @@ mod tests {
             .create_task(&agent.id, "Run", None, None, false, None)
             .unwrap();
         store
-            .transition_task(&task.id, TaskStatus::Running, None, None)
+            .create_schedule(&agent.id, "Daily", "Run the daily task", Some(1), None)
             .unwrap();
-        assert!(
-            store
-                .set_agent_status(&agent.id, AgentStatus::Paused)
-                .is_err()
-        );
-        assert!(
-            store
-                .set_agent_status(&agent.id, AgentStatus::Stopped)
-                .is_err()
-        );
-
         store
-            .transition_task(&task.id, TaskStatus::Completed, None, None)
+            .transition_task(&task.id, TaskStatus::Running, None, None)
             .unwrap();
         store
             .set_agent_status(&agent.id, AgentStatus::Paused)
+            .unwrap();
+        let commands = store.pending_gateway_commands(&task.id).unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(commands[0].command, GatewayCommand::Cancel);
+        store
+            .mark_gateway_command_processed(&commands[0].id)
             .unwrap();
         assert!(
             store
@@ -1735,11 +1924,27 @@ mod tests {
                 .is_err()
         );
         store
-            .set_agent_status(&agent.id, AgentStatus::Idle)
-            .unwrap();
-        store
             .set_agent_status(&agent.id, AgentStatus::Stopped)
             .unwrap();
+        assert!(
+            store
+                .list_schedules(Some(&agent.id))
+                .unwrap()
+                .iter()
+                .all(|schedule| !schedule.enabled)
+        );
+        assert_eq!(
+            store.pending_gateway_commands(&task.id).unwrap()[0].command,
+            GatewayCommand::Cancel
+        );
+
+        store
+            .transition_task(&task.id, TaskStatus::Completed, None, None)
+            .unwrap();
+        assert_eq!(
+            store.get_agent(&agent.id).unwrap().unwrap().status,
+            AgentStatus::Stopped
+        );
         assert!(
             store
                 .set_agent_status(&agent.id, AgentStatus::Idle)

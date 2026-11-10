@@ -346,6 +346,18 @@ core's JSONL desktop server internally. The no-argument interactive Ink TUI
 remains the default experience, and the legacy Ratatui TUI entrypoint is still
 available in the Rust core for now.
 
+### Persistent Teammates gateway
+
+The first Luma core connection starts a local background gateway. It owns the
+durable task supervisor and schedule runner independently of the Desktop,
+Dashboard, and Ink processes, so queued or scheduled teammate work continues
+after those interfaces close. Task state, approvals, and gateway commands are
+stored in the shared SQLite runtime database; approval and cancellation
+commands are acknowledged by the gateway rather than held only in a UI-owned
+channel. The gateway starts again automatically the next time Luma is opened
+after a system restart. It binds only to a private local IPC endpoint and does
+not expose a network listener on Unix systems.
+
 Inside the interactive chat, `/history` lists recent archives, `/restore
 <chat-id>` loads an archive as the active conversation (including its model
 context), and `/summary:add <text>` saves a summary for the current conversation.
