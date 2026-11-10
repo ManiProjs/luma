@@ -10,7 +10,6 @@ import { Message } from "./components/Message";
 import { Composer } from "./components/Composer";
 import { Header } from "./components/Header";
 import { Mascot } from "./components/Mascot";
-import { Tips } from "./components/Tips";
 import { ModelPicker } from "./components/ModelPicker";
 import { theme } from "./theme";
 import { formatChatPrompt, type ChatAttachment } from "../../shared/attachments";
@@ -134,7 +133,6 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
                 <Text><Text color={theme.brand}>›</Text> Build a feature or refactor a module</Text>
                 <Text><Text color={theme.brand}>›</Text> Run checks and investigate a failure</Text>
               </Box>
-              <Tips />
             </Box>
           </Box>
         ) : null}

@@ -3,26 +3,27 @@ import type { TextProps } from "ink";
 type Color = NonNullable<TextProps["color"]>;
 
 export const theme = {
-  // Match desktop Luma: warm neutrals, with color reserved for state.
-  brand: "#C49A5A",
-  user: "#B8B5AD",
-  tool: "#A7A39B",
-  plan: "#C49A5A",
+  // Quiet graphite and brass; color is reserved for identity and state.
+  brand: "#B89562",
+  user: "#C4BFB3",
+  tool: "#A29D91",
+  plan: "#B89562",
 
-  muted: "#89867F",
-  chrome: "#625F59",
+  muted: "#898579",
+  chrome: "#5F5D54",
+  codeBackground: "#1E201B",
 
   // Normal content stays terminal-native
   assistant: undefined,
 
   // State
-  success: "#4ADE80",
-  error: "#F87171",
-  warning: "#FBBF24",
+  success: "#83A88D",
+  error: "#CB8279",
+  warning: "#C6A36B",
 
   // Compatibility
-  danger: "#F87171",
-  accent: "#C49A5A",
+  danger: "#CB8279",
+  accent: "#B89562",
 } satisfies Record<string, Color | undefined>;
 
 export const glyphs = {

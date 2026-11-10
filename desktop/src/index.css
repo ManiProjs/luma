@@ -1043,3 +1043,73 @@ select:focus-visible {
   .luma-create-footer { align-items: flex-start; gap: 12px; flex-direction: column; }
   .luma-create-footer > div { width: 100%; justify-content: flex-end; }
 }
+
+/* Luma visual direction: a quiet developer workbench, not a stack of cards. */
+:root {
+  --luma-bg: #111210;
+  --luma-surface: #181916;
+  --luma-surface-raised: #1e201b;
+  --luma-surface-hover: #272923;
+  --luma-border: rgba(235, 231, 220, .075);
+  --luma-border-strong: rgba(235, 231, 220, .14);
+  --luma-text: #eeeae1;
+  --luma-text-secondary: #c4bfb3;
+  --luma-text-muted: #898579;
+  --luma-accent: #b89562;
+  --luma-accent-soft: rgba(184, 149, 98, .10);
+  --luma-success: #83a88d;
+  --luma-danger: #cb8279;
+  --luma-warning: #c6a36b;
+}
+
+body { font-size: 13px; line-height: 1.58; letter-spacing: -.006em; }
+.luma-sidebar { width: 252px; min-width: 252px; background: var(--luma-surface); }
+.luma-sidebar-glass { box-shadow: inset -1px 0 var(--luma-border); }
+.luma-topbar { height: 50px; }
+.luma-mode-picker { margin-left: 20px; border-radius: 5px; }
+.luma-mode-picker > button { height: 27px; font-size: 11px; }
+.luma-mode-picker > span { border-radius: 3px; background: var(--luma-surface-raised); }
+.luma-workspace-picker { border-radius: 5px; }
+.luma-workspace-picker > span { border-radius: 3px; background: var(--luma-surface-raised); }
+.luma-sidebar > div:first-child > button { border-radius: 5px; background: transparent; }
+.luma-sidebar .luma-workspace-nav,
+.luma-sidebar .luma-teammate-nav-item { border-radius: 3px; }
+.luma-sidebar .luma-workspace-nav:hover:not([data-active="true"]),
+.luma-sidebar .luma-teammate-nav-item:hover:not(.is-selected) { transform: none; }
+.luma-workspace-nav[data-active="true"] { background: var(--luma-accent-soft); }
+.luma-workspace-nav[data-active="true"]::before { width: 2px; }
+.luma-kicker { font-size: 9px; font-weight: 650; letter-spacing: .13em; }
+.luma-agent-empty { max-width: 680px; }
+.luma-agent-empty .luma-agent-empty-mark { display: none; }
+.luma-agent-empty h1 { max-width: 560px; font-size: clamp(31px, 3.2vw, 40px); font-weight: 520; letter-spacing: -.055em; }
+.luma-agent-empty p { max-width: 470px; margin-top: 14px; font-size: 13px; line-height: 1.75; }
+.luma-agent-empty .luma-agent-prompts { margin-top: 24px; padding-top: 10px; border-top-color: var(--luma-border); }
+.luma-agent-empty .luma-agent-prompts button { border-radius: 3px; padding: 7px 9px; font-size: 11px; }
+.luma-composer-shell { border-top: 1px solid var(--luma-border); background: var(--luma-surface); padding-top: 12px; }
+.luma-composer { border-radius: 5px; border-color: var(--luma-border-strong); background: var(--luma-bg); box-shadow: none; padding: 9px 11px; }
+.luma-composer:focus-within { border-color: color-mix(in srgb, var(--luma-accent) 55%, var(--luma-border-strong)); }
+.luma-message-row { gap: 12px; }
+.luma-message-row.is-user::before { width: 24px; flex-basis: 24px; color: var(--luma-accent); }
+.luma-message-mark { color: var(--luma-accent); }
+.luma-message-content { max-width: min(780px, calc(100% - 36px)); font-size: 13px; line-height: 1.72; }
+.luma-tool-activity-row { border-bottom-color: var(--luma-border); border-radius: 0; padding-inline: 4px; }
+.luma-thinking-mark { color: var(--luma-text-muted); }
+.luma-teammates-content { background: var(--luma-bg); }
+.luma-teammate-nav-item { border-radius: 3px; }
+.luma-teammate-nav-item.is-selected { border-left: 2px solid var(--luma-accent); padding-left: 6px; background: transparent; }
+.luma-teammate-header { min-height: 48px; }
+.luma-teammate-header button.is-active { border-bottom-width: 1px; }
+.luma-teammate-user-message { border-left: 1px solid var(--luma-border-strong); border-radius: 0; padding-left: 12px; }
+.luma-teammate-composer { border-radius: 5px; background: var(--luma-surface); }
+.luma-teammates-content section.rounded-lg.border { border-radius: 0; }
+.luma-create-dialog { border-radius: 7px; box-shadow: 0 16px 44px rgba(0, 0, 0, .24); }
+.luma-create-field .luma-input { border-radius: 4px; }
+.luma-create-context { border-radius: 4px; }
+.luma-topbar button:active,
+.luma-sidebar button:active,
+.luma-composer button:active { transform: none; }
+
+@media (max-width: 760px) {
+  .luma-sidebar { width: 220px; min-width: 220px; }
+  .luma-agent-empty h1 { font-size: 30px; }
+}

@@ -34,7 +34,7 @@ function DashboardShell({ teammatesOpen, onSelectCode, onOpenTeammates }: { team
             <span className="brand-mark" aria-hidden="true" />
             <div>
               <div className="brand-name">Luma</div>
-              <div className="brand-subtitle">Development workspace</div>
+              <div className="brand-subtitle">Code workspace</div>
             </div>
           </div>
 
@@ -115,7 +115,7 @@ function DashboardShell({ teammatesOpen, onSelectCode, onOpenTeammates }: { team
             <aside className="agent-panel">
               <div className="agent-header">
                 <div>
-                  <div className="agent-title"><span id="agent-status-dot" className="agent-dot" />Luma Agent</div>
+                  <div className="agent-title"><span id="agent-status-dot" className="agent-dot" />Code</div>
                   <div id="agent-status-detail" className="agent-detail">Ready</div>
                 </div>
                 <div className="agent-header-actions">

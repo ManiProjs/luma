@@ -814,3 +814,107 @@ select:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
+
+/* A restrained, text-first workbench shared with the native desktop client. */
+:root {
+  --luma-bg: #111210;
+  --luma-surface: #181916;
+  --luma-surface-raised: #1e201b;
+  --luma-surface-hover: #272923;
+  --luma-border: rgba(235, 231, 220, .075);
+  --luma-border-strong: rgba(235, 231, 220, .14);
+  --luma-text: #eeeae1;
+  --luma-text-secondary: #c4bfb3;
+  --luma-text-muted: #898579;
+  --luma-accent: #b89562;
+  --luma-accent-soft: rgba(184, 149, 98, .10);
+  --luma-on-accent: #111210;
+  --luma-success: #83a88d;
+  --luma-danger: #cb8279;
+  --luma-warning: #c6a36b;
+}
+
+body { font-size: 13px; line-height: 1.58; letter-spacing: -.006em; }
+.sidebar { background: var(--luma-surface); }
+.brand { padding: 18px 17px 15px; }
+.brand-mark { border-radius: 5px; background: var(--luma-surface-raised); }
+.brand-name { font-size: 17px; font-weight: 650; letter-spacing: -.045em; }
+.brand-subtitle { font-size: 10px; }
+.workspace { height: 35px; border-radius: 4px; }
+.section-label { padding-top: 14px; font-size: 9px; letter-spacing: .13em; }
+.history-row, .tree-row, .sidebar-action { border-radius: 3px; }
+.history-row.active, .tree-row.active, .tree-row[aria-selected="true"] { box-shadow: inset 2px 0 var(--luma-accent); background: transparent; }
+.topbar { height: 50px; flex-basis: 50px; background: var(--luma-bg); }
+.mode-picker { height: 32px; border-radius: 5px; }
+.mode-picker-indicator { border-radius: 3px; background: var(--luma-surface-raised); }
+.mode-picker-button { height: 24px; font-size: 11px; }
+.icon-button, .ide-toggle { border-radius: 4px; }
+.ide-toggle.open { border-color: var(--luma-border-strong); background: var(--luma-surface-hover); color: var(--luma-text); }
+.agent-header { min-height: 54px; padding-inline: 22px; }
+.agent-title { font-size: 12px; font-weight: 600; }
+.agent-dot.running { box-shadow: none; }
+.model-name { border-radius: 3px; }
+.messages { padding: 26px clamp(24px, 6vw, 84px); }
+.chat-empty { max-width: 680px; margin: clamp(80px, 15vh, 170px) auto 0; }
+.chat-empty h2 { max-width: 560px; font-size: clamp(29px, 3.1vw, 39px); font-weight: 520; letter-spacing: -.055em; }
+.chat-empty p { max-width: 470px; margin: 14px 0 24px; font-size: 13px; line-height: 1.75; }
+.suggestions { justify-content: flex-start; gap: 0; border-top: 1px solid var(--luma-border); padding-top: 9px; }
+.suggestions button { border: 0; border-radius: 3px; padding: 7px 9px; background: transparent; font-size: 11px; }
+.suggestions button:hover { border-color: transparent; background: var(--luma-surface-hover); }
+.message { max-width: 900px; margin-bottom: 24px; }
+.message-header { margin-bottom: 5px; font-size: 9px; letter-spacing: .12em; }
+.message-content { font-size: 13px; line-height: 1.72; }
+.message.user { padding: 2px 0 2px 12px; border: 0; border-left: 1px solid var(--luma-border-strong); border-radius: 0; background: transparent; }
+.message.user .message-header { color: var(--luma-accent); }
+.message.system { border-left-color: var(--luma-border-strong); }
+.tool-message { border-radius: 3px; background: transparent; }
+.plan-panel, .confirmation { border-radius: 4px; background: var(--luma-surface); }
+.composer { min-height: 70px; gap: 8px; padding: 12px clamp(20px, 5vw, 64px) 14px; border-top: 1px solid var(--luma-border); background: var(--luma-surface); }
+#chat-input { min-height: 42px; border-radius: 5px; background: var(--luma-bg); }
+#chat-input:focus { box-shadow: none; border-color: var(--luma-accent); }
+#send-button, #cancel-button { border-radius: 5px; }
+#send-button { background: var(--luma-accent); color: var(--luma-on-accent); }
+#attach-button, .chat-attach-button { border-radius: 4px; }
+.terminal-panel { border-top-color: var(--luma-border-strong); background: var(--luma-surface); }
+.terminal-header { height: 32px; flex-basis: 32px; }
+.terminal-title { font-size: 9px; letter-spacing: .12em; }
+.terminal-output { font-size: 11px; }
+.terminal-input { height: 32px; flex-basis: 32px; }
+.teammates-page { background: var(--luma-bg); }
+.teammates-dialog-header { min-height: 76px; padding: 14px 26px; border-bottom: 1px solid var(--luma-border); }
+.teammates-dialog-header h2 { font-size: 23px; font-weight: 620; letter-spacing: -.05em; }
+.teammates-dialog-header p { font-size: 11px; }
+.teammates-body { grid-template-columns: 248px minmax(0, 1fr); }
+.teammates-list { padding: 17px 12px; background: var(--luma-surface); }
+.teammates-list-heading { margin-bottom: 11px; }
+.teammates-section-title { font-size: 9px; letter-spacing: .13em; }
+.teammate-row { border-radius: 3px; padding: 8px; }
+.teammate-row-wrap.selected .teammate-row { background: var(--luma-accent-soft); }
+.teammates-detail { padding: 22px clamp(20px, 4vw, 48px) 34px; }
+.teammates-agent-heading { min-height: 54px; padding-bottom: 13px; }
+.teammates-agent-heading h3 { font-size: 15px; }
+.teammates-agent-actions button { border-radius: 4px; }
+.teammates-chat { gap: 12px; padding-top: 14px; }
+.teammates-chat-turn { margin-bottom: 23px; gap: 12px; }
+.teammates-chat-user { padding: 2px 0 2px 12px; border: 0; border-left: 1px solid var(--luma-border-strong); border-radius: 0; background: transparent; }
+.teammates-chat-user small { color: var(--luma-accent); }
+.teammates-chat-user p, .teammates-chat-reply p { font-size: 13px; line-height: 1.72; }
+.teammates-chat-composer { border-radius: 5px; background: var(--luma-surface); }
+.teammates-chat-composer textarea { font-size: 13px; }
+.teammates-chat-composer button { border-radius: 4px; }
+.teammates-create-dialog { border-radius: 6px; box-shadow: 0 16px 44px rgba(0, 0, 0, .24); }
+.teammates-create-dialog > header button, .teammates-create-dialog > footer button { border-radius: 4px; }
+.teammates-create-fields input, .teammates-create-fields textarea { border-radius: 4px; }
+.teammates-personality { border-radius: 4px; background: transparent; }
+.teammates-personality input, .teammates-personality textarea, .teammates-memory textarea { border-radius: 4px; }
+.teammates-page button, .sidebar-action, .tree-row, .history-row { transition: background-color 110ms ease, color 110ms ease, border-color 110ms ease; }
+.teammates-create-dialog { animation: none; }
+
+@media (max-width: 850px) {
+  .messages { padding-inline: 22px; }
+  .teammates-body { grid-template-columns: 220px minmax(0, 1fr); }
+}
+@media (max-width: 700px) {
+  .teammates-body { grid-template-columns: 150px minmax(0, 1fr); }
+  .teammates-detail { padding-inline: 12px; }
+}

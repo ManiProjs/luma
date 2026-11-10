@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { theme } from "../theme";
 import type { Status } from "../state";
 import { useSpinner } from "../hooks/useSpinner";
-import { usePulseColor } from "../hooks/usePulseColor";
 
 type Props = {
   status: Status;
@@ -45,15 +44,11 @@ export function PromptHeader({ status, activeTool, toolCalls, turns }: Props) {
 
   const active = status === "thinking" || status === "working" || status === "streaming";
   const spinner = useSpinner(active && !activeTool);
-  const statusColor = usePulseColor(
-    active || status === "waiting",
-    status === "waiting" ? theme.warning : theme.accent,
-    "#F0D18D",
-  );
+  const statusColor = status === "waiting" ? theme.warning : status === "error" ? theme.error : status === "done" ? theme.success : theme.accent;
 
   return (
     <Box marginBottom={0} flexDirection="row" flexWrap="wrap" columnGap={1}>
-      <Text color={status === "error" ? theme.error : status === "done" ? theme.success : status === "waiting" ? theme.warning : theme.muted} bold>
+      <Text color={statusColor} bold>
         {active && !activeTool ? spinner : status === "waiting" ? "◷" : status === "done" ? "✓" : status === "error" ? "!" : "●"}{" "}
       </Text>
       <Text color={active || status === "waiting" ? statusColor : theme.muted} bold={active || status === "waiting"}>{statusWords[status]}</Text>

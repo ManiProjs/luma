@@ -2,7 +2,7 @@ import { Box, Text, useStdout } from "ink";
 import { useEffect, useState } from "react";
 
 const faces = ["●ᴗ●", "◉‿◉", "•⩊•", "●ᴥ●", "◕‿◕", "◉ᴗ◉"];
-const colors = ["#9298ed", "#67c9ae", "#ed9b7d", "#e5bd70", "#b49be8", "#6ebbd5"];
+const colors = ["#B89562", "#83A88D", "#CB8279", "#A69AB9", "#8D9BA4", "#7FAAA2"];
 
 function mascotIndex(seed: string) {
   let hash = 0;

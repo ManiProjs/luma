@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { Box, Text, useApp, useInput } from "ink";
+import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { randomUUID } from "node:crypto";
 import { LumaClient } from "./client";
 import { startDesktopServer, stopDesktopServer } from "./server";
 import type { AgentRecord, ClientMessage, ServerEvent } from "./protocol";
 import { Mascot } from "./components/Mascot";
+import { theme } from "./theme";
 
 type RequestEvent = Extract<ServerEvent, { data: { request_id: string } }>;
 
@@ -31,6 +32,7 @@ function request<T extends RequestEvent["type"]>(
 
 export function TeammatesManager() {
   const { exit } = useApp();
+  const { stdout } = useStdout();
   const [client] = useState(() => new LumaClient());
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [selected, setSelected] = useState(0);
@@ -86,35 +88,43 @@ export function TeammatesManager() {
   });
 
   const agent = agents[selected];
+  const rule = "─".repeat(Math.max(1, Math.min((stdout.columns || 72) - 4, 96)));
   return <Box flexDirection="column" paddingX={1}>
     <Box marginBottom={1} justifyContent="space-between">
       <Box flexDirection="row" alignItems="center" gap={1}>
         <Mascot seed="luma-crew" compact />
-        <Text bold color="cyan">LUMA / TEAMMATES</Text>
+        <Text bold color={theme.brand}>LUMA</Text><Text color={theme.chrome}>/</Text><Text bold>TEAMMATES</Text>
       </Box>
-      <Text color={connected ? "green" : "red"}>{connected ? "Core connected" : "Connecting…"}</Text>
+      <Text color={connected ? theme.success : theme.warning}>{connected ? "● connected" : "○ connecting"}</Text>
     </Box>
-    <Box borderStyle="round" borderColor="gray" paddingX={1} flexDirection="column">
-      <Text bold>Your teammates ({agents.length})</Text>
-      {agents.length === 0 ? <Text color="gray">No teammates yet. Create one with `luma teammates create &lt;name&gt;`.</Text> : agents.map((item, index) => <Box key={item.id}>
+    <Text color={theme.chrome}>{rule}</Text>
+    <Box marginTop={1} flexDirection="column">
+      <Box flexDirection="row" justifyContent="space-between">
+        <Text color={theme.muted} bold>YOUR TEAMMATES</Text>
+        <Text color={theme.chrome}>{agents.length} total</Text>
+      </Box>
+      {agents.length === 0 ? <Text color={theme.muted}>No teammates yet. Create one with `luma teammates create &lt;name&gt;`.</Text> : agents.map((item, index) => <Box key={item.id} flexDirection="column" marginTop={1}>
         <Box flexDirection="row" gap={1}>
-          <Mascot seed={item.id} compact />
-          <Text color={index === selected ? "cyan" : "white"}>{index === selected ? "› " : "  "}{item.name}</Text>
+          <Text color={index === selected ? theme.brand : theme.chrome}>{index === selected ? "›" : " "}</Text>
+          <Mascot seed={item.name} compact />
+          <Text color={index === selected ? "white" : theme.muted} bold={index === selected}>{item.name}</Text>
+          <Text color={theme.chrome}>· {item.status}</Text>
         </Box>
-        <Text color="gray">  {item.status} · {item.kind}</Text>
+        {index === selected ? <Text color={theme.chrome}>  {item.kind} · {item.id === "agent_global" ? "protected global teammate" : "persistent agent"}</Text> : null}
       </Box>)}
     </Box>
     {agent && <Box marginTop={1} flexDirection="column">
+      <Text color={theme.chrome}>{rule}</Text>
       <Box flexDirection="row" alignItems="center" gap={2}>
-        <Mascot seed={agent.id} />
-        <Box flexDirection="column"><Text bold>{agent.name}</Text><Text color="gray">{agent.status} · {agent.kind}</Text></Box>
+        <Mascot seed={agent.name} />
+        <Box flexDirection="column"><Text bold>{agent.name}</Text><Text color={theme.muted}>{agent.status} · {agent.kind}</Text></Box>
       </Box>
-      <Text color="gray">{agent.description || "No description"}</Text>
-      <Text>Skills: {agent.configuration.skills.length ? agent.configuration.skills.join(", ") : "none attached"}</Text>
-      <Text>Workspace: {agent.configuration.workspace || "default"}</Text>
+      <Text color={theme.muted}>{agent.description || "No description"}</Text>
+      <Text color={theme.muted}>Skills  {agent.configuration.skills.length ? agent.configuration.skills.join(", ") : "none attached"}</Text>
+      <Text color={theme.muted}>Workspace  {agent.configuration.workspace || "default"}</Text>
     </Box>}
-    {confirmDelete && agent && <Box marginTop={1}><Text color="yellow">Delete {agent.name} and its completed history, schedules, approvals and agent memory? Cancel active tasks first. (y/N)</Text></Box>}
-    {error ? <Box marginTop={1}><Text color="red">{error}</Text></Box> : null}
-    <Box marginTop={1}><Text color="gray">↑/↓ select  ·  d delete  ·  r refresh  ·  q quit</Text></Box>
+    {confirmDelete && agent && <Box marginTop={1}><Text color={theme.warning}>Delete {agent.name} and its completed history, schedules, approvals and agent memory? Cancel active tasks first. (y/N)</Text></Box>}
+    {error ? <Box marginTop={1}><Text color={theme.error}>{error}</Text></Box> : null}
+    <Box marginTop={1}><Text color={theme.chrome}>{rule}</Text><Text color={theme.muted}>↑/↓ select  ·  D delete  ·  R refresh  ·  Q quit</Text></Box>
   </Box>;
 }

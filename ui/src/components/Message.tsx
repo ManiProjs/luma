@@ -15,7 +15,7 @@ export function Message({ message, running = false }: Props) {
   if (message.role === "user") {
     return (
       <Box flexDirection="column" marginTop={1}>
-        <Text color={theme.muted} bold>{glyphs.user} You</Text>
+        <Text color={theme.brand} bold>YOU</Text>
         <Box marginLeft={2} marginTop={0}>
           <Markdown content={message.content} />
         </Box>
@@ -26,7 +26,7 @@ export function Message({ message, running = false }: Props) {
   if (message.role === "assistant") {
     return (
       <Box flexDirection="column" marginTop={1}>
-        <Text color={theme.brand} bold>{glyphs.assistant} Luma</Text>
+        <Text color={theme.assistant ?? "white"} bold>LUMA</Text>
         <Box marginLeft={2} marginTop={0}>
           <Markdown content={message.content} />
         </Box>
@@ -62,7 +62,7 @@ export function Message({ message, running = false }: Props) {
     const [path, ...diff] = message.content.split("\n");
     return (
       <Box flexDirection="column" marginTop={1} marginLeft={1} borderStyle="single" borderLeft borderColor={theme.chrome} paddingLeft={1}>
-        <Text color={theme.warning} bold>Proposed change</Text>
+        <Text color={theme.warning} bold>PROPOSED CHANGE</Text>
         <Text color={theme.muted}>{path}</Text>
         {diff.map((line, index) => <Text key={`${index}-${line}`} color={line.startsWith("+") ? theme.success : line.startsWith("-") ? theme.error : theme.muted}>{line}</Text>)}
       </Box>

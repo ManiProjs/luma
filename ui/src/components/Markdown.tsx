@@ -21,7 +21,7 @@ function inline(tokens: InlineToken[], keyPrefix: string): ReactNode[] {
       case "del":
         return <Text key={key} strikethrough>{children(token.tokens, key)}</Text>;
       case "codespan":
-        return <Text key={key} color={theme.accent} backgroundColor="#292929"> {token.text} </Text>;
+        return <Text key={key} color={theme.accent} backgroundColor={theme.codeBackground}> {token.text} </Text>;
       case "br":
         return <Text key={key}>{"\n"}</Text>;
       case "link":
@@ -46,14 +46,14 @@ function blocks(tokens: Token[], keyPrefix = "md"): ReactNode[] {
       case "space":
         return null;
       case "heading":
-        return <Box key={key} marginTop={index === 0 ? 0 : 1}><Text bold color={token.depth <= 2 ? theme.brand : undefined}>{children(token.tokens, key)}</Text></Box>;
+        return <Box key={key} marginTop={index === 0 ? 0 : 1}><Text bold color={token.depth <= 2 ? theme.brand : "white"}>{children(token.tokens, key)}</Text></Box>;
       case "paragraph":
         return <Box key={key}><Text>{children(token.tokens, key)}</Text></Box>;
       case "text":
         return <Box key={key}><Text>{"tokens" in token && token.tokens ? inline(token.tokens, key) : token.text}</Text></Box>;
       case "code":
-        return <Box key={key} flexDirection="column" marginY={1} paddingX={1} borderStyle="round" borderColor={theme.chrome}>
-          {token.lang ? <Text color={theme.muted} dimColor>{token.lang}</Text> : null}
+        return <Box key={key} flexDirection="column" marginY={1} paddingX={1} borderStyle="single" borderLeft borderColor={theme.chrome}>
+          {token.lang ? <Text color={theme.muted} dimColor>{token.lang.toUpperCase()}</Text> : null}
           <Text>{token.text}</Text>
         </Box>;
       case "blockquote":
