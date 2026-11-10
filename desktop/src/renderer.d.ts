@@ -5,6 +5,7 @@ import type {
 } from "./stores/setupStore";
 import type { LumaAgentEvent } from "./preload";
 import type { AgentConfiguration, AgentKind, AgentRecord, ApprovalRecord, ChatSummary, MemoryEntry, MemoryScope, ScheduleRecord, TaskRecord, RuntimeEvent } from "../../shared/protocol";
+import type { ChatAttachment } from "../../shared/attachments";
 
 declare global {
   interface Window {
@@ -15,6 +16,7 @@ declare global {
       getGitChanges(): Promise<{ branch: string; files: import("./App").GitChange[] }>;
       getGitDiff(path: string): Promise<string>;
       readWorkspaceFile(path: string): Promise<string>;
+      chooseChatAttachments(): Promise<ChatAttachment[]>;
       writeWorkspaceFile(path: string, content: string): Promise<{ ok: boolean }>;
       getAgents(): Promise<AgentRecord[]>;
       createAgent(input: { name: string; description?: string | null; kind: AgentKind; configuration?: AgentConfiguration }): Promise<AgentRecord>;

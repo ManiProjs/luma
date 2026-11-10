@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, type OpenDialogOptions } from "electron";
 
 import path from "node:path";
 import { existsSync } from "node:fs";
@@ -27,6 +27,7 @@ import {
   type TaskRecord,
   type RuntimeEvent,
 } from "../../shared/protocol";
+import type { ChatAttachment } from "../../shared/attachments";
 
 type PendingRequest = {
   expectedType: "setup_config" | "setup_saved" | "providers" | "models" | "provider_tested" | "model_changed"
@@ -635,6 +636,44 @@ app.whenReady().then(async () => {
     const contents = await fs.readFile(target);
     if (contents.includes(0)) throw new Error("Binary files cannot be opened in the text editor.");
     return contents.toString("utf8");
+  });
+  ipcMain.handle("luma:choose-chat-attachments", async (): Promise<ChatAttachment[]> => {
+    const options: OpenDialogOptions = {
+      title: "Attach files to chat",
+      defaultPath: workspaceRoot,
+      properties: ["openFile", "multiSelections"],
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || result.filePaths.length === 0) return [];
+    if (result.filePaths.length > 8) throw new Error("Attach at most 8 files at a time.");
+
+    let totalBytes = 0;
+    const attachments: ChatAttachment[] = [];
+    for (const selectedPath of result.filePaths) {
+      const realPath = await fs.realpath(selectedPath);
+      const stat = await fs.stat(realPath);
+      if (!stat.isFile()) throw new Error("Only files can be attached.");
+      if (stat.size > 1024 * 1024) throw new Error("Each attached file must be 1 MiB or smaller.");
+      totalBytes += stat.size;
+      if (totalBytes > 4 * 1024 * 1024) throw new Error("The total attachment size cannot exceed 4 MiB.");
+
+      const bytes = await fs.readFile(realPath);
+      if (bytes.includes(0)) throw new Error(`${path.basename(realPath)} is binary and cannot be attached as text.`);
+      let content: string;
+      try {
+        content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      } catch {
+        throw new Error(`${path.basename(realPath)} is not valid UTF-8 text.`);
+      }
+      const relative = path.relative(workspaceRoot, realPath);
+      const name = relative && !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative)
+        ? relative
+        : path.basename(realPath);
+      attachments.push({ name, content });
+    }
+    return attachments;
   });
   ipcMain.handle("luma:write-workspace-file", async (_event, relativePath: string, content: string) => {
     const target = await assertInsideWorkspace(resolveWorkspacePath(relativePath));

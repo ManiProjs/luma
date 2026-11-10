@@ -1,6 +1,8 @@
 import { Box, Text, measureElement, useInput, useStdin, useStdout } from "ink";
 import type { DOMElement } from "ink";
 import { useEffect, useRef, useState } from "react";
+import { readFile, realpath, stat } from "node:fs/promises";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import { useSession } from "./session";
 
@@ -11,14 +13,19 @@ import { Mascot } from "./components/Mascot";
 import { Tips } from "./components/Tips";
 import { ModelPicker } from "./components/ModelPicker";
 import { theme } from "./theme";
+import { formatChatPrompt, type ChatAttachment } from "../../shared/attachments";
 
 export function App({ initialSetup = false }: { initialSetup?: boolean }) {
   const { state, send, openModelPicker, selectProvider, chooseModel, closeModelPicker, confirm } = useSession(initialSetup);
 
   const [input, setInput] = useState("");
   const [toolsExpanded, setToolsExpanded] = useState(false);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [attachmentMode, setAttachmentMode] = useState(false);
+  const [attachmentError, setAttachmentError] = useState("");
   const rootElement = useRef<DOMElement>(null);
   const toolActivityTrigger = useRef<DOMElement>(null);
+  const attachmentTrigger = useRef<DOMElement>(null);
   const terminalOriginRow = useRef(0);
   const { isRawModeSupported } = useStdin();
   const { stdout } = useStdout();
@@ -40,20 +47,24 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
 
     const match = /^\u001B\[<(\d+);(\d+);(\d+)([Mm])$/.exec(input);
     if (!match || match[4] !== "M" || Number(match[1]) !== 0) return;
-    const element = toolActivityTrigger.current;
-    if (!element) return;
-
-    let top = 0;
-    let left = 0;
-    for (let node: DOMElement | undefined = element; node; node = node.parentNode) {
-      top += node.yogaNode?.getComputedTop() ?? 0;
-      left += node.yogaNode?.getComputedLeft() ?? 0;
-    }
-    const { width, height } = measureElement(element);
     const x = Number(match[2]) - 1;
     const y = Number(match[3]) - 1 - terminalOriginRow.current;
-    if (x >= left && x < left + width && y >= top && y < top + height) {
-      setToolsExpanded((expanded) => !expanded);
+    const hit = (element: DOMElement | null) => {
+      if (!element) return false;
+      let top = 0;
+      let left = 0;
+      for (let node: DOMElement | undefined = element; node; node = node.parentNode) {
+        top += node.yogaNode?.getComputedTop() ?? 0;
+        left += node.yogaNode?.getComputedLeft() ?? 0;
+      }
+      const { width, height } = measureElement(element);
+      return x >= left && x < left + width && y >= top && y < top + height;
+    };
+    if (hit(toolActivityTrigger.current)) setToolsExpanded((expanded) => !expanded);
+    else if (hit(attachmentTrigger.current)) {
+      setAttachmentMode(true);
+      setAttachmentError("");
+      setInput("");
     }
   });
 
@@ -64,6 +75,33 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
       stdout.write("\u001B[?1000l\u001B[?1006l");
     };
   }, [isRawModeSupported, stdout]);
+
+  async function attachFile(pathInput: string) {
+    try {
+      const workspace = await realpath(process.cwd());
+      const target = await realpath(resolve(workspace, pathInput));
+      const relativePath = relative(workspace, target);
+      if (relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+        throw new Error("Only files inside the current workspace can be attached.");
+      }
+      const metadata = await stat(target);
+      if (!metadata.isFile()) throw new Error("Choose a file, not a directory.");
+      if (metadata.size > 1024 * 1024) throw new Error("Each attached file must be 1 MiB or smaller.");
+      const bytes = await readFile(target);
+      if (bytes.includes(0)) throw new Error("Binary files cannot be attached as text.");
+      const content = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      const next = [...attachments, { name: relativePath, content }];
+      const totalBytes = next.reduce((total, item) => total + new TextEncoder().encode(item.content).byteLength, 0);
+      if (next.length > 8 || totalBytes > 4 * 1024 * 1024) throw new Error("Attach up to 8 text files and 4 MiB of content.");
+      setAttachments(next);
+      setAttachmentError("");
+    } catch (reason) {
+      setAttachmentError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setAttachmentMode(false);
+      setInput("");
+    }
+  }
 
   return (
     <Box ref={rootElement} flexDirection="column" paddingX={1}>
@@ -127,9 +165,21 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
         onChange={setInput}
         onOpenModelPicker={openModelPicker}
         onToggleToolActivity={() => setToolsExpanded((value) => !value)}
+        attachmentTriggerRef={attachmentTrigger}
+        attachments={attachments}
+        attachmentMode={attachmentMode}
+        attachmentError={attachmentError}
+        onCancelAttachment={() => { setAttachmentMode(false); setInput(""); }}
+        onRemoveAttachment={(index) => setAttachments((items) => items.filter((_, itemIndex) => itemIndex !== index))}
         onSubmit={() => {
-          send(input);
+          if (attachmentMode) {
+            void attachFile(input.trim());
+            return;
+          }
+          if (!input.trim() && attachments.length === 0) return;
+          send(formatChatPrompt(input.trim() || "Please inspect the attached files.", attachments));
           setInput("");
+          setAttachments([]);
         }}
       />
     </Box>

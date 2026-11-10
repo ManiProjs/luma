@@ -1,10 +1,12 @@
 import { Box, Text, useInput } from "ink";
-import { useEffect, useState } from "react";
+import type { DOMElement } from "ink";
+import { useEffect, useState, type RefObject } from "react";
 
 import { glyphs, theme } from "../theme";
 import { PromptHeader } from "./PromptHeader";
 
 import type { Status } from "../state";
+import type { ChatAttachment } from "../../../shared/attachments";
 
 type Props = {
   status: Status;
@@ -16,6 +18,12 @@ type Props = {
   onSubmit: () => void;
   onOpenModelPicker: () => void;
   onToggleToolActivity: () => void;
+  attachmentTriggerRef: RefObject<DOMElement | null>;
+  attachments: ChatAttachment[];
+  attachmentMode: boolean;
+  attachmentError: string;
+  onCancelAttachment: () => void;
+  onRemoveAttachment: (index: number) => void;
   confirmation: { name: string; input: string } | null;
   onConfirm: (allowed: boolean) => void;
   disabled?: boolean;
@@ -45,6 +53,12 @@ export function Composer({
   onSubmit,
   onOpenModelPicker,
   onToggleToolActivity,
+  attachmentTriggerRef,
+  attachments,
+  attachmentMode,
+  attachmentError,
+  onCancelAttachment,
+  onRemoveAttachment,
   confirmation,
   onConfirm,
   disabled = false,
@@ -68,6 +82,14 @@ export function Composer({
   useInput((input, key) => {
     if (disabled) return;
     if (/^\u001B\[(?:<\d+;\d+;\d+[Mm]|\d+;\d+R)$/.test(input)) return;
+    if (attachmentMode && key.escape) {
+      onCancelAttachment();
+      return;
+    }
+    if ((key.ctrl || key.meta) && input.toLowerCase() === "x" && attachments.length > 0) {
+      onRemoveAttachment(attachments.length - 1);
+      return;
+    }
     if (confirmation) {
       if (input.toLowerCase() === "y" || key.return) onConfirm(true);
       else if (input.toLowerCase() === "n" || key.escape) onConfirm(false);
@@ -160,10 +182,18 @@ export function Composer({
       </Box> : null}
       <PromptHeader status={status} activeTool={activeTool} toolCalls={toolCalls} turns={turns} />
 
-      <Box marginTop={1}>
-        <Text color={theme.accent} bold>
-          {glyphs.input}{" "}
-        </Text>
+      {attachments.length > 0 ? <Box flexDirection="row" marginTop={1}>
+        {attachments.map((attachment, index) => <Box key={`${attachment.name}-${index}`} marginRight={1}>
+          <Text color={theme.chrome}>[{attachment.name}]</Text>
+        </Box>)}
+      </Box> : null}
+      {attachmentError ? <Text color={theme.error}>{attachmentError}</Text> : null}
+
+      <Box marginTop={1} flexDirection="row" alignItems="center">
+        <Box ref={attachmentTriggerRef} borderStyle="single" borderColor={theme.chrome} paddingX={1} marginRight={1}>
+          <Text color={theme.muted}>+</Text>
+        </Box>
+        {attachmentMode ? <Text color={theme.warning}>Attach workspace file path: </Text> : <Text color={theme.accent} bold>{glyphs.input}{" "}</Text>}
 
         <Text>
           {beforeCursor}
@@ -171,7 +201,7 @@ export function Composer({
           {afterCursor}
         </Text>
       </Box>
-      <Text color={theme.chrome}>Enter send  ·  Ctrl+G model  ·  / commands</Text>
+      <Text color={theme.chrome}>{attachmentMode ? "Enter attach  ·  Esc cancel  ·  path relative to workspace" : "Enter send  ·  + attach file  ·  Ctrl+X remove last file  ·  Ctrl+G model"}</Text>
     </Box>
   );
 }

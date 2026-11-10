@@ -1,5 +1,7 @@
 "use strict";
 
+import { formatChatPrompt, readBrowserChatAttachments } from "../../shared/attachments";
+
 /* ==========================================================================
    State
    ========================================================================== */
@@ -23,6 +25,7 @@ let currentSection = "agent";
 let selectedChangePath = null;
 let activeToolName = null;
 let activeToolMessage = null;
+let chatAttachments = [];
 
 const openFiles = new Map();
 const events = [];
@@ -79,6 +82,8 @@ const elements = {
   chatForm: document.getElementById("chat-form"),
 
   chatInput: document.getElementById("chat-input"),
+  chatFileInput: document.getElementById("chat-file-input"),
+  attachButton: document.getElementById("attach-button"),
   sendButton: document.getElementById("send-button"),
   cancelButton: document.getElementById("cancel-button"),
 
@@ -1261,8 +1266,57 @@ elements.chatForm.addEventListener("submit", (event) => {
   sendChat();
 });
 
+elements.attachButton.addEventListener("click", () => elements.chatFileInput.click());
+elements.chatFileInput.addEventListener("change", async () => {
+  try {
+    const selected = await readBrowserChatAttachments(elements.chatFileInput.files || []);
+    const next = [...chatAttachments, ...selected];
+    const totalBytes = next.reduce((total, item) => total + new TextEncoder().encode(item.content).byteLength, 0);
+    if (next.length > 8 || totalBytes > 4 * 1024 * 1024) {
+      throw new Error("A chat can include up to 8 text files and 4 MiB of content.");
+    }
+    chatAttachments = next;
+    renderChatAttachments();
+  } catch (error) {
+    addMessage("system", error instanceof Error ? error.message : String(error));
+  } finally {
+    elements.chatFileInput.value = "";
+  }
+});
+
+function renderChatAttachments() {
+  let container = document.getElementById("chat-attachments");
+  if (!container) {
+    container = document.createElement("div");
+    container.id = "chat-attachments";
+    container.className = "chat-attachment-list";
+    elements.chatForm.before(container);
+  }
+  container.replaceChildren();
+  container.hidden = chatAttachments.length === 0;
+  chatAttachments.forEach((attachment, index) => {
+    const chip = document.createElement("span");
+    chip.className = "chat-attachment-chip";
+    const name = document.createElement("span");
+    name.textContent = attachment.name;
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.textContent = "×";
+    remove.setAttribute("aria-label", `Remove ${attachment.name}`);
+    remove.addEventListener("click", () => {
+      chatAttachments = chatAttachments.filter((_, itemIndex) => itemIndex !== index);
+      renderChatAttachments();
+    });
+    chip.append(name, remove);
+    container.appendChild(chip);
+  });
+}
+
 function sendChat(text = null) {
-  const value = (text ?? elements.chatInput.value).trim();
+  const prompt = (text ?? elements.chatInput.value).trim();
+  const value = prompt ? formatChatPrompt(prompt, chatAttachments) : chatAttachments.length
+    ? formatChatPrompt("Please inspect the attached files.", chatAttachments)
+    : "";
 
   if (!value) {
     return;
@@ -1280,6 +1334,8 @@ function sendChat(text = null) {
   addMessage("user", value);
 
   elements.chatInput.value = "";
+  chatAttachments = [];
+  renderChatAttachments();
 
   autoResizeChat();
 

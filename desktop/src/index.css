@@ -882,6 +882,16 @@ select:focus-visible {
   border-radius: 6px;
   background: var(--luma-surface);
 }
+.luma-teammate-composer .chat-attach-button {
+  border: 1px solid var(--luma-border);
+  background: transparent;
+  color: var(--luma-text-secondary);
+  font-size: 17px;
+}
+.luma-teammate-composer .chat-attach-button:hover {
+  background: var(--luma-surface-hover);
+  color: var(--luma-text);
+}
 .luma-teammates-content section.rounded-lg.border {
   border-color: var(--luma-border);
   border-radius: 5px;

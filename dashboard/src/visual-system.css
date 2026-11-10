@@ -325,6 +325,18 @@ textarea:focus-visible {
 #send-button,
 #cancel-button { width: 38px; height: 38px; flex-basis: 38px; border-radius: 7px; }
 #send-button { background: var(--accent); }
+#attach-button, .chat-attach-button { width: 34px; height: 34px; flex: 0 0 34px; border: 1px solid var(--luma-border); border-radius: 7px; background: transparent; color: var(--luma-text-secondary); cursor: pointer; font-size: 18px; line-height: 1; }
+#attach-button:hover, .chat-attach-button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+#attach-button:disabled, .chat-attach-button:disabled { opacity: .4; cursor: default; }
+.chat-attachment-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chat-attachment-list[hidden], #chat-file-input[hidden] { display: none; }
+.chat-attachment-chip { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; border: 1px solid var(--luma-border); border-radius: 6px; padding: 4px 7px; color: var(--luma-text-secondary); font-size: 10px; }
+.chat-attachment-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.chat-attachment-chip button { color: var(--luma-text-muted); cursor: pointer; }
+.teammates-chat-input-row { display: flex; align-items: flex-end; gap: 8px; }
+.teammates-chat-input-row textarea { flex: 1; min-width: 0; }
+.teammates-chat-composer .chat-attach-button { border: 1px solid var(--luma-border); background: transparent; color: var(--luma-text-secondary); }
+.teammates-chat-composer .chat-attach-button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
 
 .terminal-panel {
   height: var(--terminal);

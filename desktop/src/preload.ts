@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { parseServerEvent, type ServerEvent, type AgentConfiguration, type AgentKind, type AgentRecord, type ApprovalRecord, type ChatSummary, type MemoryEntry, type MemoryScope, type ScheduleRecord, type TaskRecord, type RuntimeEvent } from "../../shared/protocol";
+import type { ChatAttachment } from "../../shared/attachments";
 
 export type LumaAgentEvent = ServerEvent;
 
@@ -10,6 +11,7 @@ contextBridge.exposeInMainWorld("luma", {
   getGitChanges: () => ipcRenderer.invoke("luma:get-git-changes"),
   getGitDiff: (path: string) => ipcRenderer.invoke("luma:get-git-diff", path),
   readWorkspaceFile: (path: string) => ipcRenderer.invoke("luma:read-workspace-file", path),
+  chooseChatAttachments: (): Promise<ChatAttachment[]> => ipcRenderer.invoke("luma:choose-chat-attachments"),
   writeWorkspaceFile: (path: string, content: string) => ipcRenderer.invoke("luma:write-workspace-file", path, content),
   getAgents: (): Promise<AgentRecord[]> => ipcRenderer.invoke("luma:get-agents"),
   createAgent: (input: { name: string; description?: string | null; kind: AgentKind; configuration?: AgentConfiguration }): Promise<AgentRecord> => ipcRenderer.invoke("luma:create-agent", input),

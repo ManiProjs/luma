@@ -19,6 +19,7 @@ import { useWorkspaceStore, type Chat } from "./stores/workspaceStore";
 import { MascotAvatar } from "./components/MascotAvatar";
 import type { AgentConfiguration, AgentRecord, ApprovalRecord, MemoryEntry, MemoryScope, ScheduleRecord, TaskRecord } from "../../shared/protocol";
 import type { RuntimeEvent } from "../../shared/protocol";
+import { formatChatPrompt, type ChatAttachment } from "../../shared/attachments";
 import { MascotCustomizer } from "./components/MascotCustomizer";
 
 type AppMode = "agent" | "ide" | "changes" | "teammates";
@@ -1747,6 +1748,9 @@ function Composer({
   onChange: (value: string) => void;
 }) {
   const [selectedCommand, setSelectedCommand] = useState(0);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [attachmentError, setAttachmentError] = useState("");
+  const [attaching, setAttaching] = useState(false);
   const matches = useMemo(() => {
     if (!value.startsWith("/") || value.includes(" ") || value.length < 2) return [];
     const query = value.toLowerCase();
@@ -1760,18 +1764,42 @@ function Composer({
   }
 
   function submit() {
-    const text = value.trim();
+    const text = value.trim() || (attachments.length ? "Please inspect the attached files." : "");
 
     if (!text) {
       return;
     }
 
-    onSend(text);
+    onSend(formatChatPrompt(text, attachments));
+    setAttachments([]);
+    setAttachmentError("");
     onChange("");
+  }
+
+  async function attachFiles() {
+    setAttaching(true);
+    setAttachmentError("");
+    try {
+      const selected = await window.luma.chooseChatAttachments();
+      const next = [...attachments, ...selected];
+      const totalBytes = next.reduce((total, item) => total + new TextEncoder().encode(item.content).byteLength, 0);
+      if (next.length > 8 || totalBytes > 4 * 1024 * 1024) {
+        throw new Error("A chat can include up to 8 text files and 4 MiB of content.");
+      }
+      setAttachments(next);
+    } catch (reason) {
+      setAttachmentError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setAttaching(false);
+    }
   }
 
   return (
     <div className="luma-composer-shell border-t border-[var(--luma-border)] bg-[var(--luma-surface)] px-4 pb-4 pt-3">
+      {attachments.length > 0 && <div className="mx-auto mb-2 flex max-w-[860px] flex-wrap gap-1.5">
+        {attachments.map((attachment, index) => <span key={`${attachment.name}-${index}`} className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-[var(--luma-border)] px-2 py-1 text-[10px] text-[var(--luma-text-secondary)]"><span className="max-w-56 truncate">{attachment.name}</span><button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setAttachments((items) => items.filter((_, itemIndex) => itemIndex !== index))} className="text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]">×</button></span>)}
+      </div>}
+      {attachmentError && <p role="alert" className="mx-auto mb-2 max-w-[860px] text-[10px] text-[var(--luma-danger)]">{attachmentError}</p>}
       <div
         className="luma-composer
           mx-auto flex max-w-[860px]
@@ -1784,6 +1812,7 @@ function Composer({
           focus-within:border-[var(--luma-accent)]
         "
       >
+        <button type="button" onClick={() => void attachFiles()} disabled={thinking || attaching} aria-label="Attach files" title="Attach text files" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)] hover:text-[var(--luma-text)] disabled:opacity-40"><PlusIcon /></button>
         <textarea
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -1852,7 +1881,7 @@ function Composer({
           <button
             type="button"
             onClick={submit}
-            disabled={!value.trim()}
+            disabled={!value.trim() && attachments.length === 0}
             className="
               flex h-8 w-8 shrink-0
               items-center justify-center
@@ -2542,6 +2571,7 @@ function TeammatesPanel({ onSidebarChange }: { onSidebarChange: (sidebar: React.
   const [skillsDraft, setSkillsDraft] = useState("");
   const [mascotDraft, setMascotDraft] = useState("auto");
   const [chatPrompt, setChatPrompt] = useState("");
+  const [chatAttachments, setChatAttachments] = useState<ChatAttachment[]>([]);
   const [activeTab, setActiveTab] = useState<"chat" | "settings">("chat");
   const [memoryContent, setMemoryContent] = useState("");
   const [schedulePrompt, setSchedulePrompt] = useState("");
@@ -2661,6 +2691,21 @@ function TeammatesPanel({ onSidebarChange }: { onSidebarChange: (sidebar: React.
     finally { setBusy(false); }
   }
 
+  async function attachChatFiles() {
+    setError(null);
+    try {
+      const selected = await window.luma.chooseChatAttachments();
+      const next = [...chatAttachments, ...selected];
+      const totalBytes = next.reduce((total, item) => total + new TextEncoder().encode(item.content).byteLength, 0);
+      if (next.length > 8 || totalBytes > 4 * 1024 * 1024) {
+        throw new Error("A teammate message can include up to 8 text files and 4 MiB of content.");
+      }
+      setChatAttachments(next);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
   return (
     <section className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--luma-bg)]" aria-label="Teammates">
         {error && <div role="alert" className="border-b border-[var(--luma-danger)]/25 bg-[var(--luma-danger)]/5 px-5 py-2 text-[12px] text-[var(--luma-danger)]">{error}</div>}
@@ -2681,7 +2726,23 @@ function TeammatesPanel({ onSidebarChange }: { onSidebarChange: (sidebar: React.
                   })}
                   {approvals.filter((approval) => approval.agent_id === selectedAgent.id).map((approval) => <div key={approval.id} className="ml-10 rounded-lg border border-[var(--luma-warning)]/30 bg-[var(--luma-warning)]/5 p-3"><div className="text-[11px] font-semibold">{selectedAgent.name} needs your approval · {approval.tool}</div><pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-muted)]">{approval.arguments}</pre><div className="mt-2 flex justify-end gap-2"><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, false))} className="luma-btn-secondary h-7 px-2 text-[10px]">Deny</button><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, true))} className="luma-btn-primary h-7 px-2.5 text-[10px]">Approve</button></div></div>)}
                 </div>
-                <form className="luma-teammate-composer shrink-0 p-2" onSubmit={(event) => { event.preventDefault(); const text = chatPrompt.trim(); if (!text || busy || selectedAgent.status === "stopped" || selectedAgent.status === "paused") return; void perform(async () => { await window.luma.createTask({ agentId: selectedAgent.id, request: text }); setChatPrompt(""); }); }}><textarea value={chatPrompt} onChange={(event) => setChatPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message ${selectedAgent.name}…`} rows={2} className="luma-input w-full resize-none border-0 bg-transparent text-[12px] focus:ring-0" /><div className="flex items-center justify-between px-1 pt-1"><span className="text-[10px] text-[var(--luma-text-muted)]">Enter to send · Shift + Enter for a new line</span><button type="submit" disabled={busy || !chatPrompt.trim() || selectedAgent.status === "stopped" || selectedAgent.status === "paused"} className="luma-btn-primary h-8 px-3 text-[11px]">{busy ? "Sending…" : "Send"}</button></div></form>
+                <form className="luma-teammate-composer shrink-0 p-2" onSubmit={(event) => {
+                  event.preventDefault();
+                  const text = chatPrompt.trim() || (chatAttachments.length ? "Please inspect the attached files." : "");
+                  if (!text || busy || selectedAgent.status === "stopped" || selectedAgent.status === "paused") return;
+                  void perform(async () => {
+                    await window.luma.createTask({ agentId: selectedAgent.id, request: formatChatPrompt(text, chatAttachments), workspace: selectedAgent.configuration.workspace ?? undefined });
+                    setChatPrompt("");
+                    setChatAttachments([]);
+                  });
+                }}>
+                  {chatAttachments.length > 0 && <div className="mb-2 flex flex-wrap gap-1.5">{chatAttachments.map((attachment, index) => <span key={`${attachment.name}-${index}`} className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-[var(--luma-border)] px-2 py-1 text-[10px] text-[var(--luma-text-secondary)]"><span className="max-w-56 truncate">{attachment.name}</span><button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setChatAttachments((items) => items.filter((_, itemIndex) => itemIndex !== index))} className="text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]">×</button></span>)}</div>}
+                  <div className="flex items-end gap-2">
+                    <button type="button" aria-label="Attach files" title="Attach text files" disabled={busy || selectedAgent.status === "stopped" || selectedAgent.status === "paused"} onClick={() => void attachChatFiles()} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)] hover:text-[var(--luma-text)] disabled:opacity-40"><PlusIcon /></button>
+                    <textarea value={chatPrompt} onChange={(event) => setChatPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message ${selectedAgent.name}…`} rows={2} className="luma-input min-w-0 flex-1 resize-none border-0 bg-transparent text-[12px] focus:ring-0" />
+                  </div>
+                  <div className="flex items-center justify-between px-1 pt-1"><span className="text-[10px] text-[var(--luma-text-muted)]">Enter to send · Shift + Enter for a new line</span><button type="submit" disabled={busy || (!chatPrompt.trim() && chatAttachments.length === 0) || selectedAgent.status === "stopped" || selectedAgent.status === "paused"} className="luma-btn-primary h-8 px-3 text-[11px]">{busy ? "Sending…" : "Send"}</button></div>
+                </form>
               </div>
             ) : (
               <div className="space-y-5">
