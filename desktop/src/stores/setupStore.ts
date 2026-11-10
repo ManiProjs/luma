@@ -23,7 +23,6 @@ interface SetupState {
 
   provider: SetupProvider | null;
   model: SetupModel | null;
-  plannerModel: SetupModel | null;
 
   apiKey: string;
   endpoint: string;
@@ -45,8 +44,6 @@ interface SetupState {
   setProvider: (provider: SetupProvider | null) => void;
 
   setModel: (model: SetupModel | null) => void;
-
-  setPlannerModel: (model: SetupModel | null) => void;
 
   setApiKey: (apiKey: string) => void;
 
@@ -74,7 +71,6 @@ const initialState = {
 
   provider: null,
   model: null,
-  plannerModel: null,
 
   apiKey: "",
   endpoint: "",
@@ -107,7 +103,6 @@ export const useSetupStore = create<SetupState>((set, get) => ({
     set({
       provider,
       model: null,
-      plannerModel: null,
       availableModels: [],
       error: null,
       endpoint: provider?.endpoint ?? "",
@@ -117,13 +112,6 @@ export const useSetupStore = create<SetupState>((set, get) => ({
   setModel: (model) => {
     set({
       model,
-      error: null,
-    });
-  },
-
-  setPlannerModel: (plannerModel) => {
-    set({
-      plannerModel,
       error: null,
     });
   },
@@ -179,8 +167,7 @@ export const useSetupStore = create<SetupState>((set, get) => ({
       set({
         availableModels: [],
         model: null,
-        plannerModel: null,
-      });
+            });
 
       return;
     }
@@ -284,13 +271,6 @@ export const useSetupStore = create<SetupState>((set, get) => ({
             model.id === config.model.name || model.name === config.model.name,
         ) ?? null;
 
-      const savedPlanner =
-        models.find(
-          (model) =>
-            model.id === config.planner.name ||
-            model.name === config.planner.name,
-        ) ?? null;
-
       set({
         availableModels: models,
 
@@ -304,17 +284,6 @@ export const useSetupStore = create<SetupState>((set, get) => ({
                 context_window: 0,
               }
             : null),
-
-        plannerModel:
-          savedPlanner ??
-          (config.planner.name
-            ? {
-                id: config.planner.name,
-                name: config.planner.name,
-                description: "Configured planner model",
-                context_window: 0,
-              }
-            : savedModel),
       });
 
       set({
@@ -334,7 +303,7 @@ export const useSetupStore = create<SetupState>((set, get) => ({
   },
 
   saveConfiguration: async () => {
-    const { provider, model, plannerModel, apiKey, endpoint, providerApiKeys, availableProviders } = get();
+    const { provider, model, apiKey, endpoint, providerApiKeys, availableProviders } = get();
 
     if (!provider) {
       throw new Error("No provider selected.");
@@ -343,8 +312,6 @@ export const useSetupStore = create<SetupState>((set, get) => ({
     if (!model) {
       throw new Error("No model selected.");
     }
-
-    const planner = plannerModel ?? model;
 
     set({
       savingConfiguration: true,
@@ -359,16 +326,6 @@ export const useSetupStore = create<SetupState>((set, get) => ({
           endpoint: endpoint.trim() || provider.endpoint,
 
           name: model.id,
-
-          api_key: apiKey.trim() || undefined,
-        },
-
-        planner: {
-          provider: provider.id,
-
-          endpoint: endpoint.trim() || provider.endpoint,
-
-          name: planner.id,
 
           api_key: apiKey.trim() || undefined,
         },

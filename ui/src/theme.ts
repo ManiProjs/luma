@@ -3,37 +3,35 @@ import type { TextProps } from "ink";
 type Color = NonNullable<TextProps["color"]>;
 
 export const theme = {
-  // A warm, restrained palette. Meaningful roles get distinct colors instead
-  // of painting every part of the interface with the brand accent.
-  brand: "#D6A85F",
-  user: "#79A6A1",
-  tool: "#A18DBB",
-  plan: "#D6A85F",
+  // Match desktop Luma: warm neutrals, with color reserved for state.
+  brand: "#C49A5A",
+  user: "#B8B5AD",
+  tool: "#A7A39B",
+  plan: "#C49A5A",
 
-  // Neutral supporting tones; primary content remains the terminal foreground.
-  muted: "gray",
-  chrome: "gray",
+  muted: "#89867F",
+  chrome: "#625F59",
 
   // Normal content stays terminal-native
   assistant: undefined,
 
   // State
-  success: "#83AD8B",
-  error: "#D97777",
-  warning: "#D6A85F",
+  success: "#4ADE80",
+  error: "#F87171",
+  warning: "#FBBF24",
 
   // Compatibility
-  danger: "#D97777",
-  accent: "#D6A85F",
+  danger: "#F87171",
+  accent: "#C49A5A",
 } satisfies Record<string, Color | undefined>;
 
 export const glyphs = {
   logo: "◈",
 
   user: "›",
-  assistant: "✦",
+  assistant: "●",
 
-  tool: "▸",
+  tool: "↳",
   plan: "◆",
 
   success: "✓",

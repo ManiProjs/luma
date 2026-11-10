@@ -10,6 +10,7 @@ let reconnectTimer = null;
 let currentState = "Idle";
 let currentFile = null;
 let currentAssistantMessage = null;
+let currentChatId = null;
 
 let monacoEditor = null;
 let currentFileContent = "";
@@ -18,6 +19,10 @@ let editorDirty = false;
 let suppressEditorChange = false;
 
 let ideOpen = false;
+let currentSection = "agent";
+let selectedChangePath = null;
+let activeToolName = null;
+let activeToolMessage = null;
 
 const openFiles = new Map();
 const events = [];
@@ -28,6 +33,7 @@ const events = [];
 
 const elements = {
   explorer: document.getElementById("explorer"),
+  chatHistory: document.getElementById("chat-history"),
   workspaceName: document.getElementById("workspace-name"),
 
   connectionDot: document.getElementById("connection-dot"),
@@ -73,6 +79,8 @@ const elements = {
   chatForm: document.getElementById("chat-form"),
 
   chatInput: document.getElementById("chat-input"),
+  sendButton: document.getElementById("send-button"),
+  cancelButton: document.getElementById("cancel-button"),
 
   planPanel: document.getElementById("plan-panel"),
 
@@ -103,10 +111,16 @@ const elements = {
   newFolder: document.getElementById("new-folder"),
 
   refreshTree: document.getElementById("refresh-tree"),
+  refreshHistory: document.getElementById("refresh-history"),
 
   themeToggle: document.getElementById("theme-toggle"),
 
   toast: document.getElementById("toast"),
+  changes: document.getElementById("changes"),
+  refreshChanges: document.getElementById("refresh-changes"),
+  changeFiles: document.getElementById("change-files"),
+  changeDiff: document.getElementById("change-diff"),
+  gitBranch: document.getElementById("git-branch"),
 };
 
 /* ==========================================================================
@@ -132,6 +146,7 @@ function connect() {
     send({
       type: "GetTree",
     });
+    refreshHistory();
   });
 
   socket.addEventListener("message", (event) => {
@@ -242,6 +257,8 @@ function handleServerMessage(message) {
     case "Error":
       showToast(message.data.message);
 
+      if (currentSection === "changes") elements.changeDiff.textContent = message.data.message;
+
       addSystemMessage(message.data.message);
 
       break;
@@ -278,14 +295,23 @@ function handleAgentEvent(event) {
       break;
 
     case "ToolStarted":
-      setAgentStatus("Doing", `Running ${event.data.name}`);
+      activeToolName = event.data.name;
+      {
+        const context = String(event.data.input || "").replace(/\s+/g, " ").trim();
+        setAgentStatus("Doing", context
+          ? `Running ${event.data.name} · ${context.slice(0, 120)}${context.length > 120 ? "…" : ""}`
+          : `Running ${event.data.name}`);
+      }
 
       addToolMessage(event.data);
 
       break;
 
     case "ToolFinished":
-      setAgentStatus("Doing", `${event.data.name} finished`);
+      activeToolName = null;
+      setAgentStatus(event.data.failed ? "Error" : "Doing", event.data.failed
+        ? `${event.data.name} failed after ${formatDuration(event.data.duration_ms)}`
+        : `${event.data.name} completed in ${formatDuration(event.data.duration_ms)}`);
 
       addToolFinishedMessage(event.data);
 
@@ -311,7 +337,8 @@ function handleAgentEvent(event) {
       break;
 
     case "Error":
-      setAgentStatus("Error", "Something went wrong");
+      activeToolName = null;
+      setAgentStatus("Error", String(event.data || "Unknown agent error"));
 
       addSystemMessage(event.data);
 
@@ -323,10 +350,38 @@ function handleAgentEvent(event) {
       break;
 
     case "Finished":
-      setAgentStatus("Idle", "Ready for another task");
+      activeToolName = null;
+      if (currentState !== "Error" && currentState !== "Cancelled") {
+        setAgentStatus("Idle", "Task finished · Ready for another request");
+      }
 
       currentAssistantMessage = null;
+      refreshHistory();
 
+      break;
+
+    case "Cancelled":
+      activeToolName = null;
+      currentAssistantMessage = null;
+      if (activeToolMessage) {
+        activeToolMessage.textContent += "\nCancelled";
+        activeToolMessage = null;
+      }
+      setAgentStatus("Cancelled", "Generation cancelled · Ready for another request");
+      hideConfirmation();
+      addSystemMessage("Generation cancelled.");
+      break;
+
+    case "ToolProgress": {
+      const percent = Number.isFinite(event.data?.progress_percent) ? ` · ${event.data.progress_percent}%` : "";
+      const output = String(event.data?.output || "").trim();
+      const summary = output.split("\n").filter(Boolean).slice(-1)[0] || "In progress";
+      setAgentStatus("Doing", `${event.data?.name || activeToolName || "Tool"}${percent} · ${summary.slice(0, 140)}`);
+      break;
+    }
+
+    case "ThinkingContent":
+      setAgentStatus("Thinking", String(event.data || "Reasoning").replace(/\s+/g, " ").slice(0, 160));
       break;
   }
 }
@@ -352,6 +407,7 @@ function updateAgentStatus(data) {
     waiting: ["Waiting", "Waiting for your approval"],
 
     error: ["Error", "Something went wrong"],
+    cancelled: ["Cancelled", "Generation cancelled"],
   };
 
   const [label, detail] = labels[state] ?? [String(raw), "Agent status"];
@@ -375,6 +431,89 @@ function setAgentStatus(label, detail) {
   if (state === "error") {
     elements.agentStatusDot.classList.add("error");
   }
+  if (state === "cancelled") {
+    elements.agentStatusDot.classList.add("cancelled");
+  }
+
+  const generating = ["thinking", "doing", "talking", "waiting"].includes(state);
+  elements.sendButton.hidden = generating;
+  elements.cancelButton.hidden = !generating;
+  elements.cancelButton.disabled = false;
+}
+
+function formatDuration(milliseconds) {
+  const value = Number(milliseconds);
+  if (!Number.isFinite(value) || value < 0) return "unknown duration";
+  return value < 1000 ? `${Math.round(value)} ms` : `${(value / 1000).toFixed(1)} s`;
+}
+
+function setSection(section) {
+  currentSection = section;
+  ideOpen = section === "ide";
+  document.querySelectorAll("[data-section]").forEach((button) => {
+    const active = button.dataset.section === section;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  elements.ide.classList.toggle("hidden", section !== "ide");
+  elements.changes.classList.toggle("hidden", section !== "changes");
+  document.querySelector(".agent-panel").classList.toggle("hidden", section !== "agent");
+  elements.workspaceLayout.classList.toggle("ide-open", false);
+  elements.currentFile.textContent = section === "agent" ? "Agent" : section === "ide" ? (currentFile || "IDE") : "Changes";
+  elements.toggleIde.classList.toggle("open", section === "ide");
+  elements.toggleIde.textContent = section === "ide" ? "Close IDE" : "Open IDE";
+  if (section === "ide" && monacoEditor) requestAnimationFrame(() => monacoEditor.layout());
+  if (section === "changes") refreshChanges();
+}
+
+async function refreshChanges() {
+  elements.changeFiles.innerHTML = '<div class="empty">Loading Git status…</div>';
+  elements.gitBranch.textContent = "Checking repository…";
+  try {
+    const response = await fetch("/api/git-status");
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Unable to read Git status.");
+    elements.gitBranch.textContent = result.branch ? `Branch · ${result.branch}` : "Detached HEAD";
+    elements.changeFiles.innerHTML = "";
+    if (!result.files.length) {
+      elements.changeFiles.innerHTML = '<div class="empty">Working tree clean. Git reports no staged, unstaged, or untracked files.</div>';
+      elements.changeDiff.textContent = "No changes to review.";
+      selectedChangePath = null;
+      return;
+    }
+    for (const file of result.files) {
+      const button = document.createElement("button");
+      button.className = "change-file";
+      button.classList.toggle("selected", file.path === selectedChangePath);
+      const status = document.createElement("span");
+      status.className = `change-kind ${file.kind}`;
+      status.textContent = file.kind === "untracked" ? "?" : file.kind[0].toUpperCase();
+      const name = document.createElement("span");
+      name.className = "change-file-name";
+      name.textContent = file.path;
+      button.append(status, name);
+      button.addEventListener("click", () => {
+        selectedChangePath = file.path;
+        document.querySelectorAll(".change-file").forEach((item) => item.classList.remove("selected"));
+        button.classList.add("selected");
+        elements.changeDiff.textContent = "Loading diff…";
+        send({ type: "GetDiff", data: { path: file.path } });
+      });
+      elements.changeFiles.appendChild(button);
+    }
+    if (!selectedChangePath || !result.files.some((file) => file.path === selectedChangePath)) {
+      selectedChangePath = null;
+      elements.changeFiles.querySelector(".change-file")?.click();
+    }
+  } catch (error) {
+    elements.changeFiles.innerHTML = "";
+    const message = document.createElement("div");
+    message.className = "empty error-text";
+    message.textContent = error instanceof Error ? error.message : String(error);
+    elements.changeFiles.appendChild(message);
+    elements.gitBranch.textContent = "Git unavailable";
+  }
 }
 
 /* ==========================================================================
@@ -391,6 +530,9 @@ function setIdeOpen(open) {
   elements.toggleIde.textContent = open ? "Close IDE" : "Open IDE";
 
   elements.toggleIde.classList.toggle("open", open);
+
+  if (open) setSection("ide");
+  else if (currentSection === "ide") setSection("agent");
 
   if (open && monacoEditor) {
     requestAnimationFrame(() => {
@@ -427,6 +569,68 @@ function renderExplorer(entries) {
   elements.explorer.appendChild(root);
 
   elements.workspaceName.textContent = "Current Workspace";
+}
+
+async function refreshHistory() {
+  if (!elements.chatHistory) return;
+  try {
+    const response = await fetch("/api/history");
+    const chats = await response.json();
+    if (!response.ok) throw new Error(chats.error || "Could not load chat history.");
+    elements.chatHistory.replaceChildren();
+    if (!chats.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty";
+      empty.textContent = "No saved chats yet.";
+      elements.chatHistory.appendChild(empty);
+      return;
+    }
+    for (const chat of chats) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "history-row";
+      button.classList.toggle("active", chat.id === currentChatId);
+      button.title = `${chat.title} · ${chat.messages} messages`;
+      const title = document.createElement("span");
+      title.className = "history-row-title";
+      title.textContent = chat.title || "Untitled chat";
+      const meta = document.createElement("span");
+      meta.className = "history-row-meta";
+      meta.textContent = `${chat.messages} messages · ${new Date(chat.updated_at * 1000).toLocaleDateString()}`;
+      button.append(title, meta);
+      button.addEventListener("click", () => void restoreHistoryChat(chat.id));
+      elements.chatHistory.appendChild(button);
+    }
+  } catch (error) {
+    elements.chatHistory.replaceChildren();
+    const message = document.createElement("div");
+    message.className = "empty error-text";
+    message.textContent = error instanceof Error ? error.message : String(error);
+    elements.chatHistory.appendChild(message);
+  }
+}
+
+async function restoreHistoryChat(id) {
+  try {
+    const response = await fetch(`/api/history/${encodeURIComponent(id)}`);
+    const chat = await response.json();
+    if (!response.ok) throw new Error(chat.error || "Could not open this chat.");
+    currentChatId = chat.id;
+    elements.messages.replaceChildren();
+    elements.chatEmpty.style.display = "none";
+    for (const item of chat.messages || []) {
+      const role = item.role === "user" ? "user" : item.role === "assistant" ? "assistant" : "system";
+      if (role === "system" && item.role === "tool") continue;
+      addMessage(role, item.content);
+    }
+    elements.chatInput.value = "";
+    currentAssistantMessage = null;
+    send({ type: "Chat", data: `/restore ${id}` });
+    setAgentStatus("Idle", "Chat restored · Ready to continue");
+    await refreshHistory();
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error));
+  }
 }
 
 function createTreeRoot() {
@@ -889,9 +1093,9 @@ function initializeMonaco(callback = null) {
       language: "plaintext",
 
       theme:
-        document.documentElement.getAttribute("data-theme") === "dark"
-          ? "vs-dark"
-          : "vs",
+        document.documentElement.getAttribute("data-appearance") === "light"
+          ? "vs"
+          : "vs-dark",
 
       automaticLayout: true,
 
@@ -1040,8 +1244,11 @@ function requestDiff() {
 
 function showDiff(path, diff) {
   const content = diff.trim() ? diff : "No changes.";
-
-  addMessage("system", `${path}\n\n${content}`);
+  if (currentSection === "changes") {
+    elements.changeDiff.textContent = content;
+  } else {
+    addMessage("system", `${path}\n\n${content}`);
+  }
 }
 
 /* ==========================================================================
@@ -1128,17 +1335,45 @@ function addSystemMessage(text) {
 }
 
 function addToolMessage(tool) {
-  const message = addMessage(
-    "system",
-    `Running ${tool.name}\n${tool.input ?? ""}`,
-  );
-
-  message.parentElement.classList.add("tool-message");
+  const content = addMessage("system", "");
+  const message = content.parentElement;
+  message.classList.add("tool-message");
+  const details = document.createElement("details");
+  details.className = "tool-activity";
+  const summary = document.createElement("summary");
+  summary.textContent = `Running ${tool.name}`;
+  const input = document.createElement("pre");
+  input.className = "tool-activity-input";
+  input.textContent = String(tool.input || "");
+  details.append(summary, input);
+  content.replaceWith(details);
+  activeToolMessage = details;
 }
 
 function addToolFinishedMessage(tool) {
-  addMessage("system", `${tool.name} finished in ${tool.duration_ms} ms`);
+  const message = `${tool.name} ${tool.failed ? "failed" : "completed"} in ${tool.duration_ms} ms`;
+  if (activeToolMessage) {
+    activeToolMessage.querySelector("summary").textContent = message;
+    if (typeof tool.diff === "string" && tool.diff) {
+      const diff = document.createElement("pre");
+      diff.className = "tool-activity-diff";
+      diff.textContent = tool.diff;
+      activeToolMessage.appendChild(diff);
+    }
+    activeToolMessage = null;
+  } else {
+    addSystemMessage(message);
+  }
 }
+
+window.addEventListener("keydown", (event) => {
+  if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "o") return;
+  event.preventDefault();
+  const disclosures = [...elements.messages.querySelectorAll("details.tool-activity")];
+  if (disclosures.length === 0) return;
+  const shouldExpand = disclosures.some((item) => !item.open);
+  for (const disclosure of disclosures) disclosure.open = shouldExpand;
+});
 
 /* ==========================================================================
    Plan
@@ -1410,6 +1645,12 @@ elements.chatInput.addEventListener("keydown", (event) => {
 
 elements.chatInput.addEventListener("input", autoResizeChat);
 
+elements.cancelButton.addEventListener("click", () => {
+  if (!send({ type: "Cancel" })) return;
+  elements.cancelButton.disabled = true;
+  setAgentStatus("Thinking", "Cancelling generation…");
+});
+
 function autoResizeChat() {
   elements.chatInput.style.height = "auto";
 
@@ -1428,6 +1669,12 @@ elements.saveFile.addEventListener("click", saveCurrentFile);
 elements.showDiff.addEventListener("click", requestDiff);
 
 elements.refreshTree.addEventListener("click", refreshTree);
+elements.refreshHistory?.addEventListener("click", refreshHistory);
+elements.refreshChanges.addEventListener("click", refreshChanges);
+window.addEventListener("luma:mode-change", (event) => {
+  const mode = event.detail;
+  if (mode === "agent" || mode === "ide" || mode === "changes") setSection(mode);
+});
 
 function basename(path) {
   return path.split("/").pop();
@@ -1471,40 +1718,50 @@ function updateUsage(data) {
    Theme
    ========================================================================== */
 
-function loadTheme() {
-  const theme = localStorage.getItem("luma-theme");
+const THEME_STORAGE_KEY = "luma.theme";
+const THEME_IDS = new Set([
+  "system", "luma", "luma-light", "midnight", "nord", "dracula", "solarized",
+]);
 
-  if (theme === "dark") {
-    document.documentElement.setAttribute("data-theme", "dark");
+function resolveDashboardTheme(theme) {
+  if (theme === "system") {
+    return {
+      palette: "luma",
+      appearance: window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark",
+    };
+  }
+  if (theme === "luma-light") return { palette: "luma", appearance: "light" };
+  return { palette: theme, appearance: "dark" };
+}
 
-    elements.themeToggle.textContent = "☀";
+function applyDashboardTheme() {
+  const stored = localStorage.getItem(THEME_STORAGE_KEY);
+  const theme = THEME_IDS.has(stored) ? stored : "luma";
+  const resolved = resolveDashboardTheme(theme);
+  const root = document.documentElement;
+
+  root.dataset.theme = resolved.palette;
+  root.dataset.appearance = resolved.appearance;
+  elements.themeToggle.textContent = resolved.appearance === "light" ? "☾" : "☼";
+  elements.themeToggle.title = resolved.appearance === "light" ? "Switch to dark appearance" : "Switch to light appearance";
+
+  if (monacoEditor) {
+    monaco.editor.setTheme(resolved.appearance === "light" ? "vs" : "vs-dark");
   }
 }
 
+function loadTheme() {
+  applyDashboardTheme();
+  window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+    if (localStorage.getItem(THEME_STORAGE_KEY) === "system") applyDashboardTheme();
+  });
+}
+
 elements.themeToggle.addEventListener("click", () => {
-  const dark = document.documentElement.getAttribute("data-theme") === "dark";
-
-  if (dark) {
-    document.documentElement.removeAttribute("data-theme");
-
-    localStorage.setItem("luma-theme", "light");
-
-    elements.themeToggle.textContent = "☾";
-
-    if (monacoEditor) {
-      monaco.editor.setTheme("vs");
-    }
-  } else {
-    document.documentElement.setAttribute("data-theme", "dark");
-
-    localStorage.setItem("luma-theme", "dark");
-
-    elements.themeToggle.textContent = "☀";
-
-    if (monacoEditor) {
-      monaco.editor.setTheme("vs-dark");
-    }
-  }
+  const current = localStorage.getItem(THEME_STORAGE_KEY);
+  const appearance = resolveDashboardTheme(THEME_IDS.has(current) ? current : "luma").appearance;
+  localStorage.setItem(THEME_STORAGE_KEY, appearance === "dark" ? "luma-light" : "luma");
+  applyDashboardTheme();
 });
 
 /* ==========================================================================
@@ -1529,3 +1786,8 @@ initializeMonaco();
 updateEditorUI();
 
 connect();
+window.setInterval(() => {
+  if (document.visibilityState === "visible") void refreshHistory();
+}, 5000);
+
+export {};

@@ -16,6 +16,7 @@ export type AgentTool = {
   input: string;
   durationMs?: number;
   finished: boolean;
+  diff?: string;
 };
 
 export type ConfirmationRequest = {
@@ -25,6 +26,7 @@ export type ConfirmationRequest = {
 
 export function useLuma() {
   const [connected, setConnected] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   const [messages, setMessages] = useState<AgentMessage[]>([]);
 
@@ -39,6 +41,7 @@ export function useLuma() {
   );
 
   const activeToolIds = useRef<string[]>([]);
+  const pendingToolDiff = useRef<string | undefined>(undefined);
   const mountedRef = useRef(false);
 
   const requestSession = useCallback(async () => {
@@ -84,6 +87,7 @@ export function useLuma() {
 
       case "session": {
         const snapshot = event.data.session;
+        setSessionId(snapshot.chat_id);
         setMessages(snapshot.messages
           .filter((message) => message.role !== "tool")
           .map((message, index) => ({
@@ -129,8 +133,6 @@ export function useLuma() {
           return;
         }
 
-        setThinking(false);
-
         setMessages((current) => {
           const last = current[current.length - 1];
 
@@ -166,8 +168,6 @@ export function useLuma() {
           return;
         }
 
-        setThinking(false);
-
         setMessages((current) => [
           ...current,
           {
@@ -177,6 +177,13 @@ export function useLuma() {
           },
         ]);
 
+        break;
+      }
+
+      case "ChangePreview": {
+        if (typeof data === "object" && data !== null && "diff" in data && typeof data.diff === "string") {
+          pendingToolDiff.current = data.diff;
+        }
         break;
       }
 
@@ -203,10 +210,11 @@ export function useLuma() {
             name: tool.name,
             input: tool.input,
             finished: false,
+            diff: tool.name === "patch_file" ? pendingToolDiff.current : undefined,
           },
         ]);
+        pendingToolDiff.current = undefined;
 
-        setThinking(false);
         announce(`Running tool: ${tool.name}`);
 
         break;
@@ -250,6 +258,7 @@ export function useLuma() {
                   ...currentItem,
                   finished: true,
                   durationMs: tool.duration_ms,
+                  diff: typeof tool.diff === "string" ? tool.diff : currentItem.diff,
                 }
               : currentItem,
           );
@@ -266,8 +275,6 @@ export function useLuma() {
         if (!isConfirmationData(data)) {
           return;
         }
-
-        setThinking(false);
 
         setConfirmation({
           name: data.name,
@@ -305,6 +312,37 @@ export function useLuma() {
       case "Finished": {
         setThinking(false);
         setConfirmation(null);
+        pendingToolDiff.current = undefined;
+        break;
+      }
+
+      case "Cancelled": {
+        setThinking(false);
+        setConfirmation(null);
+        activeToolIds.current = [];
+        setTools((current) => current.map((tool) => ({ ...tool, finished: true })));
+        setMessages((current) => [...current, {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "Generation cancelled.",
+        }]);
+        break;
+      }
+
+      case "Status": {
+        if (typeof data === "object" && data !== null && "state" in data) {
+          const state = String((data as { state: unknown }).state);
+          setThinking(["thinking", "doing", "talking", "waiting"].includes(state));
+        }
+        break;
+      }
+
+      case "Error": {
+        const message = typeof data === "string" ? data : "The agent encountered an error.";
+        setError(message);
+        setThinking(false);
+        setConfirmation(null);
+        announce(`Error: ${message}`, "assertive");
         break;
       }
 
@@ -369,6 +407,9 @@ export function useLuma() {
     }
 
     setError(null);
+    setTools([]);
+    activeToolIds.current = [];
+    pendingToolDiff.current = undefined;
 
     setMessages((current) => [
       ...current,
@@ -418,6 +459,7 @@ export function useLuma() {
 
   return {
     connected,
+    sessionId,
     messages,
     tools,
     thinking,
@@ -450,6 +492,7 @@ function isToolStartedData(data: unknown): data is {
 function isToolFinishedData(data: unknown): data is {
   name: string;
   duration_ms: number;
+  diff?: string | null;
 } {
   if (typeof data !== "object" || data === null) {
     return false;

@@ -113,7 +113,7 @@ export function useSession(initialSetup = false) {
             const index = messages.findIndex((message) => message.id === tool.id);
             messages[index] = {
               ...tool,
-              content: `${event.data.name} — ${event.data.duration_ms} ms${event.data.failed ? " (failed)" : ""}`,
+              content: `${tool.content}\n${event.data.name} — ${event.data.duration_ms} ms${event.data.failed ? " (failed)" : ""}${event.data.diff ? `\n${event.data.diff}` : ""}`,
             };
           }
           status = "thinking";

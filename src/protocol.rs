@@ -115,6 +115,106 @@ pub enum ClientMessage {
         host: String,
         port: u16,
     },
+
+    // -- Persistent runtime ---------------------------------------------
+    AgentsList {
+        request_id: String,
+    },
+    AgentCreate {
+        request_id: String,
+        name: String,
+        description: Option<String>,
+        kind: crate::runtime::AgentKind,
+        configuration: crate::runtime::AgentConfiguration,
+    },
+    AgentDelete {
+        request_id: String,
+        id: String,
+    },
+    AgentUpdate {
+        request_id: String,
+        id: String,
+        name: Option<String>,
+        description: Option<String>,
+        configuration: Option<crate::runtime::AgentConfiguration>,
+    },
+    AgentSetStatus {
+        request_id: String,
+        id: String,
+        status: crate::runtime::AgentStatus,
+    },
+    TasksList {
+        request_id: String,
+        agent_id: Option<String>,
+        limit: Option<usize>,
+    },
+    TaskCreate {
+        request_id: String,
+        agent_id: String,
+        request: String,
+        title: Option<String>,
+        workspace: Option<String>,
+        recover_on_restart: bool,
+    },
+    TaskCancel {
+        request_id: String,
+        id: String,
+    },
+    TaskRetry {
+        request_id: String,
+        id: String,
+    },
+    ApprovalsList {
+        request_id: String,
+    },
+    ApprovalResolve {
+        request_id: String,
+        id: String,
+        allowed: bool,
+    },
+    MemoryList {
+        request_id: String,
+        scope: crate::runtime::MemoryScope,
+        scope_id: String,
+        query: Option<String>,
+        limit: Option<usize>,
+    },
+    MemoryAdd {
+        request_id: String,
+        scope: crate::runtime::MemoryScope,
+        scope_id: String,
+        content: String,
+        source: Option<String>,
+    },
+    MemoryDelete {
+        request_id: String,
+        id: String,
+    },
+    SchedulesList {
+        request_id: String,
+        agent_id: Option<String>,
+    },
+    ScheduleCreate {
+        request_id: String,
+        agent_id: String,
+        title: String,
+        prompt: String,
+        run_at: Option<i64>,
+        every_seconds: Option<u64>,
+    },
+    ScheduleDelete {
+        request_id: String,
+        id: String,
+    },
+    EventsSince {
+        request_id: String,
+        sequence: i64,
+        limit: Option<usize>,
+        agent_id: Option<String>,
+    },
+    RuntimeCapabilities {
+        request_id: String,
+    },
 }
 
 impl ClientMessage {
@@ -139,7 +239,26 @@ impl ClientMessage {
             | Self::HistoryList { request_id }
             | Self::HistoryShow { request_id, .. }
             | Self::SummaryAdd { request_id, .. }
-            | Self::StartDashboard { request_id, .. } => Some(request_id),
+            | Self::StartDashboard { request_id, .. }
+            | Self::AgentsList { request_id }
+            | Self::AgentCreate { request_id, .. }
+            | Self::AgentDelete { request_id, .. }
+            | Self::AgentUpdate { request_id, .. }
+            | Self::AgentSetStatus { request_id, .. }
+            | Self::TasksList { request_id, .. }
+            | Self::TaskCreate { request_id, .. }
+            | Self::TaskCancel { request_id, .. }
+            | Self::TaskRetry { request_id, .. }
+            | Self::ApprovalsList { request_id }
+            | Self::ApprovalResolve { request_id, .. }
+            | Self::MemoryList { request_id, .. }
+            | Self::MemoryAdd { request_id, .. }
+            | Self::MemoryDelete { request_id, .. }
+            | Self::SchedulesList { request_id, .. }
+            | Self::ScheduleCreate { request_id, .. }
+            | Self::ScheduleDelete { request_id, .. }
+            | Self::EventsSince { request_id, .. }
+            | Self::RuntimeCapabilities { request_id } => Some(request_id),
         }
     }
 }
@@ -177,7 +296,26 @@ impl ClientMessage {
             | Self::HistoryList { .. }
             | Self::HistoryShow { .. }
             | Self::SummaryAdd { .. }
-            | Self::StartDashboard { .. } => None,
+            | Self::StartDashboard { .. }
+            | Self::AgentsList { .. }
+            | Self::AgentCreate { .. }
+            | Self::AgentDelete { .. }
+            | Self::AgentUpdate { .. }
+            | Self::AgentSetStatus { .. }
+            | Self::TasksList { .. }
+            | Self::TaskCreate { .. }
+            | Self::TaskCancel { .. }
+            | Self::TaskRetry { .. }
+            | Self::ApprovalsList { .. }
+            | Self::ApprovalResolve { .. }
+            | Self::MemoryList { .. }
+            | Self::MemoryAdd { .. }
+            | Self::MemoryDelete { .. }
+            | Self::SchedulesList { .. }
+            | Self::ScheduleCreate { .. }
+            | Self::ScheduleDelete { .. }
+            | Self::EventsSince { .. }
+            | Self::RuntimeCapabilities { .. } => None,
         }
     }
 }
@@ -191,9 +329,13 @@ impl ClientMessage {
 pub enum ServerEvent {
     /// Handshake, sent once the core is ready to accept prompts.
     Ready {
-        /// Protocol version. A client that does not recognise this should
-        /// refuse to start rather than guess.
+        /// Protocol major version. Additive runtime operations are discovered
+        /// through RuntimeCapabilities and do not require a major bump.
         version: u32,
+        /// Optional capabilities keep older v3 clients compatible while
+        /// allowing newer clients to discover additive runtime support.
+        #[serde(default)]
+        features: Vec<String>,
     },
 
     /// The transcript advanced. Clients that keep their own copy of the
@@ -259,9 +401,74 @@ pub enum ServerEvent {
         request_id: String,
         address: String,
     },
+    Agents {
+        request_id: String,
+        agents: Vec<crate::runtime::AgentRecord>,
+    },
+    AgentSaved {
+        request_id: String,
+        agent: crate::runtime::AgentRecord,
+    },
+    AgentDeleted {
+        request_id: String,
+        id: String,
+        deleted: bool,
+    },
+    Tasks {
+        request_id: String,
+        tasks: Vec<crate::runtime::TaskRecord>,
+    },
+    TaskSaved {
+        request_id: String,
+        task: crate::runtime::TaskRecord,
+    },
+    Approvals {
+        request_id: String,
+        approvals: Vec<crate::runtime::ApprovalRecord>,
+    },
+    ApprovalResolved {
+        request_id: String,
+        approval: crate::runtime::ApprovalRecord,
+    },
+    Memory {
+        request_id: String,
+        entries: Vec<crate::runtime::MemoryEntry>,
+    },
+    MemorySaved {
+        request_id: String,
+        entry: crate::runtime::MemoryEntry,
+    },
+    MemoryDeleted {
+        request_id: String,
+        deleted: bool,
+    },
+    Schedules {
+        request_id: String,
+        schedules: Vec<crate::runtime::ScheduleRecord>,
+    },
+    ScheduleSaved {
+        request_id: String,
+        schedule: crate::runtime::ScheduleRecord,
+    },
+    ScheduleDeleted {
+        request_id: String,
+        deleted: bool,
+    },
+    RuntimeEvents {
+        request_id: String,
+        events: Vec<crate::runtime::RuntimeEvent>,
+    },
+    RuntimeCapabilities {
+        request_id: String,
+        features: Vec<String>,
+        storage_schema: u32,
+    },
+    RuntimeNotice {
+        event: crate::runtime::RuntimeEvent,
+    },
 }
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -384,9 +591,21 @@ mod tests {
     }
 
     #[test]
+    fn agent_delete_requests_keep_their_request_id() {
+        let message = ClientMessage::AgentDelete {
+            request_id: "delete-agent-1".into(),
+            id: "agent_123".into(),
+        };
+        let decoded = decode(encode(&message).unwrap().trim_end()).unwrap();
+        assert_eq!(decoded.request_id(), Some("delete-agent-1"));
+        assert!(matches!(decoded, ClientMessage::AgentDelete { id, .. } if id == "agent_123"));
+    }
+
+    #[test]
     fn server_events_use_snake_case_tags() {
         let line = encode(&ServerEvent::Ready {
             version: PROTOCOL_VERSION,
+            features: vec!["persistent_agents".into()],
         })
         .unwrap();
 

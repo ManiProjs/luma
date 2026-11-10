@@ -9,13 +9,14 @@ mod event;
 mod history;
 mod logging;
 mod model;
-mod planner;
 mod protocol;
 mod provider;
-mod router;
+mod react;
+mod runtime;
 mod session;
 mod tasks;
 mod tools;
+mod worker;
 mod workspace;
 
 #[cfg(feature = "tui")]
@@ -32,25 +33,7 @@ use event::AgentEvent;
 use history::History;
 use tokio_util::sync::CancellationToken;
 
-use tools::{
-    ToolRegistry,
-    code_intelligence::{FindReferences, FindSymbols},
-    developer::{
-        CountLines, FileMetadata, FindTodos, GitBlame, GitBranches, GitLog, GitShow, InspectProject,
-    },
-    filesystem::{
-        list_directory::ListDirectory, patch_file::PatchFile, read_file::ReadFile,
-        search_files::SearchFiles, write_file::WriteFile,
-    },
-    git::{GitDiff, GitStatus},
-    shell::RunCommand,
-    skills::{ListSkills, LoadSkill},
-};
-
-use crate::{
-    model::{DynamicModel, create_model},
-    session::SessionInfo,
-};
+use crate::{model::DynamicModel, session::SessionInfo};
 
 use dialoguer::Confirm;
 
@@ -100,6 +83,10 @@ async fn run() -> Result<()> {
         return run_desktop_server().await;
     }
 
+    if args.len() == 2 && args[0] == "task-worker" {
+        return worker::run_task_worker(&args[1]).await;
+    }
+
     if !args.is_empty() {
         anyhow::bail!(
             "CLI commands are provided by the Ink app. Invoke `luma` instead of `luma-core`."
@@ -132,38 +119,16 @@ async fn run() -> Result<()> {
     // Tools
     // ========================================================
 
-    let mut tools = ToolRegistry::new();
-
-    tools.register(ReadFile);
-    tools.register(ListDirectory);
-    tools.register(RunCommand);
-    tools.register(SearchFiles);
-    tools.register(WriteFile);
-    tools.register(PatchFile);
-    tools.register(GitStatus);
-    tools.register(GitDiff);
-    tools.register(FindSymbols);
-    tools.register(FindReferences);
-    tools.register(GitLog);
-    tools.register(GitShow);
-    tools.register(GitBlame);
-    tools.register(GitBranches);
-    tools.register(FileMetadata);
-    tools.register(FindTodos);
-    tools.register(CountLines);
-    tools.register(InspectProject);
-    tools.register(ListSkills);
-    tools.register(LoadSkill);
+    let tools = tools::default_registry();
 
     let tool_names = tools.names();
 
     // ========================================================
-    // Planner
+    // ReAct model (shared by action selection and final responses)
     // ========================================================
 
-    let planner_model = create_model(&config.planner);
-
-    let planner = planner::Planner::new(planner_model, &tools);
+    let model = DynamicModel::new(&config.model);
+    let react = react::ReAct::new(model.clone(), &tools);
 
     // ========================================================
     // History / Workspace
@@ -179,9 +144,7 @@ async fn run() -> Result<()> {
     // Agent
     // ========================================================
 
-    let model = create_model(&config.model);
-
-    let mut agent = Agent::new(model, planner, tools, history, galaxy);
+    let mut agent = Agent::new(model, react, tools, history, galaxy);
 
     // ========================================================
     // Channels
@@ -217,7 +180,8 @@ async fn run() -> Result<()> {
         tool_names,
     );
 
-    let session = session::Session::new(info, confirmation_tx, cancel.clone());
+    let request_cancel = session::RequestCancellation::new(cancel.clone());
+    let session = session::Session::new(info, confirmation_tx, request_cancel.clone());
 
     // ========================================================
     // Agent
@@ -227,7 +191,13 @@ async fn run() -> Result<()> {
 
     tokio::spawn(async move {
         if let Err(error) = agent
-            .run(input_rx, event_tx, agent_cancel, confirmation_rx)
+            .run(
+                input_rx,
+                event_tx,
+                agent_cancel,
+                request_cancel,
+                confirmation_rx,
+            )
             .await
         {
             tracing::error!("Agent stopped: {}", error);
@@ -279,42 +249,32 @@ async fn run_desktop_server() -> Result<()> {
 
     let config = config::load_or_default()?;
 
+    // Persistent identities and queued work belong to the core process, not
+    // to the client connection. Reconcile unfinished work before accepting
+    // new requests.
+    let runtime = runtime::RuntimeStore::open_default()?;
+    let recovered = runtime.recover_after_restart()?;
+    if !recovered.is_empty() {
+        tracing::warn!(
+            count = recovered.len(),
+            "reconciled unfinished runtime tasks after restart"
+        );
+    }
+
     // ========================================================
     // Tools
     // ========================================================
 
-    let mut tools = ToolRegistry::new();
-
-    tools.register(ReadFile);
-    tools.register(ListDirectory);
-    tools.register(RunCommand);
-    tools.register(SearchFiles);
-    tools.register(WriteFile);
-    tools.register(PatchFile);
-    tools.register(GitStatus);
-    tools.register(GitDiff);
-    tools.register(FindSymbols);
-    tools.register(FindReferences);
-    tools.register(GitLog);
-    tools.register(GitShow);
-    tools.register(GitBlame);
-    tools.register(GitBranches);
-    tools.register(FileMetadata);
-    tools.register(FindTodos);
-    tools.register(CountLines);
-    tools.register(InspectProject);
-    tools.register(ListSkills);
-    tools.register(LoadSkill);
+    let tools = tools::default_registry();
 
     let tool_names = tools.names();
 
     // ========================================================
-    // Planner
+    // ReAct
     // ========================================================
 
-    let planner_model = DynamicModel::new(&config.planner);
-
-    let planner = planner::Planner::new(planner_model.clone(), &tools);
+    let model = model::DynamicModel::new(&config.model);
+    let react = react::ReAct::new(model.clone(), &tools);
 
     // ========================================================
     // History / Workspace
@@ -330,9 +290,7 @@ async fn run_desktop_server() -> Result<()> {
     // Agent
     // ========================================================
 
-    let model = model::DynamicModel::new(&config.model);
-
-    let mut agent = Agent::new(model.clone(), planner, tools, history, galaxy);
+    let mut agent = Agent::new(model.clone(), react, tools, history, galaxy);
 
     // ========================================================
     // Channels
@@ -353,7 +311,8 @@ async fn run_desktop_server() -> Result<()> {
         tool_names,
     );
 
-    let session = session::Session::new(info, confirmation_tx.clone(), cancel.clone());
+    let request_cancel = session::RequestCancellation::new(cancel.clone());
+    let session = session::Session::new(info, confirmation_tx.clone(), request_cancel.clone());
 
     // ========================================================
     // Agent
@@ -363,7 +322,13 @@ async fn run_desktop_server() -> Result<()> {
 
     tokio::spawn(async move {
         if let Err(error) = agent
-            .run(input_rx, event_tx, agent_cancel, confirmation_rx)
+            .run(
+                input_rx,
+                event_tx,
+                agent_cancel,
+                request_cancel,
+                confirmation_rx,
+            )
             .await
         {
             tracing::error!("Desktop agent stopped: {}", error);
@@ -374,16 +339,9 @@ async fn run_desktop_server() -> Result<()> {
     // Desktop protocol
     // ========================================================
 
-    desktop::DesktopServer::new(
-        session,
-        input_tx,
-        cancel,
-        model,
-        planner_model,
-        confirmation_tx,
-    )
-    .run(event_rx)
-    .await?;
+    desktop::DesktopServer::new(session, input_tx, cancel, model, confirmation_tx, runtime)
+        .run(event_rx)
+        .await?;
 
     Ok(())
 }

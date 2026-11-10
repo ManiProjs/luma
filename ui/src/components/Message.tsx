@@ -3,17 +3,20 @@ import { Box, Text } from "ink";
 import type { Message as MessageType } from "../state";
 import { glyphs, theme } from "../theme";
 import { Markdown } from "./Markdown";
+import { useSpinner } from "../hooks/useSpinner";
 
 type Props = {
   message: MessageType;
+  running?: boolean;
 };
 
-export function Message({ message }: Props) {
+export function Message({ message, running = false }: Props) {
+  const spinner = useSpinner(message.role === "tool" && running);
   if (message.role === "user") {
     return (
       <Box flexDirection="column" marginTop={1}>
-        <Text color={theme.user} bold>{glyphs.user} YOU</Text>
-        <Box marginLeft={2}>
+        <Text color={theme.muted} bold>{glyphs.user} You</Text>
+        <Box marginLeft={2} marginTop={0}>
           <Markdown content={message.content} />
         </Box>
       </Box>
@@ -23,8 +26,8 @@ export function Message({ message }: Props) {
   if (message.role === "assistant") {
     return (
       <Box flexDirection="column" marginTop={1}>
-        <Text color={theme.brand} bold>{glyphs.assistant} LUMA</Text>
-        <Box marginLeft={2}>
+        <Text color={theme.brand} bold>{glyphs.assistant} Luma</Text>
+        <Box marginLeft={2} marginTop={0}>
           <Markdown content={message.content} />
         </Box>
       </Box>
@@ -32,10 +35,16 @@ export function Message({ message }: Props) {
   }
 
   if (message.role === "tool") {
+    const [heading, ...details] = message.content.split("\n");
     return (
-      <Box marginLeft={2} marginTop={1}>
-        <Text color={theme.tool}>{glyphs.tool} </Text>
-        <Text>{message.content}</Text>
+      <Box marginLeft={2} marginTop={1} flexDirection="column">
+        <Box flexDirection="row">
+          <Text color={running ? theme.brand : theme.chrome}>{glyphs.tool} </Text>
+          <Box flexGrow={1}>
+            <Text color={theme.muted}>{running ? spinner : ""} {heading}</Text>
+          </Box>
+        </Box>
+        {details.map((line, index) => <Text key={`${index}-${line}`} color={line.startsWith("+") ? theme.success : line.startsWith("-") ? theme.error : theme.muted}>{line}</Text>)}
       </Box>
     );
   }
@@ -43,8 +52,8 @@ export function Message({ message }: Props) {
   if (message.role === "plan") {
     return (
       <Box marginTop={1}>
-        <Text color={theme.plan}>{glyphs.plan} </Text>
-        <Text>{message.content}</Text>
+        <Text color={theme.brand}>{glyphs.plan} </Text>
+        <Text bold>{message.content}</Text>
       </Box>
     );
   }
@@ -52,8 +61,9 @@ export function Message({ message }: Props) {
   if (message.role === "preview") {
     const [path, ...diff] = message.content.split("\n");
     return (
-      <Box flexDirection="column" marginTop={1} borderStyle="round" borderColor={theme.warning} paddingX={1}>
-        <Text color={theme.warning} bold>Proposed change · {path}</Text>
+      <Box flexDirection="column" marginTop={1} marginLeft={1} borderStyle="single" borderLeft borderColor={theme.chrome} paddingLeft={1}>
+        <Text color={theme.warning} bold>Proposed change</Text>
+        <Text color={theme.muted}>{path}</Text>
         {diff.map((line, index) => <Text key={`${index}-${line}`} color={line.startsWith("+") ? theme.success : line.startsWith("-") ? theme.error : theme.muted}>{line}</Text>)}
       </Box>
     );

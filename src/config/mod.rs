@@ -8,8 +8,6 @@ use std::{collections::HashMap, fs, path::PathBuf};
 pub struct Config {
     pub model: ModelConfig,
 
-    pub planner: ModelConfig,
-
     #[serde(default)]
     pub providers: Vec<crate::provider::SupportedProvider>,
 
@@ -34,7 +32,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             model: ModelConfig::default(),
-            planner: ModelConfig::default(),
             providers: Vec::new(),
             provider_api_keys: HashMap::new(),
         }

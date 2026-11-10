@@ -829,13 +829,7 @@ fn backup_existing_config() -> Result<Option<PathBuf>> {
     Ok(Some(backup))
 }
 
-fn print_summary(
-    provider: ProviderDefinition,
-    endpoint: &str,
-    model: &str,
-    planner: &str,
-    has_api_key: bool,
-) {
+fn print_summary(provider: ProviderDefinition, endpoint: &str, model: &str, has_api_key: bool) {
     println!();
     println!("╭──────────────────────────────────────────────╮");
     println!("│              Luma Configuration              │");
@@ -844,7 +838,6 @@ fn print_summary(
     println!("  Provider   {}", provider.name);
     println!("  Endpoint   {}", endpoint);
     println!("  Model      {}", model);
-    println!("  Planner    {}", planner);
     println!(
         "  API key    {}",
         if has_api_key {
@@ -917,31 +910,6 @@ pub async fn run() -> Result<()> {
     .await?;
 
     // --------------------------------------------------
-    // Planner model
-    // --------------------------------------------------
-
-    println!();
-    println!("Luma can use a separate model for planning.");
-
-    let separate_planner = Confirm::with_theme(&theme)
-        .with_prompt("Use a separate planner model?")
-        .default(false)
-        .interact()?;
-
-    let planner = if separate_planner {
-        choose_model(
-            &theme,
-            provider,
-            &base_url,
-            api_key.as_deref(),
-            "Choose planner model",
-        )
-        .await?
-    } else {
-        model.clone()
-    };
-
-    // --------------------------------------------------
     // Connection test
     // --------------------------------------------------
 
@@ -980,7 +948,7 @@ pub async fn run() -> Result<()> {
     // Summary
     // --------------------------------------------------
 
-    print_summary(provider, &base_url, &model, &planner, api_key.is_some());
+    print_summary(provider, &base_url, &model, api_key.is_some());
 
     let save_config = Confirm::with_theme(&theme)
         .with_prompt("Save this configuration?")
@@ -1032,12 +1000,6 @@ pub async fn run() -> Result<()> {
             api_key: api_key.clone(),
         },
 
-        planner: ModelConfig {
-            provider: provider.id.to_string(),
-            endpoint: base_url.clone(),
-            name: planner.clone(),
-            api_key: api_key.clone(),
-        },
         providers: saved_providers,
         provider_api_keys,
     };
@@ -1061,7 +1023,6 @@ pub async fn run() -> Result<()> {
     println!();
     println!("  Provider   {}", provider.name);
     println!("  Model      {}", model);
-    println!("  Planner    {}", planner);
     println!("  Endpoint   {}", base_url);
     println!();
     println!("  Config     {}", config_path().display());

@@ -16,10 +16,23 @@ import {
   parseServerEvent,
   type ClientMessage,
   type ServerEvent,
+  type AgentConfiguration,
+  type AgentKind,
+  type AgentRecord,
+  type ChatSummary,
+  type ApprovalRecord,
+  type MemoryEntry,
+  type MemoryScope,
+  type ScheduleRecord,
+  type TaskRecord,
+  type RuntimeEvent,
 } from "../../shared/protocol";
 
 type PendingRequest = {
-  expectedType: "setup_config" | "setup_saved" | "providers" | "models" | "provider_tested" | "model_changed";
+  expectedType: "setup_config" | "setup_saved" | "providers" | "models" | "provider_tested" | "model_changed"
+    | "agents" | "agent_saved" | "agent_deleted" | "tasks" | "task_saved" | "approvals" | "approval_resolved"
+    | "memory" | "memory_saved" | "memory_deleted" | "schedules" | "schedule_saved" | "schedule_deleted" | "runtime_events"
+    | "history_list";
   resolve: (value: ServerEvent) => void;
   reject: (reason?: unknown) => void;
 };
@@ -87,6 +100,63 @@ async function assertInsideWorkspace(filePath: string): Promise<string> {
   return realPath;
 }
 
+type GitChange = {
+  path: string;
+  indexStatus: string;
+  worktreeStatus: string;
+  kind: "added" | "modified" | "deleted" | "renamed" | "untracked";
+};
+
+function runGit(args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("git", ["-C", workspaceRoot, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("close", (code) => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(stderr.trim() || `git ${args[0]} exited with code ${code ?? "unknown"}.`));
+    });
+  });
+}
+
+async function getGitChanges(): Promise<{ branch: string; files: GitChange[] }> {
+  const branch = (await runGit(["branch", "--show-current"])).trim() || "HEAD";
+  const status = await runGit(["status", "--porcelain=v1", "--untracked-files=all"]);
+  const files = status.split(/\r?\n/).filter(Boolean).map((line): GitChange => {
+    const indexStatus = line[0] ?? " ";
+    const worktreeStatus = line[1] ?? " ";
+    const rawPath = line.slice(3);
+    const renamed = rawPath.includes(" -> ");
+    const filePath = renamed ? rawPath.slice(rawPath.lastIndexOf(" -> ") + 4) : rawPath;
+    const code = indexStatus === "?" ? "?" : indexStatus !== " " ? indexStatus : worktreeStatus;
+    const kind: GitChange["kind"] = code === "?" ? "untracked" : code === "A" ? "added" : code === "D" ? "deleted" : code === "R" || renamed ? "renamed" : "modified";
+    return { path: filePath, indexStatus, worktreeStatus, kind };
+  });
+  return { branch, files };
+}
+
+async function getGitDiff(relativePath: string): Promise<string> {
+  const target = resolveWorkspacePath(relativePath);
+  const stat = await fs.lstat(target).catch(() => null);
+  if (!stat) {
+    // A deleted tracked file still has a useful diff; Git resolves it by path.
+    return runGit(["diff", "HEAD", "--no-ext-diff", "--unified=3", "--", relativePath]);
+  }
+  const tracked = await runGit(["ls-files", "--error-unmatch", "--", relativePath]).then(() => true, () => false);
+  if (!tracked) {
+    if (!stat.isFile()) return "Untracked directory. Select a file inside it to inspect its contents.";
+    if (stat.size > 2 * 1024 * 1024) throw new Error("Untracked files larger than 2 MiB are not previewed.");
+    const bytes = await fs.readFile(await assertInsideWorkspace(target));
+    if (bytes.includes(0)) throw new Error("Binary files do not have a text diff preview.");
+    const content = bytes.toString("utf8");
+    return `New file: ${relativePath}\n\n${content.split("\n").map((line) => `+${line}`).join("\n")}`;
+  }
+  return runGit(["diff", "HEAD", "--no-ext-diff", "--unified=3", "--", relativePath]);
+}
+
 async function readWorkspaceTree(directory: string, relative = "", depth = 0): Promise<unknown[]> {
   if (depth > 8) return [];
   const ignored = new Set([".git", "node_modules", "target", ".next", "dist", "build", ".venv"]);
@@ -117,7 +187,7 @@ function sendToLuma(message: ClientMessage) {
 }
 
 async function requestLuma(
-  expectedType: "setup_config" | "setup_saved" | "providers" | "models" | "provider_tested" | "model_changed",
+  expectedType: PendingRequest["expectedType"],
   createMessage: (requestId: string) => ClientMessage,
 ): Promise<ServerEvent> {
   if (!isLumaReady) {
@@ -370,6 +440,15 @@ function createWindow() {
     title: "Luma",
 
     titleBarStyle: "hiddenInset",
+    transparent: true,
+    backgroundColor: "#00000000",
+    // Let the OS compositor draw the material behind transparent renderer
+    // surfaces instead of trying to imitate acrylic with CSS blur alone.
+    ...(process.platform === "darwin"
+      ? { vibrancy: "sidebar" as const, visualEffectState: "followWindow" as const }
+      : process.platform === "win32"
+        ? { backgroundMaterial: "acrylic" as const }
+        : {}),
 
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -511,6 +590,24 @@ app.whenReady().then(async () => {
     return { ok: true };
   });
 
+  ipcMain.handle("luma:get-history", async (): Promise<ChatSummary[]> => {
+    const response = await requestLuma("history_list", (request_id) => ({ type: "history_list", data: { request_id } }));
+    if (response.type !== "history_list") throw new Error("Unexpected response to history_list.");
+    return response.data.chats;
+  });
+
+  ipcMain.handle("luma:restore-chat", (_event, id: string) => {
+    sendToLuma({ type: "prompt", data: { text: `/restore ${id}` } });
+    sendToLuma({ type: "get_session" });
+    return { ok: true };
+  });
+
+  ipcMain.handle("luma:clear-session", () => {
+    sendToLuma({ type: "prompt", data: { text: "/clear" } });
+    sendToLuma({ type: "get_session" });
+    return { ok: true };
+  });
+
   ipcMain.handle("luma:get-workspace", () => ({ path: workspaceRoot }));
   ipcMain.handle("luma:choose-workspace", async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
@@ -526,6 +623,11 @@ app.whenReady().then(async () => {
     return { path: workspaceRoot, canceled: false };
   });
   ipcMain.handle("luma:list-workspace-files", async () => readWorkspaceTree(workspaceRoot));
+  ipcMain.handle("luma:get-git-changes", async () => getGitChanges());
+  ipcMain.handle("luma:get-git-diff", async (_event, relativePath: string) => {
+    if (typeof relativePath !== "string" || !relativePath.trim()) throw new Error("A file path is required.");
+    return getGitDiff(relativePath);
+  });
   ipcMain.handle("luma:read-workspace-file", async (_event, relativePath: string) => {
     const target = await assertInsideWorkspace(resolveWorkspacePath(relativePath));
     const stat = await fs.stat(target);
@@ -540,6 +642,130 @@ app.whenReady().then(async () => {
     if (!stat.isFile()) throw new Error("The selected path is not a file.");
     await fs.writeFile(target, content, "utf8");
     return { ok: true };
+  });
+
+  ipcMain.handle("luma:get-agents", async (): Promise<AgentRecord[]> => {
+    const response = await requestLuma("agents", (request_id) => ({ type: "agents_list", data: { request_id } }));
+    if (response.type !== "agents") throw new Error("Unexpected response to agents_list.");
+    return response.data.agents;
+  });
+
+  ipcMain.handle("luma:create-agent", async (_event, input: { name: string; description?: string | null; kind: AgentKind; configuration?: AgentConfiguration }) => {
+    const configuration = input.configuration ?? {
+      system_prompt: "", mascot: "auto", use_global_context: true, provider: null, model: null, endpoint: null, workspace: workspaceRoot,
+      skills: [],
+      allowed_workspaces: [workspaceRoot], enabled_tools: [],
+      permissions: { allowed_tools: ["read_file", "list_directory", "search_files", "git_status", "git_diff", "find_symbols", "find_references", "git_log", "git_show", "git_blame", "git_branches", "file_metadata", "find_todos", "count_lines", "inspect_project", "list_skills", "load_skill"], denied_tools: [], auto_approve_read_only: true, require_approval_for_mutations: true, allow_network: false },
+      max_concurrent_tasks: 1, recover_interrupted_tasks: false,
+    };
+    const response = await requestLuma("agent_saved", (request_id) => ({ type: "agent_create", data: {
+      request_id, name: input.name, description: input.description ?? null, kind: input.kind, configuration,
+    } }));
+    if (response.type !== "agent_saved") throw new Error("Unexpected response to agent_create.");
+    return response.data.agent;
+  });
+
+  ipcMain.handle("luma:delete-agent", async (_event, id: string) => {
+    const response = await requestLuma("agent_deleted", (request_id) => ({ type: "agent_delete", data: { request_id, id } }));
+    if (response.type !== "agent_deleted") throw new Error("Unexpected response to agent_delete.");
+    return response.data.deleted;
+  });
+
+  ipcMain.handle("luma:update-agent", async (_event, input: { id: string; name?: string | null; description?: string | null; configuration?: AgentConfiguration | null }) => {
+    const response = await requestLuma("agent_saved", (request_id) => ({ type: "agent_update", data: {
+      request_id, id: input.id, name: input.name ?? null, description: input.description ?? null, configuration: input.configuration ?? null,
+    } }));
+    if (response.type !== "agent_saved") throw new Error("Unexpected response to agent_update.");
+    return response.data.agent;
+  });
+
+  ipcMain.handle("luma:set-agent-status", async (_event, id: string, status: "idle" | "paused" | "stopped") => {
+    const response = await requestLuma("agent_saved", (request_id) => ({ type: "agent_set_status", data: { request_id, id, status } }));
+    if (response.type !== "agent_saved") throw new Error("Unexpected response to agent_set_status.");
+    return response.data.agent;
+  });
+
+  ipcMain.handle("luma:get-tasks", async (_event, agentId?: string): Promise<TaskRecord[]> => {
+    const response = await requestLuma("tasks", (request_id) => ({ type: "tasks_list", data: { request_id, agent_id: agentId ?? null, limit: 500 } }));
+    if (response.type !== "tasks") throw new Error("Unexpected response to tasks_list.");
+    return response.data.tasks;
+  });
+
+  ipcMain.handle("luma:get-runtime-events", async (_event, agentId: string): Promise<RuntimeEvent[]> => {
+    const response = await requestLuma("runtime_events", (request_id) => ({ type: "events_since", data: { request_id, sequence: 0, limit: 1000, agent_id: agentId } }));
+    if (response.type !== "runtime_events") throw new Error("Unexpected response to events_since.");
+    return response.data.events;
+  });
+
+  ipcMain.handle("luma:create-task", async (_event, input: { agentId: string; request: string; workspace?: string }) => {
+    const response = await requestLuma("task_saved", (request_id) => ({ type: "task_create", data: {
+      request_id, agent_id: input.agentId, request: input.request, title: null,
+      workspace: input.workspace ?? workspaceRoot, recover_on_restart: false,
+    } }));
+    if (response.type !== "task_saved") throw new Error("Unexpected response to task_create.");
+    return response.data.task;
+  });
+
+  ipcMain.handle("luma:cancel-task", async (_event, id: string) => {
+    const response = await requestLuma("task_saved", (request_id) => ({ type: "task_cancel", data: { request_id, id } }));
+    if (response.type !== "task_saved") throw new Error("Unexpected response to task_cancel.");
+    return response.data.task;
+  });
+
+  ipcMain.handle("luma:retry-task", async (_event, id: string) => {
+    const response = await requestLuma("task_saved", (request_id) => ({ type: "task_retry", data: { request_id, id } }));
+    if (response.type !== "task_saved") throw new Error("Unexpected response to task_retry.");
+    return response.data.task;
+  });
+
+  ipcMain.handle("luma:get-approvals", async (): Promise<ApprovalRecord[]> => {
+    const response = await requestLuma("approvals", (request_id) => ({ type: "approvals_list", data: { request_id } }));
+    if (response.type !== "approvals") throw new Error("Unexpected response to approvals_list.");
+    return response.data.approvals;
+  });
+
+  ipcMain.handle("luma:resolve-approval", async (_event, id: string, allowed: boolean) => {
+    const response = await requestLuma("approval_resolved", (request_id) => ({ type: "approval_resolve", data: { request_id, id, allowed } }));
+    if (response.type !== "approval_resolved") throw new Error("Unexpected response to approval_resolve.");
+    return response.data.approval;
+  });
+
+  ipcMain.handle("luma:get-memory", async (_event, scope: MemoryScope, scopeId: string): Promise<MemoryEntry[]> => {
+    const response = await requestLuma("memory", (request_id) => ({ type: "memory_list", data: { request_id, scope, scope_id: scopeId, query: null, limit: 200 } }));
+    if (response.type !== "memory") throw new Error("Unexpected response to memory_list.");
+    return response.data.entries;
+  });
+
+  ipcMain.handle("luma:add-memory", async (_event, scope: MemoryScope, scopeId: string, content: string) => {
+    const response = await requestLuma("memory_saved", (request_id) => ({ type: "memory_add", data: { request_id, scope, scope_id: scopeId, content, source: "desktop" } }));
+    if (response.type !== "memory_saved") throw new Error("Unexpected response to memory_add.");
+    return response.data.entry;
+  });
+
+  ipcMain.handle("luma:delete-memory", async (_event, id: string) => {
+    const response = await requestLuma("memory_deleted", (request_id) => ({ type: "memory_delete", data: { request_id, id } }));
+    if (response.type !== "memory_deleted") throw new Error("Unexpected response to memory_delete.");
+    return response.data.deleted;
+  });
+
+  ipcMain.handle("luma:get-schedules", async (_event, agentId?: string): Promise<ScheduleRecord[]> => {
+    const response = await requestLuma("schedules", (request_id) => ({ type: "schedules_list", data: { request_id, agent_id: agentId ?? null } }));
+    if (response.type !== "schedules") throw new Error("Unexpected response to schedules_list.");
+    return response.data.schedules;
+  });
+
+  ipcMain.handle("luma:create-schedule", async (_event, input: { agentId: string; title: string; prompt: string; everySeconds: number }) => {
+    const response = await requestLuma("schedule_saved", (request_id) => ({ type: "schedule_create", data: {
+      request_id, agent_id: input.agentId, title: input.title, prompt: input.prompt, run_at: null, every_seconds: input.everySeconds,
+    } }));
+    if (response.type !== "schedule_saved") throw new Error("Unexpected response to schedule_create.");
+    return response.data.schedule;
+  });
+
+  ipcMain.handle("luma:delete-schedule", async (_event, id: string) => {
+    const response = await requestLuma("schedule_deleted", (request_id) => ({ type: "schedule_delete", data: { request_id, id } }));
+    if (response.type !== "schedule_deleted") throw new Error("Unexpected response to schedule_delete.");
+    return response.data.deleted;
   });
 
   ipcMain.handle("luma:get-providers", async () => {

@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 
 import { theme } from "../theme";
 import type { Status } from "../state";
+import { useSpinner } from "../hooks/useSpinner";
+import { usePulseColor } from "../hooks/usePulseColor";
 
 type Props = {
   status: Status;
@@ -12,34 +14,18 @@ type Props = {
 };
 
 const statusWords: Record<Status, string> = {
-  idle: "ready",
-  thinking: "thinking through it",
-  working: "working on your code",
-  streaming: "writing response",
-  waiting: "waiting for your approval",
-  done: "done",
-  error: "stuck",
+  idle: "Ready",
+  thinking: "Thinking",
+  working: "Working",
+  streaming: "Responding",
+  waiting: "Approval needed",
+  done: "Completed",
+  error: "Needs attention",
 };
 
-const frames = ["◐", "◓", "◑", "◒"];
-
 export function PromptHeader({ status, activeTool, toolCalls, turns }: Props) {
-  const [frame, setFrame] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [startedAt, setStartedAt] = useState<number | null>(null);
-
-  useEffect(() => {
-    if (status === "idle" || status === "done" || status === "error" || status === "waiting") {
-      setFrame(0);
-      return;
-    }
-
-    const interval = setInterval(() => {
-      setFrame((current) => (current + 1) % frames.length);
-    }, 120);
-
-    return () => clearInterval(interval);
-  }, [status]);
 
   useEffect(() => {
     const active = status === "thinking" || status === "working" || status === "streaming" || status === "waiting";
@@ -58,17 +44,23 @@ export function PromptHeader({ status, activeTool, toolCalls, turns }: Props) {
   }, [status, startedAt]);
 
   const active = status === "thinking" || status === "working" || status === "streaming";
+  const spinner = useSpinner(active && !activeTool);
+  const statusColor = usePulseColor(
+    active || status === "waiting",
+    status === "waiting" ? theme.warning : theme.accent,
+    "#F0D18D",
+  );
 
   return (
-    <Box marginLeft={2} marginBottom={0} flexDirection="row" flexWrap="wrap" columnGap={1}>
-      <Text color={status === "error" ? theme.error : status === "done" ? theme.success : theme.accent} bold>
-        {active ? frames[frame] : status === "waiting" ? "◷" : status === "done" ? "✓" : status === "error" ? "!" : "●"}{" "}
+    <Box marginBottom={0} flexDirection="row" flexWrap="wrap" columnGap={1}>
+      <Text color={status === "error" ? theme.error : status === "done" ? theme.success : status === "waiting" ? theme.warning : theme.muted} bold>
+        {active && !activeTool ? spinner : status === "waiting" ? "◷" : status === "done" ? "✓" : status === "error" ? "!" : "●"}{" "}
       </Text>
-      <Text color={active ? theme.accent : theme.muted}>{statusWords[status]}</Text>
+      <Text color={active || status === "waiting" ? statusColor : theme.muted} bold={active || status === "waiting"}>{statusWords[status]}</Text>
       {activeTool ? <Text color={theme.tool}>· {activeTool}</Text> : null}
       {active || status === "waiting" ? <Text color={theme.muted}>· {elapsed}s</Text> : null}
-      <Text color={theme.chrome}>· {turns} {turns === 1 ? "turn" : "turns"}</Text>
-      <Text color={theme.chrome}>· {toolCalls} {toolCalls === 1 ? "tool call" : "tool calls"}</Text>
+      <Text color={theme.chrome}>{turns} {turns === 1 ? "turn" : "turns"}</Text>
+      <Text color={theme.chrome}>{toolCalls} {toolCalls === 1 ? "tool" : "tools"}</Text>
     </Box>
   );
 }

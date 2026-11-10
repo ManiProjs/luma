@@ -3,14 +3,23 @@ use crate::event::AgentEvent;
 use axum::{
     Json, Router,
     extract::{
-        State,
+        Path as AxumPath, Query, Request, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::StatusCode,
-    response::IntoResponse,
-    routing::{get, post},
+    http::{
+        StatusCode, Uri,
+        header::{HOST, ORIGIN},
+    },
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{delete, get, post},
 };
 
+use crate::{
+    chats,
+    runtime::{AgentConfiguration, AgentKind, AgentStatus, MemoryScope, RuntimeStore, TaskStatus},
+    worker::SupervisorCommand,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Component, Path, PathBuf},
@@ -29,18 +38,21 @@ const TERMINAL_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_TREE_ENTRIES: usize = 2000;
 const MAX_TREE_DEPTH: usize = 8;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DashboardServer {
     pub events: broadcast::Sender<AgentEvent>,
     pub commands: mpsc::Sender<DashboardCommand>,
     pub dashboard_dir: Option<PathBuf>,
     pub workspace_dir: PathBuf,
+    pub runtime: RuntimeStore,
+    pub supervisor: mpsc::Sender<SupervisorCommand>,
 }
 
 #[derive(Debug)]
 pub enum DashboardCommand {
     Chat(String),
     Confirm { allowed: bool },
+    Cancel,
 }
 
 #[derive(Debug, Deserialize)]
@@ -48,6 +60,7 @@ pub enum DashboardCommand {
 enum ClientMessage {
     Chat(String),
     Confirm { allowed: bool },
+    Cancel,
 
     OpenFile { path: String },
 
@@ -117,6 +130,8 @@ impl DashboardServer {
     pub fn new(
         dashboard_dir: Option<PathBuf>,
         capacity: usize,
+        runtime: RuntimeStore,
+        supervisor: mpsc::Sender<SupervisorCommand>,
     ) -> (Arc<Self>, mpsc::Receiver<DashboardCommand>) {
         let (events, _) = broadcast::channel(capacity);
         let (commands, commands_rx) = mpsc::channel(64);
@@ -131,6 +146,8 @@ impl DashboardServer {
             commands,
             dashboard_dir,
             workspace_dir,
+            runtime,
+            supervisor,
         });
 
         (server, commands_rx)
@@ -143,6 +160,7 @@ impl DashboardServer {
         let app = Router::new()
             .route("/", get(index))
             .route("/assets/app.js", get(app_js))
+            .route("/assets/controller.js", get(controller_js))
             .route("/assets/style.css", get(style_css))
             .route("/ws", get(websocket))
             .route("/api/tree", get(api_tree))
@@ -153,7 +171,30 @@ impl DashboardServer {
             .route("/api/delete", post(api_delete))
             .route("/api/rename", post(api_rename))
             .route("/api/diff", post(api_diff))
+            .route("/api/git-status", get(api_git_status))
+            .route("/api/history", get(api_history))
+            .route("/api/history/{id}", get(api_history_chat))
+            .route("/api/agents", get(api_agents).post(api_create_agent))
+            .route(
+                "/api/agents/{id}",
+                delete(api_delete_agent).put(api_update_agent),
+            )
+            .route("/api/agents/{id}/status", post(api_set_agent_status))
+            .route("/api/tasks", get(api_tasks).post(api_create_task))
+            .route("/api/tasks/{id}/cancel", post(api_cancel_task))
+            .route("/api/tasks/{id}/retry", post(api_retry_task))
+            .route("/api/approvals", get(api_approvals))
+            .route("/api/approvals/{id}", post(api_resolve_approval))
+            .route("/api/memory", get(api_memory).post(api_add_memory))
+            .route("/api/memory/{id}", delete(api_delete_memory))
+            .route(
+                "/api/schedules",
+                get(api_schedules).post(api_create_schedule),
+            )
+            .route("/api/schedules/{id}", delete(api_delete_schedule))
+            .route("/api/events", get(api_events))
             .route("/api/terminal", post(api_terminal))
+            .layer(middleware::from_fn(restrict_browser_origins))
             .with_state(self.clone());
 
         tracing::info!(
@@ -175,6 +216,54 @@ impl DashboardServer {
     }
 }
 
+/// The dashboard is intentionally loopback-only until authenticated remote
+/// access exists. Loopback binding alone does not stop DNS-rebinding or
+/// cross-origin browser requests, so validate both Host and Origin here.
+async fn restrict_browser_origins(request: Request, next: Next) -> Response {
+    let host = request
+        .headers()
+        .get(HOST)
+        .and_then(|value| value.to_str().ok());
+    let Some(host) = host.filter(|host| is_loopback_authority(host)) else {
+        return StatusCode::FORBIDDEN.into_response();
+    };
+
+    if let Some(origin) = request.headers().get(ORIGIN) {
+        if !origin
+            .to_str()
+            .is_ok_and(|origin| is_same_origin_authority(origin, host))
+        {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+
+    next.run(request).await
+}
+
+fn is_loopback_authority(value: &str) -> bool {
+    let Ok(authority) = value.parse::<axum::http::uri::Authority>() else {
+        return false;
+    };
+    let host = authority
+        .host()
+        .trim_start_matches('[')
+        .trim_end_matches(']');
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+fn is_same_origin_authority(origin: &str, host: &str) -> bool {
+    let Ok(uri) = origin.parse::<Uri>() else {
+        return false;
+    };
+    matches!(uri.scheme_str(), Some("http" | "https"))
+        && uri
+            .authority()
+            .is_some_and(|authority| authority.as_str().eq_ignore_ascii_case(host))
+}
+
 // ============================================================================
 // Static files
 // ============================================================================
@@ -183,7 +272,7 @@ async fn index(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse {
     serve_asset(
         state.dashboard_dir.as_deref(),
         "index.html",
-        include_bytes!("../dashboard/index.html"),
+        include_bytes!("../dashboard/dist/index.html"),
         "text/html; charset=utf-8",
     )
     .await
@@ -192,8 +281,18 @@ async fn index(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse {
 async fn app_js(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse {
     serve_asset(
         state.dashboard_dir.as_deref(),
-        "app.js",
-        include_bytes!("../dashboard/app.js"),
+        "assets/app.js",
+        include_bytes!("../dashboard/dist/assets/app.js"),
+        "application/javascript; charset=utf-8",
+    )
+    .await
+}
+
+async fn controller_js(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse {
+    serve_asset(
+        state.dashboard_dir.as_deref(),
+        "assets/controller.js",
+        include_bytes!("../dashboard/dist/assets/controller.js"),
         "application/javascript; charset=utf-8",
     )
     .await
@@ -202,8 +301,8 @@ async fn app_js(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse 
 async fn style_css(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse {
     serve_asset(
         state.dashboard_dir.as_deref(),
-        "style.css",
-        include_bytes!("../dashboard/style.css"),
+        "assets/style.css",
+        include_bytes!("../dashboard/dist/assets/style.css"),
         "text/css; charset=utf-8",
     )
     .await
@@ -332,6 +431,12 @@ async fn handle_socket(mut socket: WebSocket, state: Arc<DashboardServer>) {
                             .await
                             .is_err()
                         {
+                            break;
+                        }
+                    }
+
+                    ClientMessage::Cancel => {
+                        if commands.send(DashboardCommand::Cancel).await.is_err() {
                             break;
                         }
                     }
@@ -593,6 +698,759 @@ async fn api_diff(
         }
 
         _ => unreachable!(),
+    }
+}
+
+async fn api_git_status(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse {
+    let branch = Command::new("git")
+        .current_dir(&state.workspace_dir)
+        .args(["branch", "--show-current"])
+        .output()
+        .await;
+    let status = Command::new("git")
+        .current_dir(&state.workspace_dir)
+        .args(["status", "--porcelain=v1", "--untracked-files=all"])
+        .output()
+        .await;
+    match (branch, status) {
+        (Ok(branch), Ok(status)) if branch.status.success() && status.status.success() => {
+            let files = String::from_utf8_lossy(&status.stdout)
+                .lines()
+                .filter(|line| line.len() >= 4)
+                .map(|line| {
+                    let index = line.chars().next().unwrap_or(' ');
+                    let worktree = line.chars().nth(1).unwrap_or(' ');
+                    let raw_path = line.get(3..).unwrap_or_default();
+                    let path = raw_path.rsplit_once(" -> ").map(|(_, path)| path).unwrap_or(raw_path);
+                    let code = if index == '?' { '?' } else if index != ' ' { index } else { worktree };
+                    let kind = match code {
+                        '?' => "untracked",
+                        'A' => "added",
+                        'D' => "deleted",
+                        'R' => "renamed",
+                        _ => "modified",
+                    };
+                    serde_json::json!({ "path": path, "index_status": index.to_string(), "worktree_status": worktree.to_string(), "kind": kind })
+                })
+                .collect::<Vec<_>>();
+            Json(serde_json::json!({ "branch": String::from_utf8_lossy(&branch.stdout).trim(), "files": files })).into_response()
+        }
+        (Ok(branch), Ok(status)) => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: String::from_utf8_lossy(if !branch.status.success() {
+                    &branch.stderr
+                } else {
+                    &status.stderr
+                })
+                .trim()
+                .to_owned(),
+            }),
+        )
+            .into_response(),
+        (Err(error), _) | (_, Err(error)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: format!("Failed to inspect Git status: {error}"),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateAgentRequest {
+    name: String,
+    description: Option<String>,
+    #[serde(default = "default_teammates_kind")]
+    kind: AgentKind,
+    configuration: Option<AgentConfiguration>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetAgentStatusRequest {
+    status: AgentStatus,
+}
+
+#[derive(Debug, Deserialize)]
+struct UpdateAgentRequest {
+    name: Option<String>,
+    description: Option<String>,
+    configuration: Option<AgentConfiguration>,
+}
+
+fn default_teammates_kind() -> AgentKind {
+    AgentKind::Teammates
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateTaskRequest {
+    agent_id: String,
+    request: String,
+    title: Option<String>,
+    workspace: Option<String>,
+    #[serde(default)]
+    recover_on_restart: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct MemoryQuery {
+    scope: MemoryScope,
+    scope_id: String,
+    query: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AddMemoryRequest {
+    scope: MemoryScope,
+    scope_id: String,
+    content: String,
+    source: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateScheduleRequest {
+    agent_id: String,
+    title: String,
+    prompt: String,
+    run_at: Option<i64>,
+    every_seconds: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ResolveApprovalRequest {
+    allowed: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct EventsQuery {
+    after_sequence: Option<i64>,
+    agent_id: Option<String>,
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TasksQuery {
+    agent_id: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn api_agents(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse {
+    match state.runtime.list_agents() {
+        Ok(agents) => Json(agents).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_history() -> impl IntoResponse {
+    match chats::list() {
+        Ok(chats) => Json(chats).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_history_chat(AxumPath(id): AxumPath<String>) -> impl IntoResponse {
+    match chats::load(&id) {
+        Ok(chat) => Json(chat).into_response(),
+        Err(error) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_create_agent(
+    State(state): State<Arc<DashboardServer>>,
+    Json(request): Json<CreateAgentRequest>,
+) -> impl IntoResponse {
+    let workspace = state.workspace_dir.display().to_string();
+    let mut configuration = request.configuration.unwrap_or_default();
+    if configuration.workspace.is_none() {
+        configuration.workspace = Some(workspace.clone());
+    }
+    if configuration.allowed_workspaces.is_empty() {
+        configuration.allowed_workspaces.push(workspace);
+    }
+    match state.runtime.create_agent(
+        &request.name,
+        request.description,
+        request.kind,
+        configuration,
+    ) {
+        Ok(agent) => (StatusCode::CREATED, Json(agent)).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_delete_agent(
+    State(state): State<Arc<DashboardServer>>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.runtime.delete_agent(&id) {
+        Ok(true) => Json(serde_json::json!({"id": id, "deleted": true})).into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiError {
+                error: "Teammate not found.".into(),
+            }),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_update_agent(
+    State(state): State<Arc<DashboardServer>>,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<UpdateAgentRequest>,
+) -> impl IntoResponse {
+    match state.runtime.update_agent(
+        &id,
+        request.name,
+        request.description,
+        request.configuration,
+    ) {
+        Ok(agent) => Json(agent).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_set_agent_status(
+    State(state): State<Arc<DashboardServer>>,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<SetAgentStatusRequest>,
+) -> impl IntoResponse {
+    if !matches!(
+        request.status,
+        AgentStatus::Idle | AgentStatus::Paused | AgentStatus::Stopped
+    ) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: "Clients may only set an agent to idle, paused, or stopped.".into(),
+            }),
+        )
+            .into_response();
+    }
+    if let Err(error) = state.runtime.set_agent_status(&id, request.status) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response();
+    }
+    if request.status == AgentStatus::Stopped {
+        match state.runtime.list_tasks(Some(&id), 500) {
+            Ok(tasks) => {
+                for task in tasks.into_iter().filter(|task| {
+                    matches!(
+                        task.status,
+                        TaskStatus::Running | TaskStatus::WaitingForApproval
+                    )
+                }) {
+                    if let Err(error) = state
+                        .supervisor
+                        .send(SupervisorCommand::Cancel { task_id: task.id })
+                        .await
+                    {
+                        return (
+                            StatusCode::SERVICE_UNAVAILABLE,
+                            Json(ApiError {
+                                error: error.to_string(),
+                            }),
+                        )
+                            .into_response();
+                    }
+                }
+            }
+            Err(error) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ApiError {
+                        error: error.to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+        }
+    }
+    match state.runtime.get_agent(&id) {
+        Ok(Some(agent)) => Json(agent).into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiError {
+                error: "Agent not found.".into(),
+            }),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_tasks(
+    State(state): State<Arc<DashboardServer>>,
+    Query(query): Query<TasksQuery>,
+) -> impl IntoResponse {
+    match state
+        .runtime
+        .list_tasks(query.agent_id.as_deref(), query.limit.unwrap_or(500))
+    {
+        Ok(tasks) => Json(tasks).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_create_task(
+    State(state): State<Arc<DashboardServer>>,
+    Json(request): Json<CreateTaskRequest>,
+) -> impl IntoResponse {
+    let workspace = request
+        .workspace
+        .or_else(|| Some(state.workspace_dir.display().to_string()));
+    match state.runtime.create_task(
+        &request.agent_id,
+        &request.request,
+        request.title,
+        workspace,
+        request.recover_on_restart,
+        None,
+    ) {
+        Ok(task) => (StatusCode::CREATED, Json(task)).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_cancel_task(
+    State(state): State<Arc<DashboardServer>>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.runtime.get_task(&id) {
+        Ok(Some(task))
+            if task.status == TaskStatus::Queued || task.status == TaskStatus::Paused =>
+        {
+            match state
+                .runtime
+                .transition_task(&id, TaskStatus::Cancelled, None, None)
+            {
+                Ok(task) => Json(task).into_response(),
+                Err(error) => (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiError {
+                        error: error.to_string(),
+                    }),
+                )
+                    .into_response(),
+            }
+        }
+        Ok(Some(task))
+            if task.status == TaskStatus::Running
+                || task.status == TaskStatus::WaitingForApproval =>
+        {
+            if let Err(error) = state
+                .supervisor
+                .send(SupervisorCommand::Cancel { task_id: id })
+                .await
+            {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(ApiError {
+                        error: error.to_string(),
+                    }),
+                )
+                    .into_response();
+            }
+            Json(task).into_response()
+        }
+        Ok(Some(_)) => (
+            StatusCode::CONFLICT,
+            Json(ApiError {
+                error: "Task is already terminal.".into(),
+            }),
+        )
+            .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiError {
+                error: "Task not found.".into(),
+            }),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_retry_task(
+    State(state): State<Arc<DashboardServer>>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.runtime.get_task(&id) {
+        Ok(Some(task))
+            if (task.status == TaskStatus::Failed || task.status == TaskStatus::Interrupted)
+                && state
+                    .runtime
+                    .get_agent(&task.agent_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|agent| agent.status != AgentStatus::Stopped) =>
+        {
+            match state
+                .runtime
+                .transition_task(&id, TaskStatus::Queued, None, None)
+            {
+                Ok(task) => Json(task).into_response(),
+                Err(error) => (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiError {
+                        error: error.to_string(),
+                    }),
+                )
+                    .into_response(),
+            }
+        }
+        Ok(Some(_)) => (
+            StatusCode::CONFLICT,
+            Json(ApiError {
+                error: "Only failed or interrupted tasks can be retried.".into(),
+            }),
+        )
+            .into_response(),
+        Ok(None) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiError {
+                error: "Task not found.".into(),
+            }),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_approvals(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse {
+    match state.runtime.list_pending_approvals() {
+        Ok(approvals) => Json(approvals).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_resolve_approval(
+    State(state): State<Arc<DashboardServer>>,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<ResolveApprovalRequest>,
+) -> impl IntoResponse {
+    let approval = match state.runtime.list_pending_approvals() {
+        Ok(items) => match items.into_iter().find(|item| item.id == id) {
+            Some(approval) => approval,
+            None => {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(ApiError {
+                        error: "Approval not found or already resolved.".into(),
+                    }),
+                )
+                    .into_response();
+            }
+        },
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: error.to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+    match state.runtime.get_task(&approval.task_id) {
+        Ok(Some(task)) if task.status == TaskStatus::WaitingForApproval => {}
+        Ok(_) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(ApiError {
+                    error: "The task is no longer waiting for this approval.".into(),
+                }),
+            )
+                .into_response();
+        }
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: error.to_string(),
+                }),
+            )
+                .into_response();
+        }
+    }
+    match state.runtime.get_agent(&approval.agent_id) {
+        Ok(Some(agent)) if !matches!(agent.status, AgentStatus::Paused | AgentStatus::Stopped) => {}
+        Ok(_) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(ApiError {
+                    error: "Resume the agent before resolving its approval.".into(),
+                }),
+            )
+                .into_response();
+        }
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ApiError {
+                    error: error.to_string(),
+                }),
+            )
+                .into_response();
+        }
+    }
+    let approval = match state.runtime.resolve_approval(&id, request.allowed) {
+        Ok(approval) => approval,
+        Err(error) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(ApiError {
+                    error: error.to_string(),
+                }),
+            )
+                .into_response();
+        }
+    };
+    if let Err(error) = state
+        .supervisor
+        .send(SupervisorCommand::Confirm {
+            task_id: approval.task_id.clone(),
+            approval_id: approval.id.clone(),
+            allowed: request.allowed,
+        })
+        .await
+    {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response();
+    }
+    Json(approval).into_response()
+}
+
+async fn api_memory(
+    State(state): State<Arc<DashboardServer>>,
+    Query(query): Query<MemoryQuery>,
+) -> impl IntoResponse {
+    match state
+        .runtime
+        .list_memory(query.scope, &query.scope_id, query.query.as_deref(), 200)
+    {
+        Ok(entries) => Json(entries).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_add_memory(
+    State(state): State<Arc<DashboardServer>>,
+    Json(request): Json<AddMemoryRequest>,
+) -> impl IntoResponse {
+    match state.runtime.add_memory(
+        request.scope,
+        &request.scope_id,
+        &request.content,
+        request.source,
+    ) {
+        Ok(entry) => (StatusCode::CREATED, Json(entry)).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_delete_memory(
+    State(state): State<Arc<DashboardServer>>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.runtime.delete_memory(&id) {
+        Ok(true) => Json(serde_json::json!({ "deleted": true })).into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiError {
+                error: "Memory entry not found.".into(),
+            }),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_schedules(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse {
+    match state.runtime.list_schedules(None) {
+        Ok(schedules) => Json(schedules).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_create_schedule(
+    State(state): State<Arc<DashboardServer>>,
+    Json(request): Json<CreateScheduleRequest>,
+) -> impl IntoResponse {
+    match state.runtime.create_schedule(
+        &request.agent_id,
+        &request.title,
+        &request.prompt,
+        request.run_at,
+        request.every_seconds,
+    ) {
+        Ok(schedule) => (StatusCode::CREATED, Json(schedule)).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_delete_schedule(
+    State(state): State<Arc<DashboardServer>>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.runtime.delete_schedule(&id) {
+        Ok(true) => Json(serde_json::json!({ "deleted": true })).into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiError {
+                error: "Schedule not found.".into(),
+            }),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_events(
+    State(state): State<Arc<DashboardServer>>,
+    Query(query): Query<EventsQuery>,
+) -> impl IntoResponse {
+    let result = if let Some(agent_id) = query.agent_id.as_deref() {
+        state.runtime.events_for_agent(
+            agent_id,
+            query.after_sequence.unwrap_or(0),
+            query.limit.unwrap_or(1000),
+        )
+    } else {
+        state.runtime.events_since(
+            query.after_sequence.unwrap_or(0),
+            query.limit.unwrap_or(1000),
+        )
+    };
+    match result {
+        Ok(events) => Json(events).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
     }
 }
 
@@ -974,18 +1832,6 @@ async fn get_diff(state: &DashboardServer, path: &str) -> ServerMessage {
         }
     };
 
-    if !file.exists() {
-        return ServerMessage::Error {
-            message: format!("File does not exist: {}", path),
-        };
-    }
-
-    if !file.is_file() {
-        return ServerMessage::Error {
-            message: format!("Not a file: {}", path),
-        };
-    }
-
     let relative = relative_display(&state.workspace_dir, &file);
 
     let tracked = Command::new("git")
@@ -997,6 +1843,18 @@ async fn get_diff(state: &DashboardServer, path: &str) -> ServerMessage {
     let is_tracked = tracked
         .map(|output| output.status.success())
         .unwrap_or(false);
+
+    if !file.exists() && !is_tracked {
+        return ServerMessage::Error {
+            message: format!("File does not exist: {}", path),
+        };
+    }
+
+    if file.exists() && !file.is_file() {
+        return ServerMessage::Error {
+            message: format!("Not a file: {}", path),
+        };
+    }
 
     let output = if is_tracked {
         Command::new("git")
@@ -1157,7 +2015,7 @@ fn relative_display(root: &Path, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::serve_asset;
+    use super::{ClientMessage, is_loopback_authority, is_same_origin_authority, serve_asset};
     use axum::{body::to_bytes, http::StatusCode};
 
     #[tokio::test]
@@ -1165,17 +2023,22 @@ mod tests {
         let assets = [
             (
                 "index.html",
-                include_bytes!("../dashboard/index.html").as_slice(),
+                include_bytes!("../dashboard/dist/index.html").as_slice(),
                 "text/html; charset=utf-8",
             ),
             (
-                "app.js",
-                include_bytes!("../dashboard/app.js").as_slice(),
+                "assets/app.js",
+                include_bytes!("../dashboard/dist/assets/app.js").as_slice(),
                 "application/javascript; charset=utf-8",
             ),
             (
-                "style.css",
-                include_bytes!("../dashboard/style.css").as_slice(),
+                "assets/controller.js",
+                include_bytes!("../dashboard/dist/assets/controller.js").as_slice(),
+                "application/javascript; charset=utf-8",
+            ),
+            (
+                "assets/style.css",
+                include_bytes!("../dashboard/dist/assets/style.css").as_slice(),
                 "text/css; charset=utf-8",
             ),
         ];
@@ -1196,5 +2059,31 @@ mod tests {
                     .is_empty()
             );
         }
+    }
+
+    #[test]
+    fn dashboard_cancel_message_is_accepted() {
+        let message = serde_json::from_str::<ClientMessage>(r#"{"type":"Cancel"}"#)
+            .expect("Cancel should be a valid dashboard message");
+        assert!(matches!(message, ClientMessage::Cancel));
+    }
+
+    #[test]
+    fn dashboard_rejects_non_loopback_hosts_and_cross_origin_requests() {
+        assert!(is_loopback_authority("127.0.0.1:3000"));
+        assert!(is_loopback_authority("localhost:3000"));
+        assert!(is_loopback_authority("[::1]:3000"));
+        assert!(!is_loopback_authority("luma.example:3000"));
+        assert!(!is_loopback_authority("192.0.2.10:3000"));
+
+        assert!(is_same_origin_authority(
+            "http://localhost:3000",
+            "localhost:3000"
+        ));
+        assert!(!is_same_origin_authority(
+            "https://evil.example",
+            "localhost:3000"
+        ));
+        assert!(!is_same_origin_authority("null", "localhost:3000"));
     }
 }

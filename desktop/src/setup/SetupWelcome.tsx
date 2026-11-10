@@ -1,4 +1,4 @@
-import { SparkIcon } from "../components/LumaWordmark";
+import { LumaMark } from "../components/LumaWordmark";
 import { useSetupStore } from "../stores/setupStore";
 
 export default function SetupWelcome() {
@@ -7,40 +7,37 @@ export default function SetupWelcome() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex min-h-0 flex-1 items-center justify-center px-6">
-        <div className="w-full max-w-xl">
-          <div className="mb-8 flex justify-center">
+        <div className="setup-welcome w-full max-w-2xl">
+          <div className="mb-7 flex">
             <div
               className="
-                flex h-16 w-16 items-center justify-center
-                rounded-2xl
+                flex h-10 w-10 items-center justify-center
+                rounded-lg
                 border border-[var(--luma-border-strong)]
                 bg-[var(--luma-accent-soft)]
                 text-[var(--luma-accent)]
               "
             >
-              <SparkIcon size={28} />
+              <LumaMark size={22} />
             </div>
           </div>
 
-          <div className="text-center">
-            <div className="luma-kicker">Luma</div>
+          <div>
+            <div className="luma-kicker">GETTING STARTED / LUMA</div>
 
-            <h1 className="mt-2 text-[28px] font-semibold tracking-[-0.03em]">
-              Welcome to Luma
+            <h1 className="mt-3 text-[34px] font-semibold tracking-[-0.045em]">
+              Set up your coding workspace.
             </h1>
 
-            <p className="mx-auto mt-3 max-w-md text-[13px] leading-6 text-[var(--luma-text-secondary)]">
-              Connect Luma to an AI provider and choose the model you want to
-              use for your coding workspace.
+            <p className="mt-3 max-w-lg text-[14px] leading-6 text-[var(--luma-text-secondary)]">
+              Connect a provider, choose a model, and Luma will be ready to work with your code.
             </p>
           </div>
 
-          <div className="mt-8 grid grid-cols-3 gap-2">
-            <Feature title="Providers" description="Cloud and local APIs" />
-
-            <Feature title="Models" description="Discover or enter manually" />
-
-            <Feature title="Agent" description="Ready for coding" />
+          <div className="setup-welcome-steps mt-9 grid grid-cols-3 gap-5">
+            <Step number="01" title="Provider" description="Connect a compatible API." />
+            <Step number="02" title="Model" description="Choose the model Luma uses." />
+            <Step number="03" title="Workspace" description="Start working in your project." />
           </div>
         </div>
       </div>
@@ -54,20 +51,20 @@ export default function SetupWelcome() {
   );
 }
 
-function Feature({
+function Step({
+  number,
   title,
   description,
 }: {
+  number: string;
   title: string;
   description: string;
 }) {
   return (
-    <div className="luma-card p-3.5">
-      <div className="text-[13px] font-medium">{title}</div>
-
-      <div className="mt-1 text-[12px] leading-5 text-[var(--luma-text-muted)]">
-        {description}
-      </div>
+    <div className="setup-welcome-step">
+      <div className="font-mono text-[11px] text-[var(--luma-accent)]">{number}</div>
+      <div className="mt-2 text-[13px] font-medium">{title}</div>
+      <div className="mt-1 text-[12px] leading-5 text-[var(--luma-text-muted)]">{description}</div>
     </div>
   );
 }

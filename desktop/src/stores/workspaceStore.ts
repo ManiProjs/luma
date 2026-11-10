@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import type { AgentMessage } from "../renderer/hooks/useLuma";
+import type { ChatSummary } from "../../../shared/protocol";
 
 export type Chat = {
   id: string;
@@ -24,6 +25,7 @@ type WorkspaceSnapshot = {
   activeChatId: string | null;
   activeProjectId: string | null;
   draft: Chat | null;
+  historyLoaded?: boolean;
 };
 
 type WorkspaceState = WorkspaceSnapshot & {
@@ -33,6 +35,8 @@ type WorkspaceState = WorkspaceSnapshot & {
   togglePin: (chatId: string) => void;
   deleteChat: (chatId: string) => void;
   setChatMessages: (chatId: string, messages: AgentMessage[]) => void;
+  syncHistory: (summaries: ChatSummary[]) => void;
+  setActiveChatId: (chatId: string) => void;
   createProject: (name: string) => Project;
   selectProject: (projectId: string | null) => void;
   renameProject: (projectId: string, name: string) => void;
@@ -70,6 +74,7 @@ function createDefaultSnapshot(): WorkspaceSnapshot {
     activeChatId: null,
     activeProjectId: null,
     draft: null,
+    historyLoaded: false,
   };
 }
 
@@ -221,6 +226,7 @@ function loadSnapshot(): WorkspaceSnapshot {
       activeChatId,
       activeProjectId,
       draft: null,
+      historyLoaded: false,
     };
   } catch {
     return createDefaultSnapshot();
@@ -432,6 +438,34 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       ),
     };
 
+    persist(next);
+    set(next);
+  },
+
+  syncHistory: (summaries) => {
+    const state = get();
+    const existing = new Map(state.chats.map((chat) => [chat.id, chat]));
+    const chats = summaries.map((summary) => {
+      const previous = existing.get(summary.id);
+      return {
+        id: summary.id,
+        title: summary.title,
+        projectId: previous?.projectId ?? null,
+        pinned: previous?.pinned ?? false,
+        createdAt: summary.created_at * 1000,
+        updatedAt: summary.updated_at * 1000,
+        messages: previous?.messages ?? [],
+      };
+    });
+    const next: WorkspaceSnapshot = { ...state, chats, draft: state.draft, historyLoaded: true };
+    persist(next);
+    set(next);
+  },
+
+  setActiveChatId: (chatId) => {
+    const state = get();
+    const draft = state.draft ? { ...state.draft, id: chatId } : null;
+    const next: WorkspaceSnapshot = { ...state, activeChatId: chatId, draft };
     persist(next);
     set(next);
   },

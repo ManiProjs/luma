@@ -1,0 +1,62 @@
+@import "tailwindcss";
+@import "../style.css";
+@import "./visual-system.css";
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+.teammates-wordmark-luma { font-weight: 750; letter-spacing: 0.16em; }
+.teammates-wordmark-name { font-weight: 720; letter-spacing: -0.055em; }
+.teammates-brand-kicker { display: block; margin-bottom: 2px; font-size: 9px; line-height: 1; letter-spacing: 0.2em; color: var(--luma-text-muted); }
+.luma-mascot { display: block; flex: none; overflow: visible; }
+.teammates-title-wrap, .teammates-agent-identity { display: flex; align-items: center; gap: 11px; }
+.teammates-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; }
+.teammates-empty p { max-width: 260px; margin: 0; }
+.teammates-chat { display: flex; flex-direction: column; min-height: 0; height: calc(100% - 60px); gap: 12px; }
+.teammates-chat-messages { flex: 1; min-height: 0; overflow: auto; padding: 8px 3px 18px; }
+.teammates-chat-turn { max-width: 820px; margin: 0 auto 22px; display: flex; flex-direction: column; gap: 13px; }
+.teammates-chat-user { max-width: 88%; align-self: flex-end; border: 1px solid var(--border); background: var(--panel-2); border-radius: 10px 10px 3px 10px; padding: 11px 13px; }
+.teammates-chat-user small,.teammates-chat-reply small { display: block; color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .1em; margin-bottom: 5px; }
+.teammates-chat-user p,.teammates-chat-reply p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.7; }
+.teammates-chat-reply { display: flex; align-items: flex-start; gap: 11px; }
+.teammates-chat-reply>div { min-width: 0; flex: 1; }
+.teammates-chat-reply button { color: var(--accent); font: inherit; font-size: 10px; margin-top: 7px; cursor: pointer; }
+.teammates-chat-composer { border: 1px solid var(--border-strong); background: var(--panel); border-radius: 9px; padding: 8px; }
+.teammates-chat-composer textarea { display: block; width: 100%; min-height: 46px; resize: vertical; background: transparent; color: var(--text); border: 0; outline: 0; font: inherit; font-size: 12px; line-height: 1.6; padding: 5px 7px; }
+.teammates-chat-composer>div { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 3px 0; }
+.teammates-chat-composer span { color: var(--faint); font-size: 9px; }
+.teammates-chat-composer button { border: 1px solid var(--accent); background: var(--accent); color: var(--luma-on-accent); cursor: pointer; border-radius: 6px; padding: 6px 12px; font: inherit; font-size: 10px; }
+.teammates-chat-composer button:disabled { opacity: .45; cursor: not-allowed; }
+.teammates-agent-actions button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.teammates-mascot-picker { display: flex; flex-wrap: wrap; gap: 7px; margin: 7px 0 12px; }
+.teammates-mascot-picker button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--muted); border-radius: 6px; padding: 5px 8px; cursor: pointer; font: inherit; font-size: 10px; }
+.teammates-mascot-picker button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.teammates-global-check { display: flex !important; flex-direction: row !important; align-items: flex-start; gap: 8px !important; }
+.teammates-global-check input { width: auto !important; margin-top: 2px; accent-color: var(--accent); }
+
+.mascot-customizer { display: grid; gap: 12px; margin: 10px 0 14px; }
+.mascot-customizer-preview { display: flex; align-items: center; gap: 12px; min-height: 82px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.mascot-customizer-preview svg { flex: none; }
+.mascot-customizer-preview strong, .mascot-customizer-preview span { display: block; }
+.mascot-customizer-preview strong { font-size: 12px; font-weight: 600; }
+.mascot-customizer-preview span { margin-top: 3px; color: var(--faint); font-size: 10px; }
+.mascot-customizer-group { display: grid; gap: 7px; }
+.mascot-customizer-label { color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .12em; }
+.mascot-shape-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; }
+.mascot-shape-grid button { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 3px; padding: 6px 2px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); font-size: 9px; }
+.mascot-shape-grid button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.mascot-shape-grid svg { width: 29px; height: 29px; }
+.mascot-color-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.mascot-color-grid button { width: 23px; height: 23px; border: 2px solid var(--panel); border-radius: 50%; background: var(--mascot-swatch); box-shadow: 0 0 0 1px var(--border-strong); }
+.mascot-color-grid button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent); }
+.mascot-custom-color { display: flex; align-items: center; gap: 5px; color: var(--faint); font-size: 9px; }
+.mascot-custom-color input { width: 25px; height: 25px; padding: 0; border: 0; border-radius: 50%; background: transparent; }
+.mascot-glasses-toggle { display: grid !important; grid-template-columns: 14px auto 1fr; align-items: center; gap: 8px !important; color: var(--muted); font-size: 11px; }
+.mascot-glasses-toggle input { accent-color: var(--accent); }
+.mascot-glasses-toggle small { color: var(--faint); font-size: 9px; }

@@ -30,6 +30,11 @@ luma setup
 luma history [list]
 luma history show <id>
 luma summary add <id> <summary...>
+luma teammates
+luma teammates list
+luma teammates create <name> [--skill <name>] [--memory <text>]
+luma teammates delete <id>
+luma tasks list [agent-id]
 luma dashboard [--host <host>] [--port <port>]
 luma ask <prompt...>
 ```

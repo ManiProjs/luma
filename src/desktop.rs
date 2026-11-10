@@ -23,7 +23,9 @@ use crate::protocol::{
     ClientMessage, ErrorCategory, PROTOCOL_VERSION, ServerEvent, decode, encode,
 };
 use crate::provider::{ModelRequest, provider_for, supported_providers};
+use crate::runtime::{RuntimeStore, TaskStatus};
 use crate::session::{AgentCommand, Session};
+use crate::worker::{RuntimeSupervisor, SupervisorCommand};
 
 /// How much input to buffer ahead of the reader.
 ///
@@ -32,7 +34,14 @@ use crate::session::{AgentCommand, Session};
 const READ_BUFFER_BYTES: usize = 64 * 1024;
 
 fn dashboard_assets_dir() -> Option<PathBuf> {
-    std::env::var_os("LUMA_DASHBOARD_DIR").map(PathBuf::from)
+    std::env::var_os("LUMA_DASHBOARD_DIR").map(|directory| {
+        let directory = PathBuf::from(directory);
+        if directory.join("dist/index.html").is_file() {
+            directory.join("dist")
+        } else {
+            directory
+        }
+    })
 }
 
 // ============================================================
@@ -44,9 +53,11 @@ pub struct DesktopServer {
     input_tx: mpsc::Sender<String>,
     cancel: CancellationToken,
     model: DynamicModel,
-    planner_model: DynamicModel,
     confirmation_tx: mpsc::Sender<crate::agent::Confirmation>,
     dashboard: Option<std::sync::Arc<DashboardServer>>,
+    runtime: RuntimeStore,
+    supervisor: Option<RuntimeSupervisor>,
+    supervisor_tx: mpsc::Sender<SupervisorCommand>,
 }
 
 impl DesktopServer {
@@ -55,22 +66,29 @@ impl DesktopServer {
         input_tx: mpsc::Sender<String>,
         cancel: CancellationToken,
         model: DynamicModel,
-        planner_model: DynamicModel,
         confirmation_tx: mpsc::Sender<crate::agent::Confirmation>,
+        runtime: RuntimeStore,
     ) -> Self {
+        let supervisor = RuntimeSupervisor::new(runtime.clone());
+        let supervisor_tx = supervisor.sender();
         Self {
             session,
             input_tx,
             cancel,
             model,
-            planner_model,
             confirmation_tx,
             dashboard: None,
+            runtime,
+            supervisor: Some(supervisor),
+            supervisor_tx,
         }
     }
 
     /// Run the read/write loop until stdin closes or the core is cancelled.
     pub async fn run(mut self, mut events: mpsc::Receiver<AgentEvent>) -> Result<()> {
+        if let Some(supervisor) = self.supervisor.take() {
+            tokio::spawn(supervisor.run(self.cancel.clone()));
+        }
         let stdout = tokio::io::stdout();
 
         let mut stdout = tokio::io::BufWriter::new(stdout);
@@ -78,11 +96,19 @@ impl DesktopServer {
         let mut stdin = BufReader::with_capacity(READ_BUFFER_BYTES, tokio::io::stdin());
 
         let mut line = String::new();
-
         write_event(
             &mut stdout,
             ServerEvent::Ready {
                 version: PROTOCOL_VERSION,
+                features: vec![
+                    "persistent_agents".into(),
+                    "durable_tasks".into(),
+                    "scoped_memory".into(),
+                    "schedules".into(),
+                    "event_replay".into(),
+                    "permission_profiles".into(),
+                    "restart_reconciliation".into(),
+                ],
             },
         )
         .await?;
@@ -139,9 +165,23 @@ impl DesktopServer {
                 // be mid-update, and the next line is probably fine.
                 tracing::warn!(%error, "ignoring unparseable client message");
 
+                // Preserve request correlation even when this core build does
+                // not understand a newer message variant. Without the ID the
+                // desktop client cannot reject the matching pending request
+                // and would misleadingly report a timeout instead.
+                let request_id = serde_json::from_str::<serde_json::Value>(line)
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .get("data")?
+                            .get("request_id")?
+                            .as_str()
+                            .map(str::to_owned)
+                    });
+
                 return report_error(
                     stdout,
-                    None,
+                    request_id,
                     format!("could not parse message: {error}"),
                     ErrorCategory::Fatal,
                 )
@@ -170,6 +210,28 @@ impl DesktopServer {
                 port,
             } => self.start_dashboard(request_id, host, port, stdout).await,
 
+            message @ (ClientMessage::AgentsList { .. }
+            | ClientMessage::AgentCreate { .. }
+            | ClientMessage::AgentDelete { .. }
+            | ClientMessage::AgentUpdate { .. }
+            | ClientMessage::AgentSetStatus { .. }
+            | ClientMessage::TasksList { .. }
+            | ClientMessage::TaskCreate { .. }
+            | ClientMessage::TaskCancel { .. }
+            | ClientMessage::TaskRetry { .. }
+            | ClientMessage::ApprovalsList { .. }
+            | ClientMessage::ApprovalResolve { .. }
+            | ClientMessage::MemoryList { .. }
+            | ClientMessage::MemoryAdd { .. }
+            | ClientMessage::MemoryDelete { .. }
+            | ClientMessage::SchedulesList { .. }
+            | ClientMessage::ScheduleCreate { .. }
+            | ClientMessage::ScheduleDelete { .. }
+            | ClientMessage::EventsSince { .. }
+            | ClientMessage::RuntimeCapabilities { .. }) => {
+                self.serve_runtime(message, stdout).await
+            }
+
             message if message.request_id().is_some() => serve(message, stdout).await,
 
             // Everything left is a conversation command, which the session
@@ -180,6 +242,309 @@ impl DesktopServer {
                     .expect("every non-request client message is a session command");
 
                 self.run_command(command, stdout).await
+            }
+        }
+    }
+
+    async fn serve_runtime<W>(&self, message: ClientMessage, stdout: &mut W) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        if let ClientMessage::ApprovalResolve {
+            request_id,
+            id,
+            allowed,
+        } = &message
+        {
+            let approval = self
+                .runtime
+                .list_pending_approvals()?
+                .into_iter()
+                .find(|approval| approval.id == *id)
+                .ok_or_else(|| anyhow::anyhow!("approval not found or already resolved: {id}"))?;
+            let task = self
+                .runtime
+                .get_task(&approval.task_id)?
+                .ok_or_else(|| anyhow::anyhow!("approval task no longer exists"))?;
+            if task.status != TaskStatus::WaitingForApproval {
+                anyhow::bail!("the task is no longer waiting for this approval");
+            }
+            let agent = self
+                .runtime
+                .get_agent(&approval.agent_id)?
+                .ok_or_else(|| anyhow::anyhow!("approval agent no longer exists"))?;
+            if matches!(
+                agent.status,
+                crate::runtime::AgentStatus::Paused | crate::runtime::AgentStatus::Stopped
+            ) {
+                anyhow::bail!("resume the agent before resolving its approval");
+            }
+            let approval = self.runtime.resolve_approval(id, *allowed)?;
+            self.supervisor_tx
+                .send(SupervisorCommand::Confirm {
+                    task_id: approval.task_id.clone(),
+                    approval_id: approval.id.clone(),
+                    allowed: *allowed,
+                })
+                .await
+                .map_err(|_| anyhow::anyhow!("task supervisor is unavailable"))?;
+            return write_event(
+                stdout,
+                ServerEvent::ApprovalResolved {
+                    request_id: request_id.clone(),
+                    approval,
+                },
+            )
+            .await;
+        }
+        let request_id = message.request_id().map(str::to_owned);
+        let result: Result<ServerEvent> = (|| {
+            Ok(match message {
+                ClientMessage::AgentsList { request_id } => ServerEvent::Agents {
+                    request_id,
+                    agents: self.runtime.list_agents()?,
+                },
+                ClientMessage::AgentCreate {
+                    request_id,
+                    name,
+                    description,
+                    kind,
+                    configuration,
+                } => ServerEvent::AgentSaved {
+                    request_id,
+                    agent: self
+                        .runtime
+                        .create_agent(&name, description, kind, configuration)?,
+                },
+                ClientMessage::AgentDelete { request_id, id } => ServerEvent::AgentDeleted {
+                    request_id,
+                    id: id.clone(),
+                    deleted: self.runtime.delete_agent(&id)?,
+                },
+                ClientMessage::AgentUpdate {
+                    request_id,
+                    id,
+                    name,
+                    description,
+                    configuration,
+                } => ServerEvent::AgentSaved {
+                    request_id,
+                    agent: self
+                        .runtime
+                        .update_agent(&id, name, description, configuration)?,
+                },
+                ClientMessage::AgentSetStatus {
+                    request_id,
+                    id,
+                    status,
+                } => {
+                    if !matches!(
+                        status,
+                        crate::runtime::AgentStatus::Idle
+                            | crate::runtime::AgentStatus::Paused
+                            | crate::runtime::AgentStatus::Stopped
+                    ) {
+                        anyhow::bail!("clients may only set an agent to idle, paused, or stopped");
+                    }
+                    self.runtime.set_agent_status(&id, status)?;
+                    if status == crate::runtime::AgentStatus::Stopped {
+                        for task in self.runtime.list_tasks(Some(&id), 500)? {
+                            if matches!(
+                                task.status,
+                                TaskStatus::Running | TaskStatus::WaitingForApproval
+                            ) {
+                                self.supervisor_tx
+                                    .try_send(SupervisorCommand::Cancel { task_id: task.id })
+                                    .map_err(|_| {
+                                        anyhow::anyhow!("task supervisor is unavailable")
+                                    })?;
+                            }
+                        }
+                    }
+                    let agent = self
+                        .runtime
+                        .get_agent(&id)?
+                        .ok_or_else(|| anyhow::anyhow!("agent not found: {id}"))?;
+                    ServerEvent::AgentSaved { request_id, agent }
+                }
+                ClientMessage::TasksList {
+                    request_id,
+                    agent_id,
+                    limit,
+                } => ServerEvent::Tasks {
+                    request_id,
+                    tasks: self
+                        .runtime
+                        .list_tasks(agent_id.as_deref(), limit.unwrap_or(100))?,
+                },
+                ClientMessage::TaskCreate {
+                    request_id,
+                    agent_id,
+                    request,
+                    title,
+                    workspace,
+                    recover_on_restart,
+                } => ServerEvent::TaskSaved {
+                    request_id,
+                    task: self.runtime.create_task(
+                        &agent_id,
+                        &request,
+                        title,
+                        workspace,
+                        recover_on_restart,
+                        None,
+                    )?,
+                },
+                ClientMessage::TaskCancel { request_id, id } => {
+                    let task = self
+                        .runtime
+                        .get_task(&id)?
+                        .ok_or_else(|| anyhow::anyhow!("task not found: {id}"))?;
+                    if task.status == TaskStatus::Running
+                        || task.status == TaskStatus::WaitingForApproval
+                    {
+                        self.supervisor_tx
+                            .try_send(SupervisorCommand::Cancel {
+                                task_id: id.clone(),
+                            })
+                            .map_err(|_| anyhow::anyhow!("task supervisor is unavailable"))?;
+                        ServerEvent::TaskSaved { request_id, task }
+                    } else if task.status == TaskStatus::Queued || task.status == TaskStatus::Paused
+                    {
+                        ServerEvent::TaskSaved {
+                            request_id,
+                            task: self.runtime.transition_task(
+                                &id,
+                                TaskStatus::Cancelled,
+                                None,
+                                None,
+                            )?,
+                        }
+                    } else {
+                        anyhow::bail!("task is already in a terminal state")
+                    }
+                }
+                ClientMessage::TaskRetry { request_id, id } => {
+                    let task = self
+                        .runtime
+                        .get_task(&id)?
+                        .ok_or_else(|| anyhow::anyhow!("task not found: {id}"))?;
+                    if task.status != TaskStatus::Failed && task.status != TaskStatus::Interrupted {
+                        anyhow::bail!("only failed or interrupted tasks can be retried");
+                    }
+                    if self
+                        .runtime
+                        .get_agent(&task.agent_id)?
+                        .is_none_or(|agent| agent.status == crate::runtime::AgentStatus::Stopped)
+                    {
+                        anyhow::bail!("cannot retry work for a stopped agent");
+                    }
+                    ServerEvent::TaskSaved {
+                        request_id,
+                        task: self
+                            .runtime
+                            .transition_task(&id, TaskStatus::Queued, None, None)?,
+                    }
+                }
+                ClientMessage::ApprovalsList { request_id } => ServerEvent::Approvals {
+                    request_id,
+                    approvals: self.runtime.list_pending_approvals()?,
+                },
+                ClientMessage::MemoryList {
+                    request_id,
+                    scope,
+                    scope_id,
+                    query,
+                    limit,
+                } => ServerEvent::Memory {
+                    request_id,
+                    entries: self.runtime.list_memory(
+                        scope,
+                        &scope_id,
+                        query.as_deref(),
+                        limit.unwrap_or(100),
+                    )?,
+                },
+                ClientMessage::MemoryAdd {
+                    request_id,
+                    scope,
+                    scope_id,
+                    content,
+                    source,
+                } => ServerEvent::MemorySaved {
+                    request_id,
+                    entry: self
+                        .runtime
+                        .add_memory(scope, &scope_id, &content, source)?,
+                },
+                ClientMessage::MemoryDelete { request_id, id } => ServerEvent::MemoryDeleted {
+                    request_id,
+                    deleted: self.runtime.delete_memory(&id)?,
+                },
+                ClientMessage::SchedulesList {
+                    request_id,
+                    agent_id,
+                } => ServerEvent::Schedules {
+                    request_id,
+                    schedules: self.runtime.list_schedules(agent_id.as_deref())?,
+                },
+                ClientMessage::ScheduleCreate {
+                    request_id,
+                    agent_id,
+                    title,
+                    prompt,
+                    run_at,
+                    every_seconds,
+                } => ServerEvent::ScheduleSaved {
+                    request_id,
+                    schedule: self.runtime.create_schedule(
+                        &agent_id,
+                        &title,
+                        &prompt,
+                        run_at,
+                        every_seconds,
+                    )?,
+                },
+                ClientMessage::ScheduleDelete { request_id, id } => ServerEvent::ScheduleDeleted {
+                    request_id,
+                    deleted: self.runtime.delete_schedule(&id)?,
+                },
+                ClientMessage::EventsSince {
+                    request_id,
+                    sequence,
+                    limit,
+                    agent_id,
+                } => ServerEvent::RuntimeEvents {
+                    request_id,
+                    events: if let Some(agent_id) = agent_id.as_deref() {
+                        self.runtime
+                            .events_for_agent(agent_id, sequence, limit.unwrap_or(100))?
+                    } else {
+                        self.runtime.events_since(sequence, limit.unwrap_or(100))?
+                    },
+                },
+                ClientMessage::RuntimeCapabilities { request_id } => {
+                    ServerEvent::RuntimeCapabilities {
+                        request_id,
+                        features: vec![
+                            "persistent_agents".into(),
+                            "durable_tasks".into(),
+                            "scoped_memory".into(),
+                            "schedules".into(),
+                            "event_replay".into(),
+                            "permission_profiles".into(),
+                            "restart_reconciliation".into(),
+                        ],
+                        storage_schema: 1,
+                    }
+                }
+                _ => anyhow::bail!("not a runtime request"),
+            })
+        })();
+        match result {
+            Ok(event) => write_event(stdout, event).await,
+            Err(error) => {
+                report_error(stdout, request_id, error.to_string(), ErrorCategory::Fatal).await
             }
         }
     }
@@ -276,7 +641,6 @@ impl DesktopServer {
         }
 
         self.model.replace(&settings.model).await;
-        self.planner_model.replace(&settings.planner).await;
         self.session
             .set_model(settings.model.provider.clone(), settings.model.name.clone());
         write_event(
@@ -317,8 +681,32 @@ impl DesktopServer {
             .await;
         }
 
-        let (dashboard, mut dashboard_commands) = DashboardServer::new(dashboard_assets_dir(), 256);
-        let listener = match tokio::net::TcpListener::bind((host.as_str(), port)).await {
+        let bind_address: std::net::IpAddr = match host.as_str() {
+            "localhost" => std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST),
+            value => match value.parse() {
+                Ok(address) => address,
+                Err(_) => {
+                    return report_error(
+                        stdout,
+                        Some(request_id),
+                        "Dashboard host must be a loopback IP address.".into(),
+                        ErrorCategory::Fatal,
+                    )
+                    .await;
+                }
+            },
+        };
+        if !bind_address.is_loopback() {
+            return report_error(stdout, Some(request_id), "Unauthenticated dashboard access is restricted to loopback. Remote access requires authenticated transport.".into(), ErrorCategory::Fatal).await;
+        }
+
+        let (dashboard, mut dashboard_commands) = DashboardServer::new(
+            dashboard_assets_dir(),
+            256,
+            self.runtime.clone(),
+            self.supervisor_tx.clone(),
+        );
+        let listener = match tokio::net::TcpListener::bind((bind_address, port)).await {
             Ok(listener) => listener,
             Err(error) => {
                 return report_error(
@@ -334,6 +722,7 @@ impl DesktopServer {
 
         let input_tx = self.input_tx.clone();
         let confirmation_tx = self.confirmation_tx.clone();
+        let request_cancel = self.session.request_cancellation();
         tokio::spawn(async move {
             while let Some(command) = dashboard_commands.recv().await {
                 match command {
@@ -352,6 +741,7 @@ impl DesktopServer {
                             break;
                         }
                     }
+                    DashboardCommand::Cancel => request_cancel.cancel(),
                 }
             }
         });
@@ -394,7 +784,16 @@ impl DesktopServer {
         };
 
         match forwarded {
-            Some(text) => self.forward(text, stdout).await,
+            Some(text) => {
+                write_event(
+                    stdout,
+                    ServerEvent::Session {
+                        session: self.session.view(),
+                    },
+                )
+                .await?;
+                self.forward(text, stdout).await
+            }
 
             // Local commands (`/help`, `/clear`) and state-only commands do
             // not generate an agent event, so send the updated snapshot to

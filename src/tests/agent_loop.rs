@@ -1,4 +1,4 @@
-//! End-to-end agent-loop tests with scripted planner + mock model.
+//! End-to-end agent-loop tests with scripted react + mock model.
 //!
 //! Each test drives the real `Agent::run` through channels, in a temp
 //! working directory, with auto-confirmation. No network, no real model,
@@ -13,7 +13,7 @@ use crate::{
     agent::{Agent, Confirmation},
     event::AgentEvent,
     history::History,
-    planner::PlanAction,
+    react::ReActAction,
     tools::{
         ToolRegistry,
         filesystem::{
@@ -25,12 +25,30 @@ use crate::{
     },
 };
 
-use super::mock::{MockModel, ScriptedPlanner};
+use super::mock::MockModel;
+
+fn action_json(
+    action: ReActAction,
+    final_responses: &mut impl Iterator<Item = String>,
+) -> serde_json::Value {
+    match action {
+        ReActAction::Tool { name, input } => serde_json::json!({
+            "type": "tool", "name": name, "input": input
+        }),
+        ReActAction::Answer { content } => serde_json::json!({
+            "type": "answer",
+            "content": final_responses.next().unwrap_or(content)
+        }),
+        ReActAction::Plan { content } => serde_json::json!({
+            "type": "plan", "content": content
+        }),
+    }
+}
 
 /// Builds a fully-wired agent, runs one user input through it, and
 /// returns every event the agent emitted.
 async fn run_agent_once(
-    planner_actions: Vec<PlanAction>,
+    react_actions: Vec<ReActAction>,
     model_responses: Vec<String>,
     user_input: &str,
     confirmations: Vec<Confirmation>,
@@ -45,10 +63,19 @@ async fn run_agent_once(
     tools.register(GitStatus);
     tools.register(GitDiff);
 
-    let planner = ScriptedPlanner::new(planner_actions);
-    let model = MockModel::new(model_responses);
+    let expects_observation = react_actions
+        .iter()
+        .any(|action| matches!(action, ReActAction::Tool { .. }));
+    let mut final_responses = model_responses.into_iter();
+    let responses = react_actions
+        .into_iter()
+        .map(|action| action_json(action, &mut final_responses).to_string())
+        .collect();
+    let model = MockModel::new(responses);
+    let model_capture = model.clone();
+    let react = crate::react::ReAct::new(model.clone(), &tools);
 
-    let mut agent = Agent::new(model, planner, tools, History::default(), String::new());
+    let mut agent = Agent::new(model, react, tools, History::default(), String::new());
 
     let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(100);
     let (input_tx, input_rx) = mpsc::channel::<String>(10);
@@ -70,7 +97,13 @@ async fn run_agent_once(
     let agent_cancel = cancel.clone();
     let handle = tokio::spawn(async move {
         agent
-            .run(input_rx, event_tx, agent_cancel, confirmation_rx)
+            .run(
+                input_rx,
+                event_tx,
+                agent_cancel.clone(),
+                crate::session::RequestCancellation::new(agent_cancel),
+                confirmation_rx,
+            )
             .await
     });
 
@@ -97,7 +130,72 @@ async fn run_agent_once(
     cancel.cancel();
     let _ = handle.await;
 
+    if expects_observation {
+        let requests = model_capture.requests();
+        assert!(
+            requests.iter().skip(1).any(|messages| messages
+                .iter()
+                .any(|message| { message.role == crate::context::MessageRole::Observation })),
+            "the next ReAct turn must receive the previous tool observation"
+        );
+    }
+
     events
+}
+
+#[tokio::test]
+async fn a_request_error_is_reported_without_stopping_the_agent_loop() {
+    let tools = ToolRegistry::new();
+    let model = MockModel::new(vec!["recovered".into()]);
+    let react = crate::react::ReAct::new(model.clone(), &tools);
+    let mut agent = Agent::new(model, react, tools, History::default(), String::new());
+    let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(32);
+    let (input_tx, input_rx) = mpsc::channel::<String>(4);
+    let (_confirmation_tx, confirmation_rx) = mpsc::channel::<Confirmation>(4);
+    let shutdown = CancellationToken::new();
+    let request_cancel = crate::session::RequestCancellation::new(shutdown.clone());
+
+    let handle = tokio::spawn(async move {
+        agent
+            .run(
+                input_rx,
+                event_tx,
+                shutdown,
+                request_cancel,
+                confirmation_rx,
+            )
+            .await
+    });
+
+    input_tx.send("\0LUMA_RESTORE:{".into()).await.unwrap();
+    input_tx.send("hello".into()).await.unwrap();
+
+    let mut events = Vec::new();
+    let mut finished = 0;
+    while finished < 2 {
+        let event = tokio::time::timeout(tokio::time::Duration::from_secs(2), event_rx.recv())
+            .await
+            .expect("agent should continue after reporting a request error")
+            .expect("agent event channel should remain open");
+        if matches!(event, AgentEvent::Finished) {
+            finished += 1;
+        }
+        events.push(event);
+    }
+
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Error(_)))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::TextDelta(text) if text == "recovered"))
+    );
+
+    drop(input_tx);
+    let _ = handle.await;
 }
 
 /// Serializes tests that change the process working directory.
@@ -119,8 +217,14 @@ where
     let dir = tempfile::tempdir().unwrap();
     let original = std::env::current_dir().unwrap();
     std::env::set_current_dir(dir.path()).unwrap();
+    struct RestoreCurrentDir(std::path::PathBuf);
+    impl Drop for RestoreCurrentDir {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.0);
+        }
+    }
+    let _restore = RestoreCurrentDir(original);
     f(dir.path().to_path_buf()).await;
-    std::env::set_current_dir(original).unwrap();
 }
 
 fn tool_names(events: &[AgentEvent]) -> Vec<String> {
@@ -145,8 +249,8 @@ fn errors(events: &[AgentEvent]) -> Vec<String> {
 
 // ── Test A: inspect ─────────────────────────────────────────────────────────
 //
-// The planner requests a file read; the tool executes; the observation
-// reaches the next planner step (planner's second action sees it); the
+// The react requests a file read; the tool executes; the observation
+// reaches the next react step (react's second action sees it); the
 // agent then answers.
 
 #[tokio::test]
@@ -154,11 +258,16 @@ async fn test_a_inspect() {
     in_temp_dir(|dir| async move {
         std::fs::write(dir.join("hello.txt"), "hello from test").unwrap();
 
-        // The agent's deterministic-first-action shortcut reads hello.txt
-        // before the planner runs, so the planner's first action is the
-        // second tool call overall.
         let events = run_agent_once(
-            vec![PlanAction::Answer],
+            vec![
+                ReActAction::Tool {
+                    name: "read_file".into(),
+                    input: "hello.txt".into(),
+                },
+                ReActAction::Answer {
+                    content: "done".into(),
+                },
+            ],
             vec!["The file says hello.".into()],
             "read the file hello.txt in this project",
             vec![],
@@ -176,7 +285,7 @@ async fn test_a_inspect() {
 async fn plan_only_request_does_not_execute_tools() {
     in_temp_dir(|_dir| async move {
         let events = run_agent_once(
-            vec![PlanAction::Plan {
+            vec![ReActAction::Plan {
                 content: "Inspect the module, implement the feature, run tests.".into(),
             }],
             vec![],
@@ -201,7 +310,7 @@ async fn plan_only_request_does_not_execute_tools() {
 
 // ── Test B: modify ──────────────────────────────────────────────────────────
 //
-// The planner inspects a file, then requests a patch. The patch requires
+// The react inspects a file, then requests a patch. The patch requires
 // confirmation, which the test auto-allows. The patch must execute and the
 // file on disk must change.
 
@@ -219,14 +328,18 @@ async fn test_b_modify() {
 
         let events = run_agent_once(
             vec![
-                PlanAction::Plan {
+                ReActAction::Plan {
                     content: "Inspect code.rs, patch the call, verify.".into(),
                 },
-                PlanAction::Tool {
+                ReActAction::Tool {
+                    name: "read_file".into(),
+                    input: "code.rs".into(),
+                },
+                ReActAction::Tool {
                     name: "patch_file".into(),
                     input: patch_input,
                 },
-                PlanAction::Answer,
+                ReActAction::Answer { content: "done".into() },
             ],
             vec!["Patched.".into()],
             "edit the file code.rs",
@@ -249,7 +362,7 @@ async fn test_b_modify() {
             .expect("file changes must be previewed");
         let confirmation_index = events
             .iter()
-            .position(|event| matches!(event, AgentEvent::ConfirmationRequired { name, .. } if name == "apply_changes"))
+            .position(|event| matches!(event, AgentEvent::ConfirmationRequired { name, .. } if name == "patch_file"))
             .expect("file changes must require approval");
         assert!(preview_index < confirmation_index);
         let tool_index = events
@@ -264,18 +377,20 @@ async fn test_b_modify() {
 // ── Test C: verification failure ────────────────────────────────────────────
 //
 // The agent modifies a file, runs a failing command, and the failure
-// (exit code + stderr) becomes an observation the next planner step sees.
+// (exit code + stderr) becomes an observation the next react step sees.
 
 #[tokio::test]
 async fn test_c_verification_failure() {
     in_temp_dir(|_dir| async move {
         let events = run_agent_once(
             vec![
-                PlanAction::Tool {
+                ReActAction::Tool {
                     name: "run_command".into(),
                     input: "echo 'error: expected identifier' >&2; exit 1".into(),
                 },
-                PlanAction::Answer,
+                ReActAction::Answer {
+                    content: "done".into(),
+                },
             ],
             vec!["The build failed with a syntax error.".into()],
             "build this project",
@@ -301,11 +416,13 @@ async fn test_d_successful_verification() {
     in_temp_dir(|_dir| async move {
         let events = run_agent_once(
             vec![
-                PlanAction::Tool {
+                ReActAction::Tool {
                     name: "run_command".into(),
                     input: "echo ok".into(),
                 },
-                PlanAction::Answer,
+                ReActAction::Answer {
+                    content: "done".into(),
+                },
             ],
             vec!["Build succeeded.".into()],
             "run the tests for this project",
@@ -337,14 +454,16 @@ async fn test_e_tool_failure_propagates() {
 
         let events = run_agent_once(
             vec![
-                PlanAction::Plan {
+                ReActAction::Plan {
                     content: "Inspect the missing file, then patch it.".into(),
                 },
-                PlanAction::Tool {
+                ReActAction::Tool {
                     name: "patch_file".into(),
                     input: patch_input,
                 },
-                PlanAction::Answer,
+                ReActAction::Answer {
+                    content: "done".into(),
+                },
             ],
             vec!["Could not patch.".into()],
             "patch the file missing.rs",
@@ -379,14 +498,20 @@ async fn test_confirmation_denied_skips_tool() {
 
         let events = run_agent_once(
             vec![
-                PlanAction::Plan {
+                ReActAction::Plan {
                     content: "Inspect keep.rs and patch the requested text.".into(),
                 },
-                PlanAction::Tool {
+                ReActAction::Tool {
+                    name: "read_file".into(),
+                    input: "keep.rs".into(),
+                },
+                ReActAction::Tool {
                     name: "patch_file".into(),
                     input: patch_input,
                 },
-                PlanAction::Answer,
+                ReActAction::Answer {
+                    content: "done".into(),
+                },
             ],
             vec!["Skipped.".into()],
             "edit the file keep.rs",

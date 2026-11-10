@@ -65,6 +65,8 @@ pulldown-cmark = { version = "0.13.4", optional = true }
 rand = { version = "0.10.2", optional = true }
 ratatui = { version = "0.30.2", optional = true }
 unicode-width = { version = "0.2.2", optional = true }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 
 # The profile that 'dist' will build with
 [profile.dist]

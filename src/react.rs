@@ -11,51 +11,55 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub enum PlanAction {
+pub enum ReActAction {
     Tool { name: String, input: String },
-    Answer,
-    Multi { actions: Vec<PlanAction> },
+    Answer { content: String },
     Plan { content: String },
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
-pub enum PlannerResponse {
+pub enum ReActResponse {
     #[serde(rename = "tool")]
     Tool { name: String, input: Value },
 
-    #[serde(rename = "multi")]
-    Multi { actions: Vec<PlannerResponse> },
-
     #[serde(rename = "answer")]
-    Answer,
+    Answer { content: String },
 
     #[serde(rename = "plan")]
     Plan { content: String },
 }
 
 #[async_trait::async_trait]
-pub trait PlannerTrait: Send + Sync {
-    async fn plan(&self, messages: Vec<Message>, cancel: CancellationToken) -> Result<PlanAction>;
+pub trait ReActTrait: Send + Sync {
+    async fn next_action(
+        &self,
+        messages: Vec<Message>,
+        cancel: CancellationToken,
+    ) -> Result<ReActAction>;
 }
 
-pub struct Planner<M> {
+pub struct ReAct<M> {
     model: M,
     tools: Vec<String>,
     descriptions: Vec<String>,
 }
 
 #[async_trait::async_trait]
-impl<M> PlannerTrait for Planner<M>
+impl<M> ReActTrait for ReAct<M>
 where
     M: Model,
 {
-    async fn plan(&self, messages: Vec<Message>, cancel: CancellationToken) -> Result<PlanAction> {
-        self.create_plan(messages, cancel).await
+    async fn next_action(
+        &self,
+        messages: Vec<Message>,
+        cancel: CancellationToken,
+    ) -> Result<ReActAction> {
+        self.next_step(messages, cancel).await
     }
 }
 
-impl<M> Planner<M>
+impl<M> ReAct<M>
 where
     M: Model,
 {
@@ -75,14 +79,15 @@ where
         };
 
         format!(
-            r#"You are Luma's internal planner.
+            r#"You are Luma, a ReAct coding agent.
 
-Your job is to decide the NEXT action required to satisfy the user's request.
+Work in a ReAct cycle: use the conversation and previous tool observations,
+choose one useful action, then continue after observing its result. When the
+task is complete, return the complete user-facing answer.
 
-Return EXACTLY ONE valid JSON object.
+Return EXACTLY ONE valid JSON object for this step.
 Never use Markdown.
-Never explain your reasoning.
-Never output conversational text.
+Do not reveal private chain-of-thought.
 
 AVAILABLE TOOLS:
 {tools}
@@ -109,27 +114,6 @@ Structured tool input:
   }}
 }}
 
-Multiple independent tool actions:
-
-{{
-  "type": "multi",
-  "actions": [
-    {{
-      "type": "tool",
-      "name": "read_file",
-      "input": "Cargo.toml"
-    }},
-    {{
-      "type": "tool",
-      "name": "read_file",
-      "input": "src/main.rs"
-    }}
-  ]
-}}
-
-Only tool actions may appear inside "multi".
-Nested multi actions are forbidden.
-
 A plan:
 
 {{
@@ -142,10 +126,11 @@ Use "plan" only when enough information has already been gathered to propose a c
 An answer:
 
 {{
-  "type": "answer"
+  "type": "answer",
+  "content": "The final response for the user."
 }}
 
-Use "answer" when no workspace action is necessary.
+Use "answer" when the task is complete. Include the final response in content.
 
 WORKSPACE RULES:
 
@@ -175,9 +160,6 @@ Existing file has already been inspected and must be changed:
 New file is required:
 → write_file
 
-Several independent inspections are required:
-→ multi
-
 Implementation needs explicit approval:
 → plan
 
@@ -189,12 +171,9 @@ EFFICIENCY:
 Choose the smallest useful action.
 Do not repeat observations.
 Do not perform unnecessary commands.
-Prefer independent reads in multi.
-
 VALID TOP-LEVEL TYPES:
 
 tool
-multi
 answer
 plan
 
@@ -204,15 +183,14 @@ Return JSON only."#,
         )
     }
 
-    pub async fn create_plan(
+    pub async fn next_step(
         &self,
         messages: Vec<Message>,
         cancel: CancellationToken,
-    ) -> Result<PlanAction> {
+    ) -> Result<ReActAction> {
         let mut request_messages = Vec::with_capacity(messages.len() + 1);
 
-        // The planner owns its system prompt.
-        // Agent must NOT add another planner system prompt.
+        // ReAct owns its system prompt; the agent supplies the live transcript.
         request_messages.push(Message {
             role: MessageRole::System,
             content: self.system_prompt(),
@@ -220,10 +198,7 @@ Return JSON only."#,
 
         request_messages.extend(messages);
 
-        tracing::debug!(
-            messages = request_messages.len(),
-            "Planner requesting next action"
-        );
+        tracing::debug!(messages = request_messages.len(), "ReAct step started");
 
         let mut stream = match self
             .model
@@ -236,7 +211,7 @@ Return JSON only."#,
             Err(error) => {
                 tracing::error!(
                     error = %error,
-                    "Planner request failed"
+                    "ReAct step failed"
                 );
 
                 return Err(error);
@@ -248,7 +223,7 @@ Return JSON only."#,
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => {
-                    return Err(anyhow!("Planning interrupted."));
+                    return Err(anyhow!("ReAct step interrupted."));
                 }
 
                 chunk = stream.next() => {
@@ -261,79 +236,56 @@ Return JSON only."#,
             }
         }
 
-        tracing::debug!(response_bytes = response.len(), "Planner response received");
+        tracing::debug!(response_bytes = response.len(), "ReAct response received");
 
         let json = extract_json(&response)?;
 
-        let planner_response: PlannerResponse =
+        let react_response: ReActResponse =
             serde_json::from_value(json.clone()).map_err(|error| {
                 anyhow!(
-                    "Invalid planner response schema: {}\n\nPlanner JSON:\n{}",
+                    "Invalid ReAct response schema: {}\n\nResponse JSON:\n{}",
                     error,
                     serde_json::to_string_pretty(&json).unwrap_or_else(|_| json.to_string())
                 )
             })?;
 
-        self.validate_response(&planner_response)?;
+        self.validate_response(&react_response)?;
 
-        Ok(convert_response(planner_response))
+        Ok(convert_response(react_response))
     }
 
-    fn validate_response(&self, response: &PlannerResponse) -> Result<()> {
+    fn validate_response(&self, response: &ReActResponse) -> Result<()> {
         match response {
-            PlannerResponse::Tool { name, input } => {
+            ReActResponse::Tool { name, input } => {
                 if name.trim().is_empty() {
-                    return Err(anyhow!("Planner returned an empty tool name"));
+                    return Err(anyhow!("ReAct returned an empty tool name"));
                 }
 
                 if !self.tool_exists(name) {
                     return Err(anyhow!(
-                        "Planner requested unknown tool: '{}'. Available tools: {}",
+                        "ReAct requested unknown tool: '{}'. Available tools: {}",
                         name,
                         self.tools.join(", ")
                     ));
                 }
 
                 if input.is_null() {
-                    return Err(anyhow!("Planner returned null input for tool '{}'", name));
+                    return Err(anyhow!("ReAct returned null input for tool '{}'", name));
                 }
 
                 Ok(())
             }
 
-            PlannerResponse::Multi { actions } => {
-                if actions.is_empty() {
-                    return Err(anyhow!("Planner returned an empty multi action"));
-                }
-
-                for action in actions {
-                    match action {
-                        PlannerResponse::Tool { .. } => {
-                            self.validate_response(action)?;
-                        }
-
-                        PlannerResponse::Multi { .. } => {
-                            return Err(anyhow!("Nested multi actions are not allowed"));
-                        }
-
-                        PlannerResponse::Answer => {
-                            return Err(anyhow!("Answer actions are not allowed inside multi"));
-                        }
-
-                        PlannerResponse::Plan { .. } => {
-                            return Err(anyhow!("Plan actions are not allowed inside multi"));
-                        }
-                    }
-                }
-
-                Ok(())
-            }
-
-            PlannerResponse::Answer => Ok(()),
-
-            PlannerResponse::Plan { content } => {
+            ReActResponse::Answer { content } => {
                 if content.trim().is_empty() {
-                    return Err(anyhow!("Planner returned an empty plan"));
+                    return Err(anyhow!("ReAct returned an empty final answer"));
+                }
+                Ok(())
+            }
+
+            ReActResponse::Plan { content } => {
+                if content.trim().is_empty() {
+                    return Err(anyhow!("ReAct returned an empty plan"));
                 }
 
                 Ok(())
@@ -346,20 +298,16 @@ Return JSON only."#,
     }
 }
 
-pub fn convert_response(response: PlannerResponse) -> PlanAction {
+pub fn convert_response(response: ReActResponse) -> ReActAction {
     match response {
-        PlannerResponse::Tool { name, input } => PlanAction::Tool {
+        ReActResponse::Tool { name, input } => ReActAction::Tool {
             name,
             input: serialize_input(input),
         },
 
-        PlannerResponse::Multi { actions } => PlanAction::Multi {
-            actions: actions.into_iter().map(convert_response).collect(),
-        },
+        ReActResponse::Answer { content } => ReActAction::Answer { content },
 
-        PlannerResponse::Answer => PlanAction::Answer,
-
-        PlannerResponse::Plan { content } => PlanAction::Plan { content },
+        ReActResponse::Plan { content } => ReActAction::Plan { content },
     }
 }
 
@@ -379,7 +327,7 @@ fn extract_json(text: &str) -> Result<Value> {
         .trim();
 
     if clean.is_empty() {
-        return Err(anyhow!("Planner returned an empty response"));
+        return Err(anyhow!("ReAct returned an empty response"));
     }
 
     if let Ok(value) = serde_json::from_str::<Value>(clean) {
@@ -387,22 +335,22 @@ fn extract_json(text: &str) -> Result<Value> {
     }
 
     let Some(start) = clean.find('{') else {
-        return Err(anyhow!("Planner returned invalid JSON:\n{}", clean));
+        return Err(anyhow!("ReAct returned invalid JSON:\n{}", clean));
     };
 
     let Some(end) = clean.rfind('}') else {
-        return Err(anyhow!("Planner returned invalid JSON:\n{}", clean));
+        return Err(anyhow!("ReAct returned invalid JSON:\n{}", clean));
     };
 
     if start > end {
-        return Err(anyhow!("Planner returned invalid JSON:\n{}", clean));
+        return Err(anyhow!("ReAct returned invalid JSON:\n{}", clean));
     }
 
     let candidate = &clean[start..=end];
 
     serde_json::from_str::<Value>(candidate).map_err(|error| {
         anyhow!(
-            "Planner returned invalid JSON: {}\n\nResponse:\n{}",
+            "ReAct returned invalid JSON: {}\n\nResponse:\n{}",
             error,
             clean
         )
@@ -426,13 +374,14 @@ mod tests {
 
     #[test]
     fn extracts_answer_json() {
-        let value = extract_json(r#"{"type":"answer"}"#).unwrap();
+        let value = extract_json(r#"{"type":"answer","content":"done"}"#).unwrap();
         assert_eq!(value["type"], "answer");
     }
 
     #[test]
     fn strips_markdown_code_fence() {
-        let value = extract_json("```json\n{\"type\":\"answer\"}\n```").unwrap();
+        let value =
+            extract_json("```json\n{\"type\":\"answer\",\"content\":\"done\"}\n```").unwrap();
         assert_eq!(value["type"], "answer");
     }
 
@@ -462,14 +411,14 @@ mod tests {
 
     // ── validate_response ───────────────────────────────────────────────────
 
-    fn planner_with_tools(names: &[&str]) -> Planner<MockModel> {
+    fn react_with_tools(names: &[&str]) -> ReAct<MockModel> {
         let mut registry = ToolRegistry::new();
         for name in names {
             registry.register(DummyTool {
                 name: name.to_string(),
             });
         }
-        Planner::new(MockModel, &registry)
+        ReAct::new(MockModel, &registry)
     }
 
     struct MockModel;
@@ -499,99 +448,70 @@ mod tests {
 
     #[test]
     fn validates_known_tool() {
-        let planner = planner_with_tools(&["read_file", "write_file"]);
-        let response = PlannerResponse::Tool {
+        let react = react_with_tools(&["read_file", "write_file"]);
+        let response = ReActResponse::Tool {
             name: "read_file".into(),
             input: Value::String("src/main.rs".into()),
         };
-        assert!(planner.validate_response(&response).is_ok());
+        assert!(react.validate_response(&response).is_ok());
     }
 
     #[test]
     fn rejects_unknown_tool() {
-        let planner = planner_with_tools(&["read_file"]);
-        let response = PlannerResponse::Tool {
+        let react = react_with_tools(&["read_file"]);
+        let response = ReActResponse::Tool {
             name: "delete_everything".into(),
             input: Value::String(".".into()),
         };
-        let error = planner.validate_response(&response).unwrap_err();
+        let error = react.validate_response(&response).unwrap_err();
         assert!(error.to_string().contains("unknown tool"));
     }
 
     #[test]
     fn rejects_null_tool_input() {
-        let planner = planner_with_tools(&["read_file"]);
-        let response = PlannerResponse::Tool {
+        let react = react_with_tools(&["read_file"]);
+        let response = ReActResponse::Tool {
             name: "read_file".into(),
             input: Value::Null,
         };
-        assert!(planner.validate_response(&response).is_err());
-    }
-
-    #[test]
-    fn rejects_nested_multi() {
-        let planner = planner_with_tools(&["read_file"]);
-        let response = PlannerResponse::Multi {
-            actions: vec![PlannerResponse::Multi {
-                actions: vec![PlannerResponse::Tool {
-                    name: "read_file".into(),
-                    input: Value::String("a".into()),
-                }],
-            }],
-        };
-        let error = planner.validate_response(&response).unwrap_err();
-        assert!(error.to_string().contains("Nested multi"));
-    }
-
-    #[test]
-    fn rejects_answer_inside_multi() {
-        let planner = planner_with_tools(&["read_file"]);
-        let response = PlannerResponse::Multi {
-            actions: vec![PlannerResponse::Answer],
-        };
-        assert!(planner.validate_response(&response).is_err());
+        assert!(react.validate_response(&response).is_err());
     }
 
     #[test]
     fn rejects_empty_plan() {
-        let planner = planner_with_tools(&[]);
-        let response = PlannerResponse::Plan {
+        let react = react_with_tools(&[]);
+        let response = ReActResponse::Plan {
             content: "   ".into(),
         };
-        assert!(planner.validate_response(&response).is_err());
+        assert!(react.validate_response(&response).is_err());
     }
 
-    #[test]
-    fn accepts_valid_multi() {
-        let planner = planner_with_tools(&["read_file", "search_files"]);
-        let response = PlannerResponse::Multi {
-            actions: vec![
-                PlannerResponse::Tool {
-                    name: "read_file".into(),
-                    input: Value::String("a.rs".into()),
-                },
-                PlannerResponse::Tool {
-                    name: "search_files".into(),
-                    input: Value::String("pattern".into()),
-                },
-            ],
-        };
-        assert!(planner.validate_response(&response).is_ok());
-    }
-
-    // ── full response parsing (JSON → validated PlanAction) ─────────────────
+    // ── full response parsing (JSON → validated ReActAction) ─────────────────
 
     #[test]
     fn parses_full_tool_response() {
         let json =
             extract_json(r#"{"type":"tool","name":"read_file","input":"src/lib.rs"}"#).unwrap();
-        let response: PlannerResponse = serde_json::from_value(json).unwrap();
+        let response: ReActResponse = serde_json::from_value(json).unwrap();
         match convert_response(response) {
-            PlanAction::Tool { name, input } => {
+            ReActAction::Tool { name, input } => {
                 assert_eq!(name, "read_file");
                 assert_eq!(input, "src/lib.rs");
             }
             _ => panic!("expected Tool action"),
+        }
+    }
+
+    #[test]
+    fn preserves_final_answer_content() {
+        let json =
+            extract_json(r#"{"type":"answer","content":"The change is complete."}"#).unwrap();
+        let response: ReActResponse = serde_json::from_value(json).unwrap();
+        match convert_response(response) {
+            ReActAction::Answer { content } => {
+                assert_eq!(content, "The change is complete.");
+            }
+            _ => panic!("expected final answer"),
         }
     }
 
@@ -601,9 +521,9 @@ mod tests {
             r#"{"type":"tool","name":"write_file","input":{"path":"a.txt","content":"hi"}}"#,
         )
         .unwrap();
-        let response: PlannerResponse = serde_json::from_value(json).unwrap();
+        let response: ReActResponse = serde_json::from_value(json).unwrap();
         match convert_response(response) {
-            PlanAction::Tool { name, input } => {
+            ReActAction::Tool { name, input } => {
                 assert_eq!(name, "write_file");
                 let parsed: Value = serde_json::from_str(&input).unwrap();
                 assert_eq!(parsed["path"], "a.txt");

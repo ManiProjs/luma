@@ -8,7 +8,10 @@
 //! another, and the desktop JSONL server a third. They all speak the same
 //! [`AgentCommand`] / [`AgentEvent`] pair.
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 use tokio::sync::mpsc::Sender;
@@ -23,6 +26,45 @@ use crate::event::AgentEvent;
 // ============================================================================
 
 pub type ConfirmationSender = Sender<Confirmation>;
+
+/// A fresh cancellation token is used for each request. The parent token is
+/// reserved for shutting down the whole agent process.
+#[derive(Clone)]
+pub struct RequestCancellation {
+    shutdown: CancellationToken,
+    current: Arc<Mutex<CancellationToken>>,
+}
+
+impl RequestCancellation {
+    pub fn new(shutdown: CancellationToken) -> Self {
+        Self {
+            current: Arc::new(Mutex::new(shutdown.child_token())),
+            shutdown,
+        }
+    }
+
+    pub fn current(&self) -> CancellationToken {
+        self.current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn reset(&self) {
+        *self
+            .current
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = self.shutdown.child_token();
+    }
+
+    pub fn cancel(&self) {
+        self.current().cancel();
+    }
+
+    pub fn shutdown(&self) {
+        self.shutdown.cancel();
+    }
+}
 
 // ============================================================================
 // Commands (client -> core)
@@ -159,6 +201,7 @@ impl From<&MessageLine> for MessageView {
 /// A serializable snapshot of an entire session.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SessionView {
+    pub chat_id: String,
     pub info: SessionInfo,
     pub messages: Vec<MessageView>,
     pub confirmation: Option<PendingConfirmation>,
@@ -286,7 +329,7 @@ pub struct Session {
     info: SessionInfo,
     state: SessionState,
     confirm_tx: ConfirmationSender,
-    cancel: CancellationToken,
+    cancel: RequestCancellation,
     started_at: Option<Instant>,
     exit_requested: bool,
 
@@ -316,7 +359,7 @@ impl Session {
     pub fn new(
         info: SessionInfo,
         confirm_tx: ConfirmationSender,
-        cancel: CancellationToken,
+        cancel: RequestCancellation,
     ) -> Self {
         let session = Self {
             info,
@@ -363,6 +406,10 @@ impl Session {
         &self.state
     }
 
+    pub fn request_cancellation(&self) -> RequestCancellation {
+        self.cancel.clone()
+    }
+
     /// How long the current request has been running, if one is.
     pub fn elapsed(&self) -> Option<Duration> {
         self.started_at.map(|started| started.elapsed())
@@ -372,6 +419,7 @@ impl Session {
     /// renders from state rather than by folding events.
     pub fn view(&self) -> SessionView {
         SessionView {
+            chat_id: self.chat_id.clone(),
             info: self.info.clone(),
             messages: self.state.messages.iter().map(MessageLine::view).collect(),
             confirmation: self.state.confirmation.clone(),
@@ -454,6 +502,7 @@ impl Session {
                 self.push_system("Cancel the current request before resuming a task.");
                 return Ok(None);
             }
+            self.cancel.reset();
             let Some(checkpoint) = crate::tasks::load()? else {
                 self.push_system("There is no saved task checkpoint for this workspace.");
                 return Ok(None);
@@ -522,6 +571,7 @@ impl Session {
             self.state.confirmation = None;
             self.state.status = DEFAULT_STATUS.into();
             self.started_at = None;
+            self.cancel.reset();
             self.last_event = None;
             self.pending = None;
             self.chat_id = archive.id;
@@ -549,7 +599,7 @@ impl Session {
             Some(commands::Command::Quit) => {
                 self.push_system("Goodbye.");
                 self.exit_requested = true;
-                self.cancel.cancel();
+                self.cancel.shutdown();
 
                 Ok(None)
             }
@@ -559,6 +609,15 @@ impl Session {
                 self.state.input_history.clear();
                 self.state.fresh = true;
                 self.state.status = DEFAULT_STATUS.into();
+                self.chat_id = crate::chats::new_id();
+                self.summary = None;
+                #[cfg(not(test))]
+                {
+                    self.chat_created_at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                }
                 self.persist();
 
                 Ok(None)
@@ -584,6 +643,8 @@ impl Session {
                 "the agent is busy — cancel the current request before sending another"
             ));
         }
+
+        self.cancel.reset();
 
         self.state.fresh = false;
 
@@ -627,14 +688,15 @@ impl Session {
         Ok(())
     }
 
-    /// Cancel the request in flight and return the session to idle.
+    /// Request cancellation and wait for the agent's terminal event before
+    /// marking the session idle.
     pub fn cancel(&mut self) {
+        if !self.state.busy {
+            return;
+        }
         self.cancel.cancel();
-
-        self.started_at = None;
-        self.state.busy = false;
         self.state.confirmation = None;
-        self.state.status = "Cancelled".into();
+        self.state.status = "Cancelling".into();
     }
 
     /// Drop everything after `index`, leaving `index` as the last entry so
@@ -649,7 +711,7 @@ impl Session {
 
         if self.state.busy {
             // The in-flight request will never resolve into this transcript.
-            self.cancel.cancel();
+            self.cancel();
         }
 
         tracing::debug!(index, "session rolled back");
@@ -743,6 +805,7 @@ impl Session {
                 name,
                 duration_ms,
                 failed,
+                ..
             } => {
                 if let Some(message) = self
                     .state
@@ -786,7 +849,24 @@ impl Session {
 
             AgentEvent::Error(error) => {
                 self.push(MessageLine::new(MessageRole::Error, error));
+                self.state.status = "Error".into();
                 self.finish();
+            }
+
+            AgentEvent::Cancelled => {
+                self.state.confirmation = None;
+                for message in &mut self.state.messages {
+                    if message.role == MessageRole::Tool && message.running {
+                        message.running = false;
+                        message.started_at = None;
+                    }
+                }
+                self.push(MessageLine::new(
+                    MessageRole::System,
+                    "Generation cancelled.".into(),
+                ));
+                self.finish();
+                self.state.status = "Cancelled".into();
             }
 
             // Usage is already in the snapshot, and it is sent again on
@@ -806,9 +886,33 @@ impl Session {
 
             AgentEvent::Finished => self.finish(),
 
-            // A display hint for a front end that polls status. The core
-            // derives its own status, so this carries no information.
-            AgentEvent::Status { .. } => self.absorb(),
+            AgentEvent::Status { state } => {
+                self.state.status = match state {
+                    crate::event::AgentStatus::Idle => {
+                        self.state.busy = false;
+                        self.started_at = None;
+                        DEFAULT_STATUS.into()
+                    }
+                    crate::event::AgentStatus::Thinking => "Thinking".into(),
+                    crate::event::AgentStatus::Doing => "Working".into(),
+                    crate::event::AgentStatus::Talking => "Generating response".into(),
+                    crate::event::AgentStatus::Waiting => "Waiting for confirmation".into(),
+                    crate::event::AgentStatus::Error => {
+                        self.state.busy = false;
+                        "Error".into()
+                    }
+                };
+                if matches!(
+                    state,
+                    crate::event::AgentStatus::Thinking
+                        | crate::event::AgentStatus::Doing
+                        | crate::event::AgentStatus::Talking
+                        | crate::event::AgentStatus::Waiting
+                ) {
+                    self.state.busy = true;
+                    self.started_at.get_or_insert_with(Instant::now);
+                }
+            }
 
             AgentEvent::SessionInfo { .. } => self.absorb(),
         }
@@ -835,7 +939,10 @@ impl Session {
         // A confirmation is not cleared here: the agent may report `Finished`
         // while still blocked waiting for the user, and erasing the prompt
         // would leave the tool call hanging with no way to answer it.
-        if self.state.confirmation.is_none() {
+        if self.state.confirmation.is_none()
+            && self.state.status != "Cancelled"
+            && self.state.status != "Error"
+        {
             self.state.status = DEFAULT_STATUS.into();
         }
     }
@@ -906,7 +1013,7 @@ mod tests {
             Session::new(
                 SessionInfo::new("Ollama", "qwen3", "/tmp", vec!["read_file".into()]),
                 tx,
-                CancellationToken::new(),
+                RequestCancellation::new(CancellationToken::new()),
             ),
             rx,
         )
@@ -927,11 +1034,13 @@ mod tests {
     #[test]
     fn empty_and_local_commands_are_not_forwarded() {
         let (mut session, _rx) = session();
+        let previous_chat_id = session.chat_id.clone();
 
         assert_eq!(session.submit("   ".into()).unwrap(), None);
         assert_eq!(session.submit("/help".into()).unwrap(), None);
         assert_eq!(session.submit("/clear".into()).unwrap(), None);
         assert!(session.state().messages.is_empty());
+        assert_ne!(session.chat_id, previous_chat_id);
     }
 
     #[test]
@@ -1063,6 +1172,7 @@ mod tests {
             name: "read_file".into(),
             duration_ms: 12,
             failed: false,
+            diff: None,
         });
 
         let messages = &session.state().messages;
@@ -1085,6 +1195,7 @@ mod tests {
             name: "read_file".into(),
             duration_ms: 3,
             failed: true,
+            diff: None,
         });
 
         let messages = &session.state().messages;
@@ -1112,6 +1223,7 @@ mod tests {
             name: "read_file".into(),
             duration_ms: 7,
             failed: false,
+            diff: None,
         });
 
         let finished = session.state().messages[0].view();
@@ -1209,7 +1321,7 @@ mod tests {
     }
 
     #[test]
-    fn cancel_clears_busy_and_confirmation() {
+    fn cancel_waits_for_agent_acknowledgement_before_clearing_busy() {
         let (mut session, _rx) = session();
 
         session.submit("go".into()).unwrap();
@@ -1220,9 +1332,72 @@ mod tests {
         });
         session.cancel();
 
-        assert!(!session.state().busy);
+        assert!(session.state().busy);
         assert!(session.state().confirmation.is_none());
+        assert_eq!(session.state().status, "Cancelling");
+
+        session.handle_event(AgentEvent::Cancelled);
+        assert!(!session.state().busy);
         assert_eq!(session.state().status, "Cancelled");
+    }
+
+    #[test]
+    fn a_cancelled_request_does_not_cancel_the_next_request() {
+        let (mut session, _rx) = session();
+
+        session.submit("first".into()).unwrap();
+        let first = session.request_cancellation().current();
+        session.cancel();
+        assert!(first.is_cancelled());
+
+        session.handle_event(AgentEvent::Cancelled);
+        session.submit("second".into()).unwrap();
+        let second = session.request_cancellation().current();
+
+        assert!(!second.is_cancelled());
+        assert_eq!(session.state().status, BUSY_STATUS);
+    }
+
+    #[test]
+    fn status_events_are_forwarded_and_folded_into_the_session() {
+        let (mut session, _rx) = session();
+        session.submit("hello".into()).unwrap();
+
+        let before = session.state().messages.len();
+        session.handle_event(AgentEvent::Status {
+            state: crate::event::AgentStatus::Talking,
+        });
+
+        assert_eq!(session.state().status, "Generating response");
+        assert!(matches!(
+            session.advance(before),
+            Some(AgentEvent::Status { .. })
+        ));
+    }
+
+    #[test]
+    fn cancelled_event_finishes_the_request_without_reporting_an_error() {
+        let (mut session, _rx) = session();
+        session.submit("hello".into()).unwrap();
+        session.handle_event(AgentEvent::ToolStarted {
+            name: "run_command".into(),
+            input: "cargo test".into(),
+        });
+        let before = session.state().messages.len();
+
+        session.handle_event(AgentEvent::Cancelled);
+
+        assert!(!session.state().busy);
+        assert_eq!(session.state().status, "Cancelled");
+        assert_eq!(
+            session.state().messages.last().unwrap().content,
+            "Generation cancelled."
+        );
+        assert!(!session.state().messages[1].running);
+        assert!(matches!(
+            session.advance(before),
+            Some(AgentEvent::Cancelled)
+        ));
     }
 
     #[test]

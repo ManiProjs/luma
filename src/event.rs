@@ -28,6 +28,8 @@ pub enum AgentEvent {
         name: String,
         duration_ms: u128,
         failed: bool,
+        #[serde(default)]
+        diff: Option<String>,
     },
 
     ConfirmationRequired {
@@ -38,6 +40,9 @@ pub enum AgentEvent {
     SystemMessage(String),
 
     Error(String),
+
+    /// The active request was cancelled by the user.
+    Cancelled,
 
     Usage {
         prompt_tokens: u64,
@@ -68,7 +73,7 @@ pub enum AgentEvent {
     ThinkingContent(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AgentStatus {
     Idle,
@@ -77,4 +82,26 @@ pub enum AgentStatus {
     Talking,
     Waiting,
     Error,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentEvent;
+
+    #[test]
+    fn tool_finished_serializes_the_actual_patch_diff() {
+        let event = AgentEvent::ToolFinished {
+            name: "patch_file".into(),
+            duration_ms: 8,
+            failed: false,
+            diff: Some("--- a/file.rs\n+++ b/file.rs\n-old\n+new".into()),
+        };
+
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(value["type"], "ToolFinished");
+        assert_eq!(
+            value["data"]["diff"],
+            "--- a/file.rs\n+++ b/file.rs\n-old\n+new"
+        );
+    }
 }

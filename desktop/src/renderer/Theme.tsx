@@ -31,19 +31,19 @@ export const themes: ThemeDefinition[] = [
     id: "system",
     name: "Match System",
     description: "Follows the macOS appearance.",
-    accent: "#818fe0",
+    accent: "#c49a5a",
   },
   {
     id: "luma",
     name: "Luma Dark",
     description: "The default Luma interface.",
-    accent: "#818fe0",
+    accent: "#c49a5a",
   },
   {
     id: "luma-light",
     name: "Luma Light",
     description: "A bright workspace for daylight.",
-    accent: "#5968bd",
+    accent: "#89652f",
   },
   {
     id: "midnight",

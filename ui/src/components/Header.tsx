@@ -12,21 +12,16 @@ export function Header({ session }: Props) {
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Box>
+      <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
         <Text color={theme.brand} bold>{glyphs.logo} LUMA</Text>
-        <Text color={theme.chrome}>  /  </Text>
+        <Text color={theme.chrome}>/</Text>
         <Text bold>{workspace}</Text>
-        <Text color={theme.muted}>  ·  {session.provider}</Text>
-      </Box>
-
-      <Box marginLeft={2}>
+        <Text color={theme.chrome}>·</Text>
         <Text color={theme.muted}>{session.model}</Text>
-        {session.contextSize ? <Text color={theme.chrome}>  ·  {Math.round(session.contextSize / 1000)}k context</Text> : null}
-        {session.branch ? <Text color={theme.chrome}>  ·  {session.branch}</Text> : null}
-        {session.branch ? <Text color={session.dirty ? theme.warning : theme.success}> {session.dirty ? "● modified" : "● clean"}</Text> : null}
+        {session.branch ? <Text color={theme.chrome}>· {session.branch}</Text> : null}
+        {session.branch ? <Text color={session.dirty ? theme.warning : theme.success}>{session.dirty ? "● modified" : "● clean"}</Text> : null}
       </Box>
-
-      <Text color={theme.chrome}>{glyphs.divider.repeat(32)}</Text>
+      <Text color={theme.chrome}>{session.provider}{session.contextSize ? `  ·  ${Math.round(session.contextSize / 1000)}k context` : ""}</Text>
     </Box>
   );
 }

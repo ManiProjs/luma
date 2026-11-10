@@ -15,6 +15,7 @@ type Props = {
   onChange: (value: string) => void;
   onSubmit: () => void;
   onOpenModelPicker: () => void;
+  onToggleToolActivity: () => void;
   confirmation: { name: string; input: string } | null;
   onConfirm: (allowed: boolean) => void;
   disabled?: boolean;
@@ -43,6 +44,7 @@ export function Composer({
   onChange,
   onSubmit,
   onOpenModelPicker,
+  onToggleToolActivity,
   confirmation,
   onConfirm,
   disabled = false,
@@ -68,6 +70,10 @@ export function Composer({
     if (confirmation) {
       if (input.toLowerCase() === "y" || key.return) onConfirm(true);
       else if (input.toLowerCase() === "n" || key.escape) onConfirm(false);
+      return;
+    }
+    if ((key.ctrl || key.meta) && input.toLowerCase() === "o") {
+      onToggleToolActivity();
       return;
     }
     if (key.ctrl && input.toLowerCase() === "g") {
@@ -141,30 +147,30 @@ export function Composer({
   return (
     <Box flexDirection="column" marginTop={1}>
       {suggestions.length > 0 ? <Box flexDirection="column" marginBottom={1}>
-        <Text color={theme.muted}>Commands · Tab complete · ↑/↓ select</Text>
+        <Text color={theme.chrome}>COMMANDS  ·  Tab complete  ·  ↑/↓ select</Text>
         {suggestions.slice(0, 6).map((command, index) => <Text key={command} color={index === selectedSuggestion ? theme.accent : theme.muted}>
           {index === selectedSuggestion ? "› " : "  "}{command}
         </Text>)}
       </Box> : null}
-      {confirmation ? <Box flexDirection="column" borderStyle="round" borderColor={theme.warning} paddingX={1} marginBottom={1}>
-        <Text color={theme.warning} bold>Approval required · {confirmation.name}</Text>
+      {confirmation ? <Box flexDirection="column" borderStyle="single" borderLeft borderColor={theme.warning} paddingLeft={1} marginBottom={1}>
+        <Text color={theme.warning} bold>Approval required  ·  {confirmation.name}</Text>
         {confirmation.name !== "apply_changes" && confirmation.name !== "approve_plan" ? <Text>{confirmation.input}</Text> : null}
-        <Text color={theme.muted}>{confirmation.name === "apply_changes" ? "Review the diff above" : confirmation.name === "approve_plan" ? "Review the plan above" : "Review this action"} · Y approve · N reject</Text>
+        <Text color={theme.muted}>{confirmation.name === "apply_changes" ? "Review the diff above" : confirmation.name === "approve_plan" ? "Review the plan above" : "Review this action"}  ·  Y approve  ·  N reject</Text>
       </Box> : null}
       <PromptHeader status={status} activeTool={activeTool} toolCalls={toolCalls} turns={turns} />
 
-      <Box>
+      <Box marginTop={1}>
         <Text color={theme.accent} bold>
           {glyphs.input}{" "}
         </Text>
 
         <Text>
           {beforeCursor}
-          <Text color={theme.accent} bold>▌</Text>
+          <Text color={theme.accent} bold>▏</Text>
           {afterCursor}
         </Text>
       </Box>
-      <Text color={theme.muted}>Ctrl+G model picker</Text>
+      <Text color={theme.chrome}>Enter send  ·  Ctrl+G model  ·  / commands</Text>
     </Box>
   );
 }

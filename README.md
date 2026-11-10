@@ -23,7 +23,7 @@ Built to be small, fast, and practical — without requiring a massive model.
 - 🧭 Symbol and reference search
 - 🧾 File-change previews with explicit approval
 - 🧠 Persistent task plans and recovery checkpoints
-- 🔄 Planner → Tool → Observation agent loop
+- 🔄 ReAct agent loop with iterative tool use and observations
 - ⚡ Streaming responses
 - 🖥️ Interactive terminal UI
 - 🛑 Interruptible generation
@@ -33,67 +33,64 @@ Built to be small, fast, and practical — without requiring a massive model.
 
 ## 🧠 How It Works
 
-Luma uses a planning-based agent loop.
+Luma uses **ReAct (Reason + Act)**. A single configured model alternates between
+choosing an action and using the resulting observation to decide what to do
+next. There is no separate planner model or plan-generation pass between the
+agent and its tools.
 
 ```text
-             User Request
-                  │
-                  ▼
-               Planner
-                  │
-                  ▼
-             Tool Selection
-                  │
-                  ▼
-             Tool Execution
-                  │
-                  ▼
-              Observation
-                  │
-             ┌────┴────┐
-             │         │
-          More work   Done
-             │         │
-             ▼         ▼
-          Planner   Final Answer
+              User Request
+                   │
+                   ▼
+              ReAct Model
+                   │
+          ┌────────┴────────┐
+          │                 │
+       Tool Action       Final Answer
+          │
+          ▼
+      Tool Execution
+          │
+          ▼
+       Observation
+          │
+          └───────► ReAct Model
 ```
 
-Instead of blindly generating an answer, Luma can inspect the workspace, gather observations, modify files, run commands, and verify its work.
+The model receives the conversation and previous tool observations on every
+step. It can inspect the workspace, make an approved change, run verification,
+and continue until it has enough evidence to answer. Tool permissions, change
+previews, and approval gates remain enforced by the runtime.
 
 For example:
 
 ```text
-User
- │
- ▼
-"Fix the borrow checker error in agent.rs"
- │
- ▼
-Planner
- │
- ▼
-read_file
- │
- ▼
-Observation
- │
- ▼
-Planner
- │
- ▼
-patch_file
- │
- ▼
-run_command
- │
- ▼
-cargo check
- │
- ▼
-Final Answer
+User: "Fix the borrow checker error in agent.rs"
+  │
+  ▼
+ReAct → read_file
+  │
+  ▼
+Observation: source contents
+  │
+  ▼
+ReAct → patch_file
+  │
+  ▼
+Observation: patch result
+  │
+  ▼
+ReAct → run_command (cargo check)
+  │
+  ▼
+Observation: compiler output
+  │
+  ▼
+ReAct → final answer
 ```
 
-This keeps the model grounded in the actual project instead of relying on guesses.
+This keeps decisions grounded in the actual workspace and lets the model adapt
+after every tool result instead of committing to a brittle multi-step plan.
 
 ---
 
@@ -156,7 +153,7 @@ Prefer focused tests first, then run the full suite before finalizing.
 Luma discovers workspace skills in `.agents/skills/` and `.luma/skills/`,
 and personal skills in `~/.agents/skills/` and Luma's config directory at
 `skills/` (for example `~/.config/luma/skills/` on Linux). Workspace skills
-override personal skills with the same name. The planner uses `list_skills`
+override personal skills with the same name. The ReAct agent uses `list_skills`
 to discover metadata and `load_skill` to load a relevant skill only when
 needed, keeping unrelated instructions out of the model context. A loaded
 skill can reference companion files in its own directory; use `read_file` to
@@ -274,6 +271,16 @@ cd luma
 cargo build --release
 ```
 
+Cargo automatically builds the Vite dashboard before compiling `luma-core`;
+if dashboard dependencies are not installed yet, its build script installs
+them. The generated production assets are embedded directly into the core
+executable, so a deployed `luma-core` does not need the dashboard directory,
+Node.js, or npm. Dashboard source changes trigger a fresh dashboard build on
+the next Cargo build. Use `luma dashboard` to start the Vite development server
+and Rust API together. The Vite dev server proxies API and WebSocket traffic to
+that core server. `LUMA_DASHBOARD_DIR` remains available as a development
+override for assets on disk.
+
 ### Run the Ink CLI
 
 ```bash
@@ -311,18 +318,33 @@ workspace, timestamps, and an optional summary.
 
 ```bash
 luma setup                                      # open the Ink provider/model setup
+luma                                             # open the interactive Ink terminal UI
+luma dashboard                                  # start Rust Core + browser dashboard together
+luma dashboard --port 3001 --vite-port 5174      # choose alternate server ports
 luma history                                    # list saved chats
 luma history show <chat-id>                     # print a complete transcript
 luma summary add <chat-id> "What this chat accomplished"
-luma dashboard --host 127.0.0.1 --port 3000      # launch the browser dashboard
+luma teammates                                   # open the Ink teammate manager
+luma teammates list                              # list persistent teammates
+luma teammates create Research --skill research --memory "Prefers concise reports"
+luma teammates delete <agent-id>                 # delete a teammate and its owned data
+luma tasks list [agent-id]
+luma dashboard --host 127.0.0.1 --port 3000      # choose the Core bind address and port
 luma ask "Inspect this project and explain its architecture" # one-shot prompt
 ```
 
-The public CLI is provided by the Ink app using Commander. These archive
-commands do not require model setup; they call the Rust core's JSONL desktop
-server. The core no longer defines public subcommands; Ink starts it in the
-internal `desktop-server` mode. Its no-argument legacy Ratatui entrypoint remains
-available for now.
+The public CLI is provided by the Ink app using Commander and is the command
+center for Luma's setup, development servers, dashboard, history, teammates,
+tasks, and one-shot prompts. `luma teammates` opens an interactive Ink manager;
+use the arrow keys to select a teammate, `d` to delete, `r` to refresh, and `q`
+to quit. Teammates start with no injected personality prompt; `--personality`
+can provide custom guidance, `--skill` can be repeated, and `--memory` adds initial agent memory.
+Selected skills are loaded into each task context. `luma dashboard` starts the Rust Core dashboard API and the Vite development
+server as one managed process group; Ctrl+C stops both. The Vite proxy is pointed
+at the selected Core address automatically. These commands use the Rust
+core's JSONL desktop server internally. The no-argument interactive Ink TUI
+remains the default experience, and the legacy Ratatui TUI entrypoint is still
+available in the Rust core for now.
 
 Inside the interactive chat, `/history` lists recent archives, `/restore
 <chat-id>` loads an archive as the active conversation (including its model
@@ -371,8 +393,8 @@ luma/
 ├── agent/
 │   └── Agent execution loop
 │
-├── planner/
-│   └── Decision making
+├── react/
+│   └── ReAct action selection and response parsing
 │
 ├── model/
 │   └── LLM abstraction
@@ -410,7 +432,7 @@ The core architecture is intentionally modular:
 Model
   │
   ▼
-Planner
+ReAct
   │
   ▼
 Agent
@@ -445,7 +467,7 @@ The goal isn't to create the biggest AI coding agent.
 
 The goal is to create an AI coding agent that is **actually useful on ordinary hardware**.
 
-Luma should be able to run with a relatively small local model while still performing useful engineering tasks through tools, planning, and workspace observations.
+Luma should be able to run with a relatively small local model while still performing useful engineering tasks through tools, iterative reasoning, and workspace observations.
 
 ---
 
@@ -458,7 +480,7 @@ Luma should be able to run with a relatively small local model while still perfo
 - [x] Streaming responses
 - [x] Tool system
 - [x] Workspace inspection
-- [x] Planner loop
+- [x] ReAct loop
 - [x] File search
 - [x] File creation and replacement
 - [x] Targeted file patching

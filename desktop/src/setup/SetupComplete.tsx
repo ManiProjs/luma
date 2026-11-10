@@ -7,8 +7,6 @@ export default function SetupComplete() {
 
   const model = useSetupStore((state) => state.model);
 
-  const plannerModel = useSetupStore((state) => state.plannerModel);
-
   const saving = useSetupStore((state) => state.savingConfiguration);
 
   const finished = useSetupStore((state) => state.finished);
@@ -145,11 +143,7 @@ export default function SetupComplete() {
             detail={model?.id}
           />
 
-          <Summary
-            label="Planner"
-            value={plannerModel?.name ?? model?.name ?? "Not selected"}
-            detail={plannerModel?.id ?? model?.id}
-          />
+
 
           <AnimatePresence>
             {error && (

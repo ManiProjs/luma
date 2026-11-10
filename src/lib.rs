@@ -9,13 +9,14 @@ pub mod event;
 pub mod history;
 pub mod logging;
 pub mod model;
-pub mod planner;
 pub mod protocol;
 pub mod provider;
-pub mod router;
+pub mod react;
+pub mod runtime;
 pub mod session;
 pub mod tasks;
 pub mod tools;
+pub mod worker;
 pub mod workspace;
 
 #[cfg(feature = "tui")]

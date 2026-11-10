@@ -121,6 +121,33 @@ fn user_skill_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Load one validated skill for a persistent task running in `workspace`.
+/// Workspace-local skills take precedence over user-level skills.
+pub fn load_agent_skill(workspace: &Path, name: &str) -> Result<String> {
+    validate_name(name)?;
+    let skill = discover_skills(workspace, &user_skill_dirs())
+        .into_iter()
+        .find(|skill| skill.name == name)
+        .ok_or_else(|| anyhow!("configured skill '{name}' was not found"))?;
+    let metadata = fs::metadata(&skill.path)?;
+    if metadata.len() > MAX_SKILL_BYTES {
+        bail!(
+            "Skill '{name}' exceeds the {} KB size limit",
+            MAX_SKILL_BYTES / 1024
+        );
+    }
+    let content = fs::read_to_string(&skill.path)
+        .with_context(|| format!("failed to read skill {}", skill.path.display()))?;
+    let (_, body) = split_frontmatter(&content)?;
+    Ok(format!(
+        "# Skill: {}\n\nDescription: {}\nSkill directory: {}\n\n{}",
+        skill.name,
+        skill.description,
+        skill.path.parent().unwrap_or(Path::new(".")).display(),
+        body.trim()
+    ))
+}
+
 fn discover_skills(workspace: &Path, user_dirs: &[PathBuf]) -> Vec<Skill> {
     // Scan workspace skills first so project instructions intentionally
     // override personal skills with the same name.
@@ -299,6 +326,23 @@ mod tests {
                 .path
                 .starts_with(fs::canonicalize(workspace.path()).unwrap())
         );
+    }
+
+    #[test]
+    fn attached_agent_skill_loads_validated_instructions() {
+        let workspace = tempfile::tempdir().unwrap();
+        let skills_root = workspace.path().join(".agents/skills");
+        write_skill(
+            &skills_root,
+            "assigned",
+            "assigned",
+            "Assigned skill",
+            "Follow the project checklist.",
+        );
+        let loaded = load_agent_skill(workspace.path(), "assigned").unwrap();
+        assert!(loaded.contains("# Skill: assigned"));
+        assert!(loaded.contains("Follow the project checklist."));
+        assert!(load_agent_skill(workspace.path(), "missing").is_err());
     }
 
     #[test]

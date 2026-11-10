@@ -5,8 +5,7 @@ import Editor from "@monaco-editor/react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { SparkIcon } from "./components/LumaWordmark";
-import LumaWordmark from "./components/LumaWordmark";
+import LumaWordmark, { LumaMark } from "./components/LumaWordmark";
 
 import { themes, useTheme } from "./renderer/Theme";
 
@@ -17,8 +16,12 @@ import SetupWizard from "./setup/SetupWizard";
 import type { SetupConfig } from "./stores/setupStore";
 
 import { useWorkspaceStore, type Chat } from "./stores/workspaceStore";
+import { MascotAvatar } from "./components/MascotAvatar";
+import type { AgentConfiguration, AgentRecord, ApprovalRecord, MemoryEntry, MemoryScope, ScheduleRecord, TaskRecord } from "../../shared/protocol";
+import type { RuntimeEvent } from "../../shared/protocol";
+import { MascotCustomizer } from "./components/MascotCustomizer";
 
-type AppMode = "agent" | "ide" | "changes";
+type AppMode = "agent" | "ide" | "changes" | "teammates";
 
 export type WorkspaceNode =
   | {
@@ -32,6 +35,13 @@ export type WorkspaceNode =
       name: string;
       path: string;
     };
+
+export type GitChange = {
+  path: string;
+  indexStatus: string;
+  worktreeStatus: string;
+  kind: "added" | "modified" | "deleted" | "renamed" | "untracked";
+};
 
 const SLASH_COMMANDS = [
   { command: "/help", description: "Show available commands" },
@@ -207,7 +217,7 @@ function TopBar({
     <header
       className="
         drag-region
-        flex h-[48px] shrink-0 items-center
+        luma-topbar flex h-[54px] shrink-0 items-center
         border-b border-[var(--luma-border)]
         bg-[var(--luma-surface)]
       "
@@ -220,35 +230,25 @@ function TopBar({
         "
       >
         <div className="no-drag pointer-events-auto">
-          <LumaWordmark compact />
+          <LumaWordmark compact section={mode === "teammates" ? "teammates" : undefined} />
         </div>
 
-        <div className="no-drag pointer-events-auto relative ml-6 grid h-9 w-[228px] grid-cols-3 items-center rounded-lg border border-[var(--luma-border)] bg-[var(--luma-bg)] p-1">
+        <div className="luma-mode-picker no-drag pointer-events-auto relative grid grid-cols-2 items-center rounded-lg border border-[var(--luma-border)] bg-[var(--luma-bg)]">
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute bottom-1 left-1 top-1 w-[calc((100%_-_8px)_/_3)] rounded-md bg-[var(--luma-accent-soft)] shadow-[inset_0_0_0_1px_var(--luma-border)] transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+            className="pointer-events-none absolute bottom-1 left-1 top-1 w-[calc((100%_-_8px)_/_2)] rounded-md bg-[var(--luma-accent-soft)] shadow-[inset_0_0_0_1px_var(--luma-border)] transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
             style={{
-              transform: `translateX(${(
-                mode === "agent" ? 0 : mode === "ide" ? 1 : 2
-              ) * 100}%)`,
+              transform: `translateX(${mode === "teammates" ? 100 : 0}%)`,
             }}
           />
-          <ModeButton
-            active={mode === "agent"}
-            onClick={() => setMode("agent")}
-          >
-            Agent
+          <ModeButton active={mode !== "teammates"} onClick={() => setMode("agent")} tooltip="Code" label="Code">
+            <span className="font-mono text-[12px] font-semibold tracking-[-0.08em]">&lt;/&gt;</span>
           </ModeButton>
-
-          <ModeButton active={mode === "ide"} onClick={() => setMode("ide")}>
-            IDE
-          </ModeButton>
-
-          <ModeButton
-            active={mode === "changes"}
-            onClick={() => setMode("changes")}
-          >
-            Changes
+          <ModeButton active={mode === "teammates"} onClick={() => setMode("teammates")} tooltip="Teammates" label="Teammates">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M18 20a6 6 0 0 0-12 0" />
+              <circle cx="12" cy="8" r="4" />
+            </svg>
           </ModeButton>
         </div>
 
@@ -298,18 +298,25 @@ function TopBar({
 function ModeButton({
   active,
   onClick,
+  tooltip,
+  label,
   children,
 }: {
   active: boolean;
   onClick: () => void;
+  tooltip: string;
+  label: string;
   children: React.ReactNode;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      title={tooltip}
+      aria-label={label}
+      aria-pressed={active}
       className={`
-        relative z-10 h-7 rounded-md px-2.5
+        relative z-10 flex h-7 items-center justify-center gap-1.5 rounded-md
         text-[13px] font-medium
         transition-colors
         ${
@@ -335,6 +342,8 @@ function SettingsPanel({
   connected,
   setupConfig,
   workspacePath,
+  sidebarBlur,
+  onSidebarBlurChange,
   onReconfigure,
 }: {
   open: boolean;
@@ -342,6 +351,8 @@ function SettingsPanel({
   connected: boolean;
   setupConfig: SetupConfig | null;
   workspacePath: string;
+  sidebarBlur: boolean;
+  onSidebarBlurChange: (enabled: boolean) => void;
   onReconfigure: () => void;
 }) {
   const { theme, setTheme, definition } = useTheme();
@@ -452,6 +463,14 @@ function SettingsPanel({
                   />
                 ))}
               </div>
+
+              <label className="mt-3 flex cursor-pointer items-center justify-between gap-4 rounded-md border border-[var(--luma-border)] bg-[var(--luma-surface)] px-3 py-3">
+                <span className="min-w-0">
+                  <span className="block text-[12px] font-medium">Sidebar blur</span>
+                  <span className="mt-0.5 block text-[11px] text-[var(--luma-text-muted)]">Use a translucent glass effect where supported</span>
+                </span>
+                <input type="checkbox" checked={sidebarBlur} onChange={(event) => onSidebarBlurChange(event.target.checked)} className="shrink-0 accent-[var(--luma-accent)]" />
+              </label>
 
               <div
                 className="
@@ -859,8 +878,9 @@ function ChatRow({
   );
 }
 
-function Sidebar({ onOpenChat }: { onOpenChat: () => void }) {
+function Sidebar({ mode, onOpenChat, onOpenIDE, onOpenChanges, teammatesSidebar, sidebarBlur }: { mode: AppMode; onOpenChat: () => void; onOpenIDE: () => void; onOpenChanges: () => void; teammatesSidebar: React.ReactNode; sidebarBlur: boolean }) {
   const chats = useWorkspaceStore((state) => state.chats);
+  const syncHistory = useWorkspaceStore((state) => state.syncHistory);
   const projects = useWorkspaceStore((state) => state.projects);
   const activeChatId = useWorkspaceStore((state) => state.activeChatId);
   const activeProjectId = useWorkspaceStore((state) => state.activeProjectId);
@@ -879,6 +899,24 @@ function Sidebar({ onOpenChat }: { onOpenChat: () => void }) {
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [creatingProject, setCreatingProject] = useState(false);
   const [projectName, setProjectName] = useState("");
+
+  useEffect(() => {
+    let mounted = true;
+    const refreshHistory = async () => {
+      try {
+        const history = await window.luma.getHistory();
+        if (mounted) syncHistory(history);
+      } catch {
+        // Keep the current sidebar usable while the core is starting or reconnecting.
+      }
+    };
+    void refreshHistory();
+    const timer = window.setInterval(() => void refreshHistory(), 4000);
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
+    };
+  }, [syncHistory]);
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
@@ -984,15 +1022,16 @@ function Sidebar({ onOpenChat }: { onOpenChat: () => void }) {
 
   return (
     <aside
-      className="
-        flex w-[256px] shrink-0 flex-col
+      className={`
+        luma-sidebar flex w-[256px] shrink-0 flex-col
         border-r border-[var(--luma-border)]
-        bg-[var(--luma-surface)]
-      "
+        ${sidebarBlur ? "luma-sidebar-glass" : "bg-[var(--luma-surface)]"}
+      `}
+      data-sidebar-blur={sidebarBlur}
       role="navigation"
-      aria-label="Chat and project navigation"
+      aria-label={mode === "teammates" ? "Teammates and workspace navigation" : "Chat and project navigation"}
     >
-      <div className="px-2.5 pt-2.5">
+      {mode !== "teammates" && <div className="px-2.5 pt-2.5">
         <button
           type="button"
           onClick={() => {
@@ -1012,8 +1051,22 @@ function Sidebar({ onOpenChat }: { onOpenChat: () => void }) {
           New chat
           <span className="ml-auto text-[10px] font-normal text-[var(--luma-text-muted)]">⌘ N</span>
         </button>
-      </div>
+      </div>}
 
+      <nav className="luma-workspace-picker no-drag relative mx-2.5 mt-2 grid grid-cols-3 items-center rounded-lg border border-[var(--luma-border-strong)] bg-[var(--luma-bg)] p-[3px]" aria-label="Workspace">
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-[3px] left-[3px] top-[3px] w-[calc((100%_-_6px)_/_3)] rounded-md bg-[var(--luma-surface-raised)] shadow-[inset_0_0_0_1px_var(--luma-border)] transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+          style={{ transform: `translateX(${mode === "ide" ? 100 : mode === "changes" ? 200 : 0}%)`, opacity: mode === "teammates" ? 0 : 1 }}
+        />
+        <WorkspacePickerButton active={mode === "agent"} onClick={onOpenChat}><span className="font-mono text-[12px]">&lt;/&gt;</span>Code</WorkspacePickerButton>
+        <WorkspacePickerButton active={mode === "ide"} onClick={onOpenIDE}><FileIcon />Files</WorkspacePickerButton>
+        <WorkspacePickerButton active={mode === "changes"} onClick={onOpenChanges}><span className="text-[13px]">◷</span>Changes</WorkspacePickerButton>
+      </nav>
+
+      {mode === "teammates" ? (
+        <div className="min-h-0 flex-1 overflow-auto px-2.5 py-3">{teammatesSidebar}</div>
+      ) : <>
       <div className="mt-2 flex h-8 items-center px-2.5">
         <span className="luma-kicker">Menu</span>
 
@@ -1226,7 +1279,22 @@ function Sidebar({ onOpenChat }: { onOpenChat: () => void }) {
           )}
         </SidebarSection>
       </div>
+      </>}
     </aside>
+  );
+}
+
+function WorkspacePickerButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-current={active ? "page" : undefined}
+      aria-pressed={active}
+      className={`relative z-10 flex h-7 min-w-0 items-center justify-center gap-1.5 rounded-md px-1 text-[11px] font-medium transition-colors ${active ? "text-[var(--luma-text)]" : "text-[var(--luma-text-muted)] hover:text-[var(--luma-text-secondary)]"}`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -1342,30 +1410,30 @@ function FolderRow({
 function EmptyAgentState({ onPrompt }: { onPrompt: (prompt: string) => void }) {
   return (
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-      <div className="pointer-events-auto mb-16 max-w-[560px] px-6 text-center">
+      <div className="luma-agent-empty pointer-events-auto max-w-[560px] px-6">
         <div
           className="
-            mx-auto mb-5
+            luma-agent-empty-mark mx-auto mb-5
             flex h-11 w-11 items-center justify-center
-            rounded-xl border border-[var(--luma-border-strong)]
-            bg-[var(--luma-accent-soft)]
+            rounded-lg border border-[var(--luma-border-strong)]
+            bg-transparent
             text-[var(--luma-accent)]
-            shadow-sm
+            shadow-none
           "
         >
-          <SparkIcon />
+          <LumaMark />
         </div>
 
-        <div className="luma-kicker mb-2">YOUR CODING WORKSPACE</div>
+        <div className="luma-kicker mb-3">CODE WORKSPACE</div>
         <h1 className="text-[25px] font-semibold tracking-[-0.04em]">
-          What are we building?
+          What are we working on?
         </h1>
 
-        <p className="mx-auto mt-2 max-w-[390px] text-[13px] leading-6 text-[var(--luma-text-muted)]">
-          Work through a tricky bug, understand an unfamiliar codebase, or turn an idea into working software.
+        <p className="mt-3 max-w-[390px] text-[13px] leading-6 text-[var(--luma-text-muted)]">
+          Ask about this codebase, trace a problem, or describe the change you want to make.
         </p>
 
-        <div className="mt-7 flex flex-wrap justify-center gap-2">
+        <div className="luma-agent-prompts mt-7 flex flex-wrap gap-2">
           {[
             { label: "Understand this codebase", prompt: "Give me a high-level overview of this codebase and its architecture." },
             { label: "Find a bug", prompt: "Inspect this project for likely bugs and explain the most important findings." },
@@ -1376,8 +1444,8 @@ function EmptyAgentState({ onPrompt }: { onPrompt: (prompt: string) => void }) {
               type="button"
               onClick={() => onPrompt(item.prompt)}
               className="
-                rounded-full border border-[var(--luma-border-strong)]
-                bg-[var(--luma-surface)] px-3.5 py-2
+                rounded-md border border-[var(--luma-border-strong)]
+                bg-[var(--luma-surface)] px-3 py-2
                 text-[12px] text-[var(--luma-text-secondary)]
                 transition-colors hover:border-[var(--luma-accent)]
                 hover:bg-[var(--luma-accent-soft)] hover:text-[var(--luma-text)]
@@ -1401,37 +1469,25 @@ function AgentMessageView({
 }) {
   return (
     <div
-      className={`
-        flex gap-3
-        ${role === "user" ? "justify-end" : "justify-start"}
-      `}
+      className={`luma-message-row flex gap-3 ${role === "user" ? "is-user" : "is-assistant"}`}
     >
       {role === "assistant" && (
         <div
-          className="
-            mt-0.5 flex h-5 w-5 shrink-0
-            items-center justify-center
-            rounded-md
-            bg-[var(--luma-accent-soft)]
-            text-[var(--luma-accent)]
-          "
+          className="luma-message-mark mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center text-[var(--luma-accent)]"
         >
-          <SparkIcon />
+          <LumaMark />
         </div>
       )}
 
       <div
         className={`
-          max-w-[760px]
+          luma-message-content max-w-[760px]
           whitespace-pre-wrap
           text-[12px]
           leading-5
           ${
             role === "user"
               ? `
-                rounded-lg
-                bg-[var(--luma-surface-raised)]
-                px-3 py-2
                 text-[var(--luma-text)]
               `
               : "text-[var(--luma-text-secondary)] prose prose-sm prose-invert max-w-none"
@@ -1501,29 +1557,38 @@ function ToolActivity({
 }: {
   tools: ReturnType<typeof useLuma>["tools"];
 }) {
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "o") return;
+      event.preventDefault();
+      setExpanded((value) => !value);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   if (tools.length === 0) {
     return null;
   }
 
   return (
-    <div
-      role="status"
-      aria-label="Agent tool activity"
-      className="mt-2 space-y-1"
-    >
+    <section className="mt-2 rounded-md border border-[var(--luma-border)] px-2 py-1">
+      <button type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} className="flex w-full items-center gap-2 py-1 text-left text-[12px] text-[var(--luma-text-secondary)] hover:text-[var(--luma-text)]">
+        <span aria-hidden="true">{expanded ? "⌄" : "›"}</span>
+        <span>{tools.length} tool{tools.length === 1 ? "" : "s"} ran</span>
+        <span className="ml-auto text-[var(--luma-text-muted)]">⌘O</span>
+      </button>
+      {expanded && <div role="list" aria-label="Code tool activity" className="space-y-2 pb-1">
       {tools.map((tool) => (
         <div
           key={tool.id}
           role="listitem"
           aria-label={`${tool.name} ${tool.finished ? 'completed' : 'running'}`}
-          className="
-            flex items-center gap-2
-            rounded-md
-            border border-[var(--luma-border)]
-            bg-[var(--luma-surface)]
-            px-2.5 py-1.5
-          "
+          className="luma-tool-activity-row rounded px-2 py-1"
         >
+          <div className="flex items-center gap-2">
           <span
             className={`
               h-1.5 w-1.5 rounded-full
@@ -1544,9 +1609,13 @@ function ToolActivity({
               {tool.durationMs}ms
             </span>
           )}
+          </div>
+          {tool.input && <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words pl-3 font-mono text-[11px] leading-5 text-[var(--luma-text-muted)]">{tool.input}</pre>}
+          {tool.diff && <pre className="mt-2 max-h-72 overflow-auto border-l border-[var(--luma-border)] pl-3 font-mono text-[11px] leading-5 text-[var(--luma-text-secondary)]">{tool.diff}</pre>}
         </div>
       ))}
-    </div>
+      </div>}
+    </section>
   );
 }
 
@@ -1558,16 +1627,9 @@ function ThinkingIndicator() {
       aria-label="Luma is thinking"
       className="flex items-center gap-2"
     >
-      <div
-        className="
-          flex h-5 w-5 shrink-0
-          items-center justify-center
-          rounded-md
-          bg-[var(--luma-accent-soft)]
-          text-[var(--luma-accent)]
-        "
+      <div className="luma-thinking-mark"
       >
-        <SparkIcon />
+        <LumaMark />
       </div>
 
       <div className="flex items-center gap-1">
@@ -1709,9 +1771,9 @@ function Composer({
   }
 
   return (
-    <div className="border-t border-[var(--luma-border)] bg-[var(--luma-surface)] px-4 pb-4 pt-3">
+    <div className="luma-composer-shell border-t border-[var(--luma-border)] bg-[var(--luma-surface)] px-4 pb-4 pt-3">
       <div
-        className="
+        className="luma-composer
           mx-auto flex max-w-[860px]
           items-end gap-2
           rounded-xl
@@ -1836,6 +1898,7 @@ function Composer({
 function AgentView() {
   const [draft, setDraft] = useState("");
   const {
+    sessionId,
     messages,
     tools,
     thinking,
@@ -1844,18 +1907,25 @@ function AgentView() {
     sendPrompt,
     respondToConfirmation,
     cancel,
-    resetSession,
   } = useLuma();
 
   const chats = useWorkspaceStore((state) => state.chats);
   const activeChatId = useWorkspaceStore((state) => state.activeChatId);
+  const draftChat = useWorkspaceStore((state) => state.draft);
+  const historyLoaded = useWorkspaceStore((state) => state.historyLoaded);
+  const setActiveChatId = useWorkspaceStore((state) => state.setActiveChatId);
   const setChatMessages = useWorkspaceStore((state) => state.setChatMessages);
 
   const loadedChatId = useRef<string | null>(null);
   const skipPersist = useRef(false);
 
   useEffect(() => {
+    if (!historyLoaded) {
+      return;
+    }
+
     if (!activeChatId) {
+      if (sessionId) setActiveChatId(sessionId);
       return;
     }
 
@@ -1865,14 +1935,31 @@ function AgentView() {
 
     const chat = chats.find((item) => item.id === activeChatId);
 
-    if (thinking || confirmation !== null) {
-      void cancel();
+    if (chat) {
+      if (thinking || confirmation !== null) void cancel();
+      skipPersist.current = true;
+      loadedChatId.current = activeChatId;
+      void window.luma.restoreChat(activeChatId);
+      return;
     }
 
-    skipPersist.current = true;
-    resetSession(chat?.messages ?? []);
-    loadedChatId.current = activeChatId;
-  }, [activeChatId, cancel, chats, confirmation, resetSession, thinking]);
+    if (draftChat?.id === activeChatId) {
+      if (thinking || confirmation !== null) void cancel();
+      skipPersist.current = true;
+      loadedChatId.current = activeChatId;
+      void window.luma.clearSession();
+      return;
+    }
+
+    if (sessionId) setActiveChatId(sessionId);
+  }, [activeChatId, cancel, chats, confirmation, draftChat, historyLoaded, sessionId, setActiveChatId, thinking]);
+
+  useEffect(() => {
+    if (sessionId && draftChat && activeChatId === draftChat.id && draftChat.id !== sessionId) {
+      loadedChatId.current = sessionId;
+      setActiveChatId(sessionId);
+    }
+  }, [activeChatId, draftChat, sessionId, setActiveChatId]);
 
   useEffect(() => {
     if (!activeChatId || loadedChatId.current !== activeChatId) {
@@ -2341,22 +2428,376 @@ function IDEView({
   );
 }
 
-function ChangesView() {
-  return (
-    <div className="flex h-full items-center justify-center">
-      <div className="text-center">
-        <div className="text-[12px] font-medium">No changes</div>
+function ChangesView({ onOpenFile }: { onOpenFile: (path: string) => void }) {
+  const [branch, setBranch] = useState("");
+  const [files, setFiles] = useState<GitChange[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [diff, setDiff] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [error, setError] = useState<string | null>(null);
 
-        <div className="mt-1 text-[12px] text-[var(--luma-text-muted)]">
-          Changes and diffs will appear here.
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await window.luma.getGitChanges();
+      setBranch(result.branch);
+      setFiles(result.files);
+      setSelected((current) => current && result.files.some((file) => file.path === current)
+        ? current : result.files[0]?.path ?? null);
+      setRefreshVersion((version) => version + 1);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setFiles([]);
+      setSelected(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  useEffect(() => {
+    if (!selected) { setDiff(""); return; }
+    let active = true;
+    setDiffLoading(true);
+    window.luma.getGitDiff(selected)
+      .then((value) => { if (active) setDiff(value); })
+      .catch((cause: unknown) => { if (active) setDiff(cause instanceof Error ? cause.message : String(cause)); })
+      .finally(() => { if (active) setDiffLoading(false); });
+    return () => { active = false; };
+  }, [selected, refreshVersion]);
+
+  const statusLabel = (file: GitChange) => file.kind === "untracked" ? "?" : file.kind === "added" ? "A" : file.kind === "deleted" ? "D" : file.kind === "renamed" ? "R" : "M";
+
+  return (
+    <section className="flex h-full min-w-0 flex-col bg-[var(--luma-bg)]">
+      <header className="flex h-12 shrink-0 items-center border-b border-[var(--luma-border)] px-4">
+        <div className="min-w-0">
+          <div className="text-[13px] font-semibold">Changes</div>
+          <div className="text-[11px] text-[var(--luma-text-muted)]">{branch ? `Branch · ${branch}` : "Workspace Git status"}</div>
         </div>
-      </div>
-    </div>
+        <div className="ml-auto flex items-center gap-3">
+          <span className="text-[11px] text-[var(--luma-text-muted)]">{files.length} changed {files.length === 1 ? "file" : "files"}</span>
+          <button type="button" onClick={() => void refresh()} disabled={loading} className="luma-btn-ghost h-8 px-2.5">{loading ? "Refreshing…" : "Refresh"}</button>
+        </div>
+      </header>
+      {error ? <div className="p-4"><ErrorMessage error={error} /></div> : loading && files.length === 0 ? (
+        <div className="p-5 text-[12px] text-[var(--luma-text-muted)]">Checking repository changes…</div>
+      ) : files.length === 0 ? (
+        <div className="flex flex-1 items-center justify-center">
+          <div className="text-center"><div className="text-[13px] font-medium">Working tree clean</div><p className="mt-1 text-[12px] text-[var(--luma-text-muted)]">Git reports no staged, unstaged, or untracked files.</p></div>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1">
+          <aside className="w-[290px] shrink-0 overflow-auto border-r border-[var(--luma-border)] p-2">
+            <div className="px-2 py-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">Working tree</div>
+            {files.map((file) => (
+              <button key={file.path} type="button" onClick={() => setSelected(file.path)} className={`flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-[12px] ${selected === file.path ? "bg-[var(--luma-accent-soft)] text-[var(--luma-text)]" : "text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)]"}`}>
+                <span className="w-4 shrink-0 text-center font-semibold">{statusLabel(file)}</span>
+                <span className="min-w-0 flex-1 truncate" title={file.path}>{file.path}</span>
+                <span className="shrink-0 text-[10px] text-[var(--luma-text-muted)]">{file.indexStatus !== " " && file.indexStatus !== "?" ? "staged" : file.kind === "untracked" ? "new" : "worktree"}</span>
+              </button>
+            ))}
+          </aside>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <div className="flex h-10 shrink-0 items-center border-b border-[var(--luma-border)] px-3">
+              <span className="min-w-0 flex-1 truncate text-[12px] text-[var(--luma-text-secondary)]">{selected}</span>
+              {selected && <button type="button" onClick={() => onOpenFile(selected)} className="luma-btn-ghost h-7 px-2">Open in IDE</button>}
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto p-3">
+              {diffLoading ? <div className="text-[12px] text-[var(--luma-text-muted)]">Loading diff…</div> : diff ? (
+                <pre className="whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-[var(--luma-text-secondary)]">{diff}</pre>
+              ) : <div className="text-[12px] text-[var(--luma-text-muted)]">No textual diff is available for this file.</div>}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TeammatesPanel({ onSidebarChange }: { onSidebarChange: (sidebar: React.ReactNode) => void }) {
+  const [agents, setAgents] = useState<AgentRecord[]>([]);
+  const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  const [runtimeEvents, setRuntimeEvents] = useState<RuntimeEvent[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
+  const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
+  const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>([]);
+  const [memoryScope, setMemoryScope] = useState<MemoryScope>("agent");
+  const [workspacePath, setWorkspacePath] = useState("");
+  const [memoryRevision, setMemoryRevision] = useState(0);
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [agentName, setAgentName] = useState("");
+  const [agentDescription, setAgentDescription] = useState("");
+  const [agentPersonality, setAgentPersonality] = useState("");
+  const [agentInitialMemory, setAgentInitialMemory] = useState("");
+  const [agentWorkspace, setAgentWorkspace] = useState("");
+  const [agentMascot, setAgentMascot] = useState("auto");
+  const [agentUseGlobalContext, setAgentUseGlobalContext] = useState(true);
+  const [personalityDraft, setPersonalityDraft] = useState("");
+  const [skillsDraft, setSkillsDraft] = useState("");
+  const [mascotDraft, setMascotDraft] = useState("auto");
+  const [chatPrompt, setChatPrompt] = useState("");
+  const [activeTab, setActiveTab] = useState<"chat" | "settings">("chat");
+  const [memoryContent, setMemoryContent] = useState("");
+  const [schedulePrompt, setSchedulePrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const refreshing = useRef(false);
+
+  const refresh = useCallback(async () => {
+    if (refreshing.current) return;
+    refreshing.current = true;
+    try {
+      const [nextAgents, nextApprovals, nextSchedules] = await Promise.all([
+        window.luma.getAgents(), window.luma.getApprovals(), window.luma.getSchedules(),
+      ]);
+      const nextSelectedAgentId = selectedAgentId && nextAgents.some((agent) => agent.id === selectedAgentId)
+        ? selectedAgentId : nextAgents.find((agent) => agent.kind === "teammates")?.id ?? nextAgents[0]?.id ?? "";
+      const nextTasks = await window.luma.getTasks(nextSelectedAgentId || undefined);
+      setAgents(nextAgents);
+      setTasks(nextTasks);
+      setApprovals(nextApprovals);
+      setSchedules(nextSchedules);
+      setSelectedAgentId(nextSelectedAgentId);
+      setError(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      refreshing.current = false;
+    }
+  }, [selectedAgentId]);
+
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 5000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+
+  useEffect(() => {
+    let disposed = false;
+    void window.luma.getWorkspace().then((workspace) => {
+      if (!disposed) setWorkspacePath(workspace.path);
+    }).catch((reason) => {
+      if (!disposed) setError(reason instanceof Error ? reason.message : String(reason));
+    });
+    return () => { disposed = true; };
+  }, []);
+
+  useEffect(() => {
+    const scopeId = memoryScope === "agent" ? selectedAgentId : memoryScope === "user" ? "default" : workspacePath;
+    if (!scopeId) { setMemoryEntries([]); return; }
+    let disposed = false;
+    void window.luma.getMemory(memoryScope, scopeId).then((entries) => {
+      if (!disposed) setMemoryEntries(entries);
+    }).catch((reason) => {
+      if (!disposed) setError(reason instanceof Error ? reason.message : String(reason));
+    });
+    return () => { disposed = true; };
+  }, [memoryScope, selectedAgentId, workspacePath, memoryRevision]);
+
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
+  const agentTasks = tasks.filter((task) => task.agent_id === selectedAgentId && !task.schedule_id);
+  const taskAssistantText = (taskId: string) => runtimeEvents
+    .filter((event) => event.task_id === taskId && event.event_type === "task.agent_event")
+    .map((event) => event.payload as { type?: string; data?: unknown })
+    .filter((event) => event.type === "TextDelta" && typeof event.data === "string")
+    .map((event) => event.data as string).join("");
+
+  useEffect(() => {
+    onSidebarChange(
+      <div>
+        <div className="mb-2 flex items-center justify-between px-1">
+          <span className="luma-kicker">Your teammates</span>
+          <button type="button" disabled={busy} onClick={() => setCreateOpen(true)} className="text-[11px] text-[var(--luma-accent)] hover:underline">+ Create</button>
+        </div>
+        {agents.length === 0 && <p className="px-1 py-3 text-[11px] text-[var(--luma-text-muted)]">Create a teammate to give Luma a persistent identity and task queue.</p>}
+        <div className="space-y-1">
+          {agents.map((agent) => (
+            <button key={agent.id} type="button" onClick={() => setSelectedAgentId(agent.id)} className={`luma-teammate-nav-item w-full rounded-md border px-2.5 py-2 text-left transition-colors ${selectedAgentId === agent.id ? "is-selected" : ""}`}>
+              <div className="flex items-center gap-2">
+                <MascotAvatar seed={agent.name} mascot={agent.configuration.mascot} size={30} active={agent.status === "active"} />
+                <span className={`h-1.5 w-1.5 rounded-full ${agent.status === "active" ? "bg-[var(--luma-success)]" : agent.status === "waiting" ? "bg-[var(--luma-warning)]" : "bg-[var(--luma-text-muted)]"}`} />
+                <span className="min-w-0 flex-1 truncate text-[12px] font-medium">{agent.name}</span>
+              </div>
+              <div className="mt-1 pl-3.5 text-[10px] capitalize text-[var(--luma-text-muted)]">{agent.id === "agent_global" ? "Global defaults · protected" : `${agent.status} · ${agent.kind}`}</div>
+            </button>
+          ))}
+        </div>
+      </div>,
+    );
+    return () => onSidebarChange(null);
+  }, [agents, busy, onSidebarChange, selectedAgentId]);
+
+  useEffect(() => {
+    if (!selectedAgent) return;
+    setPersonalityDraft(selectedAgent.configuration.system_prompt);
+    setSkillsDraft(selectedAgent.configuration.skills.join(", "));
+    setMascotDraft(selectedAgent.configuration.mascot || "auto");
+  }, [selectedAgentId]);
+
+  useEffect(() => {
+    if (!selectedAgentId) { setRuntimeEvents([]); return; }
+    let disposed = false;
+    const load = () => void window.luma.getRuntimeEvents(selectedAgentId).then((events) => {
+      if (!disposed) setRuntimeEvents(events);
+    }).catch((reason) => {
+      if (!disposed) setError(reason instanceof Error ? reason.message : String(reason));
+    });
+    load();
+    const timer = window.setInterval(load, 1500);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [selectedAgentId]);
+
+  async function perform(action: () => Promise<unknown>) {
+    setBusy(true);
+    setError(null);
+    try { await action(); await refresh(); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <section className="flex h-full min-h-0 w-full flex-col overflow-hidden bg-[var(--luma-bg)]" aria-label="Teammates">
+        {error && <div role="alert" className="border-b border-[var(--luma-danger)]/25 bg-[var(--luma-danger)]/5 px-5 py-2 text-[12px] text-[var(--luma-danger)]">{error}</div>}
+
+        <div className="flex min-h-0 flex-1">
+          <div className="luma-teammates-content flex min-h-0 flex-1 flex-col">
+            {selectedAgent && <div className="luma-teammate-header flex shrink-0 items-center justify-between border-b border-[var(--luma-border)] px-4 py-2"><div className="flex items-center gap-2"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={28} active={selectedAgent.status === "active"} /><div><div className="text-[12px] font-semibold">{selectedAgent.name}</div><div className="text-[10px] capitalize text-[var(--luma-text-muted)]">{selectedAgent.id === "agent_global" ? "Global teammate · shared defaults" : selectedAgent.status}</div></div></div><div className="flex gap-1"><button type="button" onClick={() => setActiveTab("chat")} className={`rounded-md px-3 py-1.5 text-[11px] ${activeTab === "chat" ? "is-active" : "text-[var(--luma-text-muted)] hover:bg-[var(--luma-surface-hover)]"}`}>Chat</button><button type="button" onClick={() => setActiveTab("settings")} className={`rounded-md px-3 py-1.5 text-[11px] ${activeTab === "settings" ? "is-active" : "text-[var(--luma-text-muted)] hover:bg-[var(--luma-surface-hover)]"}`}>Settings</button></div></div>}
+          <div className="min-h-0 flex-1 overflow-auto p-4">
+            {!selectedAgent ? <div className="flex h-full items-center justify-center text-[12px] text-[var(--luma-text-muted)]">Select or create an agent to get started.</div> : activeTab === "chat" ? (
+              <div className="mx-auto flex h-full w-full max-w-[850px] flex-col">
+                <div className="min-h-0 flex-1 space-y-5 overflow-auto pb-5">
+                  {agentTasks.length === 0 ? <div className="flex h-full flex-col items-center justify-center text-center"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={76} active /><h3 className="mt-4 text-[16px] font-semibold">Chat with {selectedAgent.name}</h3><p className="mt-1 max-w-sm text-[12px] leading-6 text-[var(--luma-text-muted)]">Ask a question, hand over a task, or just start a conversation. Your teammate keeps the thread's context between messages.</p></div> : agentTasks.slice().reverse().map((task) => {
+                    const answer = taskAssistantText(task.id);
+                    return <article key={task.id} className="space-y-3">
+                      <div className="luma-teammate-user-message ml-auto max-w-[88%] px-1 py-2"><div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">You</div><p className="whitespace-pre-wrap break-words text-[12px] leading-6">{task.request}</p></div>
+                      <div className="luma-teammate-assistant-message flex items-start gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={30} active={task.status === "running"} /><div className="min-w-0 flex-1 pt-0.5"><div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">{selectedAgent.name}<span className="font-normal normal-case tracking-normal">{task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : task.status === "waiting_for_approval" ? "· needs approval" : ""}</span></div>{answer ? <div className="whitespace-pre-wrap break-words text-[12px] leading-6">{answer}</div> : <div className="text-[11px] text-[var(--luma-text-muted)]">{task.status === "completed" ? "No text response was recorded for this task." : task.error ?? (task.status === "failed" ? "Task failed." : task.status === "cancelled" ? "Cancelled." : "Thinking…")}</div>}{task.status === "failed" || task.status === "interrupted" ? <button type="button" disabled={busy} onClick={() => void perform(() => window.luma.retryTask(task.id))} className="mt-2 text-[10px] text-[var(--luma-accent)] hover:underline">Retry</button> : null}</div></div>
+                    </article>;
+                  })}
+                  {approvals.filter((approval) => approval.agent_id === selectedAgent.id).map((approval) => <div key={approval.id} className="ml-10 rounded-lg border border-[var(--luma-warning)]/30 bg-[var(--luma-warning)]/5 p-3"><div className="text-[11px] font-semibold">{selectedAgent.name} needs your approval · {approval.tool}</div><pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-muted)]">{approval.arguments}</pre><div className="mt-2 flex justify-end gap-2"><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, false))} className="luma-btn-secondary h-7 px-2 text-[10px]">Deny</button><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, true))} className="luma-btn-primary h-7 px-2.5 text-[10px]">Approve</button></div></div>)}
+                </div>
+                <form className="luma-teammate-composer shrink-0 p-2" onSubmit={(event) => { event.preventDefault(); const text = chatPrompt.trim(); if (!text || busy || selectedAgent.status === "stopped" || selectedAgent.status === "paused") return; void perform(async () => { await window.luma.createTask({ agentId: selectedAgent.id, request: text }); setChatPrompt(""); }); }}><textarea value={chatPrompt} onChange={(event) => setChatPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message ${selectedAgent.name}…`} rows={2} className="luma-input w-full resize-none border-0 bg-transparent text-[12px] focus:ring-0" /><div className="flex items-center justify-between px-1 pt-1"><span className="text-[10px] text-[var(--luma-text-muted)]">Enter to send · Shift + Enter for a new line</span><button type="submit" disabled={busy || !chatPrompt.trim() || selectedAgent.status === "stopped" || selectedAgent.status === "paused"} className="luma-btn-primary h-8 px-3 text-[11px]">{busy ? "Sending…" : "Send"}</button></div></form>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <section>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={52} active={selectedAgent.status === "active"} /><h3 className="truncate text-[16px] font-semibold">{selectedAgent.name}</h3></div>
+                      <p className="mt-1 text-[11px] text-[var(--luma-text-muted)]">Persistent identity · revision {selectedAgent.configuration_revision} · created {new Date(selectedAgent.created_at * 1000).toLocaleDateString()}</p>
+                    </div>
+                    <div className="flex gap-1.5">
+                      {selectedAgent.status === "paused" ? <button type="button" disabled={busy} onClick={() => void perform(() => window.luma.setAgentStatus(selectedAgent.id, "idle"))} className="luma-btn-secondary h-7 px-2.5 text-[11px]">Resume</button> : <button type="button" disabled={busy || selectedAgent.status === "stopped" || selectedAgent.status === "active" || selectedAgent.status === "waiting"} onClick={() => void perform(() => window.luma.setAgentStatus(selectedAgent.id, "paused"))} className="luma-btn-secondary h-7 px-2.5 text-[11px]">Pause</button>}
+                      <button type="button" disabled={busy || selectedAgent.status === "stopped" || selectedAgent.status === "active" || selectedAgent.status === "waiting"} onClick={() => { if (window.confirm(`Stop ${selectedAgent.name}?`)) void perform(() => window.luma.setAgentStatus(selectedAgent.id, "stopped")); }} className="luma-btn-ghost h-7 px-2.5 text-[11px] text-[var(--luma-danger)]">Stop</button>
+                      {selectedAgent.id !== "agent_global" && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Delete ${selectedAgent.name}? Completed task history, schedules, approvals and agent-scoped memory will be deleted. Cancel active tasks first.`)) void perform(async () => { await window.luma.deleteAgent(selectedAgent.id); }); }} className="luma-btn-ghost h-7 px-2.5 text-[11px] text-[var(--luma-danger)]">Delete</button>}
+                    </div>
+                  </div>
+                </section>
+
+                <section className="rounded-lg border border-[var(--luma-border)] p-3">
+                  <div className="mb-2 luma-kicker">Identity & personality</div>
+                  <MascotCustomizer value={mascotDraft} seed={selectedAgent.name} onChange={setMascotDraft} />
+                  <textarea value={personalityDraft} onChange={(event) => setPersonalityDraft(event.target.value)} rows={4} className="luma-input w-full resize-y text-[11px]" placeholder="How should this teammate behave?" />
+                  {selectedAgent.id !== "agent_global" && <label className="mt-3 flex items-start gap-2 text-[11px] text-[var(--luma-text-secondary)]"><input type="checkbox" checked={selectedAgent.configuration.use_global_context} onChange={(event) => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, use_global_context: event.target.checked, ...(event.target.checked ? { skills: [] } : {}) } }); })} className="mt-0.5 accent-[var(--luma-accent)]" /><span>Use the global skills, memory, connectors, etc.</span></label>}
+                  {!selectedAgent.configuration.use_global_context && <input value={skillsDraft} onChange={(event) => setSkillsDraft(event.target.value)} className="luma-input mt-2 h-8 w-full text-[11px]" placeholder="Skills: research, code-review" />}
+                  <button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, mascot: mascotDraft, system_prompt: personalityDraft, skills: selectedAgent.configuration.use_global_context ? [] : [...new Set(skillsDraft.split(",").map((skill) => skill.trim()).filter(Boolean))] } }); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save changes</button>
+                </section>
+
+                {approvals.filter((approval) => approval.agent_id === selectedAgent.id).length > 0 && <section>
+                  <h4 className="mb-2 luma-kicker">Needs your approval</h4>
+                  <div className="space-y-2">{approvals.filter((approval) => approval.agent_id === selectedAgent.id).map((approval) => <div key={approval.id} className="rounded-md border border-[var(--luma-warning)]/30 bg-[var(--luma-warning)]/5 p-3">
+                    <div className="text-[11px] font-medium">{approval.tool}</div><pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-muted)]">{approval.arguments}</pre>
+                    <div className="mt-2 flex justify-end gap-2"><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, false))} className="luma-btn-ghost h-7 px-2 text-[10px]">Deny</button><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, true))} className="luma-btn-primary h-7 px-2.5 text-[10px]">Approve</button></div>
+                  </div>)}</div>
+                </section>}
+
+                <section className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg border border-[var(--luma-border)] p-3">
+                    <h4 className="mb-2 luma-kicker">Agent memory</h4>
+                    <select value={memoryScope} onChange={(event) => setMemoryScope(event.target.value as MemoryScope)} className="luma-input mb-2 h-8 w-full text-[11px]">
+                      <option value="agent">This agent</option><option value="user">Shared user memory</option><option value="project">This workspace</option>
+                    </select>
+                    <textarea value={memoryContent} onChange={(event) => setMemoryContent(event.target.value)} rows={2} placeholder="A preference or fact this teammate should remember…" className="luma-input w-full resize-y text-[11px]" />
+                    <button type="button" disabled={busy || !memoryContent.trim() || (memoryScope === "project" && !workspacePath)} onClick={() => void perform(async () => { const scopeId = memoryScope === "agent" ? selectedAgent.id : memoryScope === "user" ? "default" : workspacePath; await window.luma.addMemory(memoryScope, scopeId, memoryContent.trim()); setMemoryContent(""); setMemoryRevision((revision) => revision + 1); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save memory</button>
+                    <div className="mt-2 max-h-32 space-y-1 overflow-auto">{memoryEntries.map((entry) => <div key={entry.id} className="flex items-start gap-2 border-t border-[var(--luma-border)] py-1.5"><p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-secondary)]">{entry.content}</p><button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.deleteMemory(entry.id); setMemoryRevision((revision) => revision + 1); })} className="text-[10px] text-[var(--luma-danger)] hover:underline">Delete</button></div>)}</div>
+                  </div>
+                  <div className="rounded-lg border border-[var(--luma-border)] p-3">
+                    <h4 className="mb-2 luma-kicker">Recurring work</h4>
+                    <textarea value={schedulePrompt} onChange={(event) => setSchedulePrompt(event.target.value)} rows={2} placeholder="What should this teammate repeat?" className="luma-input w-full resize-y text-[11px]" />
+                    <button type="button" disabled={busy || !schedulePrompt.trim()} onClick={() => void perform(async () => { await window.luma.createSchedule({ agentId: selectedAgent.id, title: "Recurring task", prompt: schedulePrompt.trim(), everySeconds: 86400 }); setSchedulePrompt(""); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Schedule daily</button>
+                    <p className="mt-1 text-[10px] text-[var(--luma-text-muted)]">{schedules.filter((schedule) => schedule.agent_id === selectedAgent.id && schedule.enabled).length} enabled schedules</p>
+                    <div className="mt-2 space-y-1">{schedules.filter((schedule) => schedule.agent_id === selectedAgent.id).map((schedule) => <div key={schedule.id} className="flex items-center gap-2 border-t border-[var(--luma-border)] pt-1.5"><span className="min-w-0 flex-1 truncate text-[10px] text-[var(--luma-text-secondary)]">{schedule.title} · {schedule.enabled ? new Date(schedule.next_run_at * 1000).toLocaleString() : "Disabled"}</span><button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.deleteSchedule(schedule.id); })} className="text-[10px] text-[var(--luma-danger)] hover:underline">Remove</button></div>)}</div>
+                  </div>
+                </section>
+              </div>
+            )}
+          </div>
+        </div>
+        </div>
+        {createOpen && <div className="luma-create-overlay fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-5" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setCreateOpen(false); }}>
+          <form className="luma-create-dialog flex max-h-[min(820px,92vh)] w-full max-w-[820px] flex-col overflow-hidden rounded-xl border border-[var(--luma-border-strong)] bg-[var(--luma-surface)] shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="create-teammate-title" onSubmit={(event) => { event.preventDefault(); void perform(async () => {
+            const configuration: AgentConfiguration = {
+              system_prompt: agentPersonality.trim(), mascot: agentMascot, use_global_context: agentUseGlobalContext, skills: [],
+              provider: null, model: null, endpoint: null, workspace: agentWorkspace.trim() || workspacePath || null,
+              allowed_workspaces: agentWorkspace.trim() || workspacePath ? [agentWorkspace.trim() || workspacePath] : [], enabled_tools: [],
+              permissions: { allowed_tools: ["read_file", "list_directory", "search_files", "git_status", "git_diff", "find_symbols", "find_references", "git_log", "git_show", "git_blame", "git_branches", "file_metadata", "find_todos", "count_lines", "inspect_project", "list_skills", "load_skill"], denied_tools: [], auto_approve_read_only: true, require_approval_for_mutations: true, allow_network: false },
+              max_concurrent_tasks: 1, recover_interrupted_tasks: false,
+            };
+            const created = await window.luma.createAgent({ name: agentName.trim(), description: agentDescription.trim() || null, kind: "teammates", configuration });
+            setSelectedAgentId(created.id); setCreateOpen(false); setAgentName(""); setAgentDescription(""); setAgentPersonality(""); setAgentInitialMemory(""); setAgentWorkspace(""); setAgentMascot("auto"); setAgentUseGlobalContext(true); setActiveTab("chat");
+            if (agentInitialMemory.trim()) {
+              try { await window.luma.addMemory("agent", created.id, agentInitialMemory.trim()); }
+              catch (reason) { setError(reason instanceof Error ? `Teammate created, but initial memory could not be saved: ${reason.message}` : "Teammate created, but initial memory could not be saved."); }
+            }
+          }); }}>
+            <header className="luma-create-header flex items-start justify-between border-b border-[var(--luma-border)] px-6 py-5"><div><div className="luma-kicker mb-2">TEAMMATES / NEW</div><h3 id="create-teammate-title" className="text-[19px] font-semibold tracking-tight">Create a teammate</h3><p className="mt-1.5 text-[12px] text-[var(--luma-text-muted)]">Give a new agent a name, a personality and a place to work.</p></div><button type="button" aria-label="Close dialog" onClick={() => setCreateOpen(false)} className="luma-create-close" disabled={busy}>×</button></header>
+            <div className="luma-create-body min-h-0 flex-1 overflow-auto">
+              <div className="luma-create-column luma-create-identity">
+                <div className="luma-create-section-heading"><span>01</span><div><h4>Identity</h4><p>Start with the basics and make them recognizable.</p></div></div>
+                <label className="luma-create-field">Name <span>Required</span><input autoFocus required maxLength={120} value={agentName} onChange={(event) => setAgentName(event.target.value)} placeholder="e.g. Researcher" className="luma-input mt-1.5 h-10 w-full text-[13px]" /></label>
+                <label className="luma-create-field">What do they do?<input value={agentDescription} onChange={(event) => setAgentDescription(event.target.value)} placeholder="A short description of their role" className="luma-input mt-1.5 h-10 w-full text-[12px]" /></label>
+                <div className="luma-create-mascot"><div className="luma-create-field-label">Appearance</div><MascotCustomizer value={agentMascot} seed={agentName} onChange={setAgentMascot} /></div>
+              </div>
+              <div className="luma-create-column luma-create-configuration">
+                <div className="luma-create-section-heading"><span>02</span><div><h4>How they work</h4><p>Shape their behavior and give them useful context.</p></div></div>
+                <label className="luma-create-field">Personality <span>Optional</span><textarea id="teammate-personality" value={agentPersonality} onChange={(event) => setAgentPersonality(event.target.value)} rows={4} placeholder="How should this teammate think, communicate and approach tasks? Leave blank for Luma's defaults." className="luma-input mt-1.5 w-full resize-y text-[12px]" /></label>
+                <label className="luma-create-context"><input type="checkbox" checked={agentUseGlobalContext} onChange={(event) => setAgentUseGlobalContext(event.target.checked)} className="mt-0.5 accent-[var(--luma-accent)]" /><span><strong>Share global context</strong><small>Use the global skills, memory, connectors, etc.</small></span></label>
+                <label className="luma-create-field">Initial memory <span>Optional</span><textarea value={agentInitialMemory} onChange={(event) => setAgentInitialMemory(event.target.value)} rows={3} placeholder="Facts or preferences this teammate should remember…" className="luma-input mt-1.5 w-full resize-y text-[12px]" /></label>
+                <label className="luma-create-field">Workspace <span>Optional</span><input value={agentWorkspace} onChange={(event) => setAgentWorkspace(event.target.value)} placeholder={workspacePath || "Use current workspace"} className="luma-input mt-1.5 h-10 w-full text-[12px]" /></label>
+                <div className="luma-create-security"><span aria-hidden="true">⌁</span><p><strong>Safe by default.</strong> Network access is off, read-only tools can run automatically, and changes require your approval.</p></div>
+              </div>
+            </div>
+            <footer className="luma-create-footer flex items-center justify-between border-t border-[var(--luma-border)] px-6 py-4"><span>{agentName.trim() ? "Ready when you are." : "A name is all you need to get started."}</span><div className="flex gap-2"><button type="button" disabled={busy} onClick={() => setCreateOpen(false)} className="luma-btn-secondary h-9 px-3 text-[11px]">Cancel</button><button type="submit" disabled={busy || !agentName.trim()} className="luma-btn-primary h-9 px-4 text-[11px]">{busy ? "Creating…" : "Create teammate"}</button></div></footer>
+          </form>
+        </div>}
+        <footer className="flex shrink-0 items-center justify-between border-t border-[var(--luma-border)] px-5 py-2 text-[10px] text-[var(--luma-text-muted)]"><span>Work continues independently of this page.</span><button type="button" onClick={() => void refresh()} className="hover:text-[var(--luma-text)]">Refresh</button></footer>
+    </section>
   );
 }
 
 export default function App() {
   const [mode, setMode] = useState<AppMode>("agent");
+  const [teammatesSidebar, setTeammatesSidebar] = useState<React.ReactNode>(null);
+  const [sidebarBlur, setSidebarBlur] = useState(() => {
+    try {
+      return window.localStorage.getItem("luma.sidebar-blur") !== "false";
+    } catch {
+      return true;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("luma.sidebar-blur", String(sidebarBlur));
+    } catch {
+      // Keep the preference in component state when storage is unavailable.
+    }
+  }, [sidebarBlur]);
 
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [workspacePath, setWorkspacePath] = useState("");
@@ -2454,7 +2895,7 @@ export default function App() {
       className="
         flex h-screen w-screen
         flex-col overflow-hidden
-        bg-[var(--luma-bg)]
+        bg-transparent
         text-[var(--luma-text)]
       "
     >
@@ -2473,6 +2914,8 @@ export default function App() {
         connected={connected}
         setupConfig={setupConfig}
         workspacePath={workspacePath}
+        sidebarBlur={sidebarBlur}
+        onSidebarBlurChange={setSidebarBlur}
         onReconfigure={() => {
           setSettingsOpen(false);
           setSetupComplete(false);
@@ -2480,9 +2923,11 @@ export default function App() {
       />
 
       <div className="flex min-h-0 flex-1">
-        <Sidebar onOpenChat={() => setMode("agent")} />
+        <Sidebar mode={mode} onOpenChat={() => setMode("agent")} onOpenIDE={() => setMode("ide")} onOpenChanges={() => setMode("changes")} teammatesSidebar={teammatesSidebar} sidebarBlur={sidebarBlur} />
 
-        <main className="min-w-0 flex-1 overflow-hidden">
+        <main className="min-w-0 flex-1 overflow-hidden bg-[var(--luma-bg)]">
+          <div key={mode} className="luma-view-transition h-full min-w-0">
+          {mode === "teammates" && <TeammatesPanel onSidebarChange={setTeammatesSidebar} />}
           {mode === "agent" && <AgentView />}
 
           {mode === "ide" && (
@@ -2493,7 +2938,8 @@ export default function App() {
             />
           )}
 
-          {mode === "changes" && <ChangesView />}
+          {mode === "changes" && <ChangesView onOpenFile={(path) => { setSelectedFile(path); setMode("ide"); }} />}
+          </div>
         </main>
       </div>
     </div>
