@@ -5,7 +5,11 @@ import type { ChatAttachment } from "../../shared/attachments";
 export type LumaAgentEvent = ServerEvent;
 
 contextBridge.exposeInMainWorld("luma", {
+  platform: process.platform,
   getWorkspace: () => ipcRenderer.invoke("luma:get-workspace"),
+  getDefaultWorkspace: () => ipcRenderer.invoke("luma:get-default-workspace"),
+  chooseProjectWorkspace: () => ipcRenderer.invoke("luma:choose-project-workspace"),
+  setWorkspace: (path: string) => ipcRenderer.invoke("luma:set-workspace", path),
   chooseWorkspace: () => ipcRenderer.invoke("luma:choose-workspace"),
   listWorkspaceFiles: () => ipcRenderer.invoke("luma:list-workspace-files"),
   getGitChanges: () => ipcRenderer.invoke("luma:get-git-changes"),
@@ -46,6 +50,8 @@ contextBridge.exposeInMainWorld("luma", {
   saveSetupConfig: (config: unknown) =>
     ipcRenderer.invoke("luma:save-setup-config", config),
 
+  setSessionModel: (model: unknown) => ipcRenderer.invoke("luma:set-session-model", model),
+
   prompt: (text: string) => ipcRenderer.invoke("luma:prompt", text),
 
   confirm: (allowed: boolean) => ipcRenderer.invoke("luma:confirm", allowed),
@@ -57,6 +63,7 @@ contextBridge.exposeInMainWorld("luma", {
   getHistory: (): Promise<ChatSummary[]> => ipcRenderer.invoke("luma:get-history"),
   restoreChat: (id: string) => ipcRenderer.invoke("luma:restore-chat", id),
   clearSession: () => ipcRenderer.invoke("luma:clear-session"),
+  quit: () => ipcRenderer.invoke("luma:quit"),
 
   onOpenSettings: (callback: () => void) => {
     const listener = () => {
@@ -68,6 +75,30 @@ contextBridge.exposeInMainWorld("luma", {
     return () => {
       ipcRenderer.removeListener("luma:open-settings", listener);
     };
+  },
+
+  onNewChat: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("luma:new-chat", listener);
+    return () => ipcRenderer.removeListener("luma:new-chat", listener);
+  },
+
+  onOpenWorkspace: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("luma:open-workspace", listener);
+    return () => ipcRenderer.removeListener("luma:open-workspace", listener);
+  },
+
+  onToggleSidebar: (callback: () => void) => {
+    const listener = () => callback();
+    ipcRenderer.on("luma:toggle-sidebar", listener);
+    return () => ipcRenderer.removeListener("luma:toggle-sidebar", listener);
+  },
+
+  onWorkspaceChanged: (callback: (path: string) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, data: { path: string }) => callback(data.path);
+    ipcRenderer.on("luma:workspace-changed", listener);
+    return () => ipcRenderer.removeListener("luma:workspace-changed", listener);
   },
 
   onEvent: (callback: (event: ServerEvent) => void) => {

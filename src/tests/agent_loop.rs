@@ -27,6 +27,19 @@ use crate::{
 
 use super::mock::MockModel;
 
+struct FailingReAct;
+
+#[async_trait::async_trait]
+impl crate::react::ReActTrait for FailingReAct {
+    async fn next_action(
+        &self,
+        _messages: Vec<crate::context::Message>,
+        _cancel: CancellationToken,
+    ) -> anyhow::Result<ReActAction> {
+        anyhow::bail!("invalid ReAct response")
+    }
+}
+
 fn action_json(
     action: ReActAction,
     final_responses: &mut impl Iterator<Item = String>,
@@ -192,6 +205,61 @@ async fn a_request_error_is_reported_without_stopping_the_agent_loop() {
         events
             .iter()
             .any(|event| matches!(event, AgentEvent::TextDelta(text) if text == "recovered"))
+    );
+
+    drop(input_tx);
+    let _ = handle.await;
+}
+
+#[tokio::test]
+async fn a_react_failure_falls_back_to_a_direct_answer() {
+    let tools = ToolRegistry::new();
+    let model = MockModel::new(vec!["Here is the recovered answer.".into()]);
+    let mut agent = Agent::new(
+        model,
+        FailingReAct,
+        tools,
+        History::default(),
+        String::new(),
+    );
+    let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(32);
+    let (input_tx, input_rx) = mpsc::channel::<String>(4);
+    let (_confirmation_tx, confirmation_rx) = mpsc::channel::<Confirmation>(4);
+    let shutdown = CancellationToken::new();
+    let request_cancel = crate::session::RequestCancellation::new(shutdown.clone());
+
+    let handle = tokio::spawn(async move {
+        agent
+            .run(
+                input_rx,
+                event_tx,
+                shutdown,
+                request_cancel,
+                confirmation_rx,
+            )
+            .await
+    });
+    input_tx.send("Explain this project.".into()).await.unwrap();
+
+    let mut events = Vec::new();
+    loop {
+        let event = tokio::time::timeout(tokio::time::Duration::from_secs(2), event_rx.recv())
+            .await
+            .expect("fallback response should finish")
+            .expect("agent event channel should remain open");
+        let finished = matches!(event, AgentEvent::Finished);
+        events.push(event);
+        if finished {
+            break;
+        }
+    }
+
+    assert!(events.iter().any(|event| matches!(event, AgentEvent::SystemMessage(message) if message.contains("direct response"))));
+    assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta(text) if text == "Here is the recovered answer.")));
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Error(_)))
     );
 
     drop(input_tx);
@@ -473,7 +541,8 @@ async fn test_e_tool_failure_propagates() {
 
         let errs = errors(&events);
         assert!(
-            errs.iter().any(|e| e.contains("patch_file failed")),
+            errs.iter()
+                .any(|e| e.contains("Failed to run tool") && e.contains("patch_file")),
             "expected a patch_file failure, events: {events:?}"
         );
     })

@@ -133,6 +133,7 @@ export type AgentConfiguration = {
   workspace: string | null;
   allowed_workspaces: string[];
   enabled_tools: string[];
+  network_access?: boolean | null;
   permissions: PermissionProfile;
   max_concurrent_tasks: number;
   recover_interrupted_tasks: boolean;
@@ -240,8 +241,11 @@ export type ClientMessage =
       };
     }
   | { type: "set_model"; data: { request_id: string; model: string } }
+  | { type: "set_session_model"; data: { request_id: string; model: ModelConfig } }
   | { type: "history_list"; data: { request_id: string } }
   | { type: "history_show"; data: { request_id: string; id: string } }
+  | { type: "history_delete"; data: { request_id: string; id: string } }
+  | { type: "history_prune"; data: { request_id: string } }
   | { type: "summary_add"; data: { request_id: string; id: string; summary: string } }
   | { type: "start_dashboard"; data: { request_id: string; host: string; port: number } }
   | { type: "agents_list"; data: { request_id: string } }
@@ -295,6 +299,8 @@ export type ServerEvent =
   | { type: "model_changed"; data: { request_id: string; provider: string; model: string } }
   | { type: "history_list"; data: { request_id: string; chats: ChatSummary[] } }
   | { type: "history_chat"; data: { request_id: string; chat: ChatArchive } }
+  | { type: "history_deleted"; data: { request_id: string; id: string; deleted: boolean } }
+  | { type: "history_pruned"; data: { request_id: string; removed: number } }
   | { type: "summary_saved"; data: { request_id: string; id: string } }
   | { type: "dashboard_started"; data: { request_id: string; address: string } }
   | { type: "agents"; data: { request_id: string; agents: AgentRecord[] } }
@@ -484,6 +490,7 @@ function isAgentRecord(value: unknown): value is AgentRecord {
     && Array.isArray(config.skills) && config.skills.every(isString)
     && Array.isArray(config.allowed_workspaces) && config.allowed_workspaces.every(isString)
     && Array.isArray(config.enabled_tools) && config.enabled_tools.every(isString)
+    && (config.network_access === undefined || config.network_access === null || typeof config.network_access === "boolean")
     && Array.isArray(permissions.allowed_tools) && permissions.allowed_tools.every(isString)
     && Array.isArray(permissions.denied_tools) && permissions.denied_tools.every(isString)
     && typeof permissions.auto_approve_read_only === "boolean"
@@ -559,6 +566,8 @@ export function parseServerEvent(line: string): ServerEvent {
     case "history_list": valid = isString(data.request_id) && Array.isArray(data.chats)
       && data.chats.every(isChatSummary); break;
     case "history_chat": valid = isString(data.request_id) && isChatArchive(data.chat); break;
+    case "history_deleted": valid = isString(data.request_id) && isString(data.id) && typeof data.deleted === "boolean"; break;
+    case "history_pruned": valid = isString(data.request_id) && isNumber(data.removed) && Number.isInteger(data.removed) && data.removed >= 0; break;
     case "summary_saved": valid = isString(data.request_id) && isString(data.id); break;
     case "dashboard_started": valid = isString(data.request_id) && isString(data.address); break;
     case "agents": valid = isString(data.request_id) && Array.isArray(data.agents) && data.agents.every(isAgentRecord); break;

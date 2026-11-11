@@ -18,24 +18,34 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
   const { state, send, openModelPicker, selectProvider, chooseModel, closeModelPicker, confirm } = useSession(initialSetup);
 
   const [input, setInput] = useState("");
-  const [toolsExpanded, setToolsExpanded] = useState(false);
+  const [expandedToolGroups, setExpandedToolGroups] = useState<Record<string, boolean>>({});
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentMode, setAttachmentMode] = useState(false);
   const [attachmentError, setAttachmentError] = useState("");
   const rootElement = useRef<DOMElement>(null);
-  const toolActivityTrigger = useRef<DOMElement>(null);
+  const toolActivityTriggers = useRef<Array<{ id: string; element: DOMElement }>>([]);
+  toolActivityTriggers.current = [];
   const attachmentTrigger = useRef<DOMElement>(null);
   const terminalOriginRow = useRef(0);
   const { isRawModeSupported } = useStdin();
   const { stdout } = useStdout();
-  const lastUserIndex = state.messages.map((message) => message.role).lastIndexOf("user");
-  const toolMessages = state.messages.slice(lastUserIndex + 1).filter((message) => message.role === "tool");
+  const recentMessages = state.messages;
   const hasConversation = state.messages.some(
     (message) => message.role !== "system",
   );
 
-  useInput((input) => {
-    const cursorReport = /^\u001B\[(\d+);(\d+)R$/.exec(input);
+  useInput((input, key) => {
+    if ((key.meta || key.ctrl) && input.toLowerCase() === "o") {
+      const latestGroup = [...recentMessages].reverse().find((message) => message.role === "tool");
+      if (latestGroup) setExpandedToolGroups((current) => ({
+        ...current,
+        [latestGroup.id]: !(current[latestGroup.id] ?? false),
+      }));
+      return;
+    }
+    // Ink strips the leading ESC from unknown CSI sequences before dispatching
+    // them to useInput handlers.
+    const cursorReport = /^\u001B?\[(\d+);(\d+)R$/.exec(input);
     if (cursorReport) {
       const rootHeight = rootElement.current ? measureElement(rootElement.current).height : 0;
       terminalOriginRow.current = stdout.isTTY && rootHeight >= stdout.rows
@@ -44,7 +54,7 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
       return;
     }
 
-    const match = /^\u001B\[<(\d+);(\d+);(\d+)([Mm])$/.exec(input);
+    const match = /^\u001B?\[<(\d+);(\d+);(\d+)([Mm])$/.exec(input);
     if (!match || match[4] !== "M" || Number(match[1]) !== 0) return;
     const x = Number(match[2]) - 1;
     const y = Number(match[3]) - 1 - terminalOriginRow.current;
@@ -59,7 +69,11 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
       const { width, height } = measureElement(element);
       return x >= left && x < left + width && y >= top && y < top + height;
     };
-    if (hit(toolActivityTrigger.current)) setToolsExpanded((expanded) => !expanded);
+    const toolTrigger = toolActivityTriggers.current.find(({ element }) => hit(element));
+    if (toolTrigger) setExpandedToolGroups((current) => ({
+      ...current,
+      [toolTrigger.id]: !(current[toolTrigger.id] ?? false),
+    }));
     else if (hit(attachmentTrigger.current)) {
       setAttachmentMode(true);
       setAttachmentError("");
@@ -108,6 +122,7 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
 
       {state.modelPicker ? <ModelPicker
         providers={state.modelPicker.providers}
+        scope={state.modelPicker.scope}
         savedApiKeys={state.modelPicker.config?.provider_api_keys}
         models={state.modelPicker.models}
         stage={state.modelPicker.stage}
@@ -136,19 +151,21 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
             </Box>
           </Box>
         ) : null}
-        {state.messages.filter((message) => message.role !== "tool").map((message) => (
-          <Message
-            key={message.id}
-            message={message}
-            running={message.role === "tool" && state.activeTool !== null && message.content.startsWith(`${state.activeTool}:`)}
-          />
-        ))}
-        {toolMessages.length > 0 ? <Box flexDirection="column" marginTop={1}>
-          <Box ref={toolActivityTrigger}>
-            <Text color={theme.muted} bold>{toolsExpanded ? "⌄" : "›"} {toolMessages.length} tool{toolMessages.length === 1 ? "" : "s"} ran · click or Ctrl+O</Text>
-          </Box>
-          {toolsExpanded ? toolMessages.map((message) => <Message key={message.id} message={message} running={message.content.startsWith(`${state.activeTool}:`)} />) : null}
-        </Box> : null}
+        {recentMessages.map((message, index) => {
+          if (message.role === "tool") {
+            if (recentMessages[index - 1]?.role === "tool") return null;
+            const group = recentMessages.slice(index).filter((item, offset, all) => offset === 0 || all.slice(0, offset).every((entry) => entry.role === "tool"))
+              .filter((item) => item.role === "tool");
+            const expanded = expandedToolGroups[message.id] ?? false;
+            return <Box key={`tool-group-${message.id}`} flexDirection="column" marginTop={1}>
+              <Box ref={(element) => { if (element) toolActivityTriggers.current.push({ id: message.id, element }); }}>
+                <Text color={theme.muted} bold>{expanded ? "⌄" : "›"} {group.length} tool{group.length === 1 ? "" : "s"} ran · click or Cmd+O</Text>
+              </Box>
+              {expanded ? group.map((tool) => <Message key={tool.id} message={tool} running={tool.content.startsWith(`${state.activeTool}:`)} />) : null}
+            </Box>;
+          }
+          return <Message key={message.id} message={message} detailsExpanded={false} />;
+        })}
       </Box>
 
       <Composer
@@ -162,7 +179,13 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
         value={input}
         onChange={setInput}
         onOpenModelPicker={openModelPicker}
-        onToggleToolActivity={() => setToolsExpanded((value) => !value)}
+        onToggleToolActivity={() => {
+          const latestGroup = [...recentMessages].reverse().find((message) => message.role === "tool");
+          if (latestGroup) setExpandedToolGroups((current) => ({
+            ...current,
+            [latestGroup.id]: !(current[latestGroup.id] ?? false),
+          }));
+        }}
         attachmentTriggerRef={attachmentTrigger}
         attachments={attachments}
         attachmentMode={attachmentMode}

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { theme } from "../theme";
 import type { Status } from "../state";
 import { useSpinner } from "../hooks/useSpinner";
+import { useMotionFrame } from "../hooks/useMotionFrame";
 
 type Props = {
   status: Status;
@@ -44,7 +45,9 @@ export function PromptHeader({ status, activeTool, toolCalls, turns }: Props) {
 
   const active = status === "thinking" || status === "working" || status === "streaming";
   const spinner = useSpinner(active && !activeTool);
+  const motionFrame = useMotionFrame(active);
   const statusColor = status === "waiting" ? theme.warning : status === "error" ? theme.error : status === "done" ? theme.success : theme.accent;
+  const progressPosition = (motionFrame % 15) - 3;
 
   return (
     <Box marginBottom={0} flexDirection="row" flexWrap="wrap" columnGap={1}>
@@ -54,6 +57,7 @@ export function PromptHeader({ status, activeTool, toolCalls, turns }: Props) {
       <Text color={active || status === "waiting" ? statusColor : theme.muted} bold={active || status === "waiting"}>{statusWords[status]}</Text>
       {activeTool ? <Text color={theme.tool}>· {activeTool}</Text> : null}
       {active || status === "waiting" ? <Text color={theme.muted}>· {elapsed}s</Text> : null}
+      {active && !activeTool ? <Text color={theme.chrome}>· <Text color={theme.accent}>{Array.from({ length: 12 }, (_, index) => index >= progressPosition && index < progressPosition + 3 ? "━" : "─").join("")}</Text></Text> : null}
       <Text color={theme.chrome}>{turns} {turns === 1 ? "turn" : "turns"}</Text>
       <Text color={theme.chrome}>{toolCalls} {toolCalls === 1 ? "tool" : "tools"}</Text>
     </Box>

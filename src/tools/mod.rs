@@ -7,6 +7,7 @@ pub mod filesystem;
 pub mod git;
 pub mod shell;
 pub mod skills;
+pub mod web;
 
 /// Construct the standard tool set for an isolated agent execution.
 /// Keep registration in one place so Code and Teammates cannot silently gain
@@ -45,6 +46,16 @@ pub fn default_registry() -> ToolRegistry {
     tools.register(InspectProject);
     tools.register(ListSkills);
     tools.register(LoadSkill);
+    tools
+}
+
+/// Personal-agent tools are deliberately separate from the Code tool set.
+/// Teammates receive the same local capabilities plus explicit network tools.
+pub fn teammate_registry() -> ToolRegistry {
+    let mut tools = default_registry();
+    tools.register(web::WebSearch);
+    tools.register(web::FetchUrl);
+    tools.register(web::HttpRequest);
     tools
 }
 

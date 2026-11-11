@@ -2,7 +2,10 @@ import React from "react";
 import { render } from "ink";
 import { Command } from "commander";
 import { spawn } from "bun";
+import { writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { createInterface } from "node:readline/promises";
 
 import { App } from "./App";
 import { TeammatesManager } from "./TeammatesManager";
@@ -99,6 +102,92 @@ async function historyShow(id: string) {
   });
 }
 
+async function historyDelete(id: string, options: { yes?: boolean }) {
+  if (!options.yes) {
+    if (!process.stdin.isTTY) throw new Error("Pass --yes to delete a chat in a non-interactive terminal.");
+    const readline = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      const answer = await readline.question(`Permanently delete chat ${id}? [y/N] `);
+      if (!/^y(es)?$/i.test(answer.trim())) {
+        process.stdout.write("Cancelled.\n");
+        return;
+      }
+    } finally {
+      readline.close();
+    }
+  }
+
+  await withClient(async (client) => {
+    const requestId = crypto.randomUUID();
+    const event = await request(client, {
+      type: "history_delete",
+      data: { request_id: requestId, id },
+    }, "history_deleted", requestId);
+    if (!event.data.deleted) throw new Error(`Saved chat not found: ${id}`);
+    process.stdout.write(`Deleted chat ${id}.\n`);
+  });
+}
+
+async function historyPrune(options: { yes?: boolean }) {
+  if (!options.yes) {
+    if (!process.stdin.isTTY) throw new Error("Pass --yes to prune saved chats in a non-interactive terminal.");
+    const readline = createInterface({ input: process.stdin, output: process.stdout });
+    try {
+      const answer = await readline.question("Permanently delete EVERY saved Luma chat? This cannot be undone. [y/N] ");
+      if (!/^y(es)?$/i.test(answer.trim())) {
+        process.stdout.write("Cancelled.\n");
+        return;
+      }
+    } finally {
+      readline.close();
+    }
+  }
+
+  await withClient(async (client) => {
+    const requestId = crypto.randomUUID();
+    const event = await request(client, {
+      type: "history_prune",
+      data: { request_id: requestId },
+    }, "history_pruned", requestId);
+    process.stdout.write(`Pruned ${event.data.removed} saved chat${event.data.removed === 1 ? "" : "s"}.\n`);
+  });
+}
+
+async function historyExport(id: string, file?: string) {
+  await withClient(async (client) => {
+    const requestId = crypto.randomUUID();
+    const event = await request(client, { type: "history_show", data: { request_id: requestId, id } }, "history_chat", requestId);
+    const output = `${JSON.stringify(event.data.chat, null, 2)}\n`;
+    if (!file || file === "-") {
+      process.stdout.write(output);
+      return;
+    }
+    const target = resolve(file);
+    await writeFile(target, output, { flag: "wx" });
+    process.stdout.write(`Exported chat ${id} to ${target}.\n`);
+  });
+}
+
+async function providersList() {
+  await withClient(async (client) => {
+    const requestId = crypto.randomUUID();
+    const event = await request(client, { type: "get_providers", data: { request_id: requestId } }, "providers", requestId);
+    for (const provider of event.data.providers) {
+      process.stdout.write(`${provider.id}  ${provider.name}${provider.requires_api_key ? "  (API key required)" : ""}\n  ${provider.endpoint}\n`);
+    }
+    if (event.data.providers.length === 0) process.stdout.write("No providers are available.\n");
+  });
+}
+
+function configPath() {
+  const base = process.platform === "darwin"
+    ? resolve(homedir(), "Library", "Application Support", "luma")
+    : process.platform === "win32"
+      ? resolve(process.env.APPDATA ?? resolve(homedir(), "AppData", "Roaming"), "luma")
+      : resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), ".config"), "luma");
+  process.stdout.write(`${resolve(base, "config.toml")}\n`);
+}
+
 async function summaryAdd(id: string, summary: string[]) {
   await withClient(async (client) => {
     const requestId = crypto.randomUUID();
@@ -121,12 +210,13 @@ const defaultAgentConfiguration = (): AgentConfiguration => ({
   workspace: process.cwd(),
   allowed_workspaces: [process.cwd()],
   enabled_tools: [],
+  network_access: true,
   permissions: {
-    allowed_tools: ["read_file", "list_directory", "search_files", "git_status", "git_diff", "find_symbols", "find_references", "git_log", "git_show", "git_blame", "git_branches", "file_metadata", "find_todos", "count_lines", "inspect_project", "list_skills", "load_skill"],
+    allowed_tools: ["read_file", "list_directory", "search_files", "git_status", "git_diff", "find_symbols", "find_references", "git_log", "git_show", "git_blame", "git_branches", "file_metadata", "find_todos", "count_lines", "inspect_project", "list_skills", "load_skill", "web_search", "fetch_url"],
     denied_tools: [],
     auto_approve_read_only: true,
     require_approval_for_mutations: true,
-    allow_network: false,
+    allow_network: true,
   },
   max_concurrent_tasks: 1,
   recover_interrupted_tasks: false,
@@ -371,6 +461,18 @@ export async function runCli(argv: string[]) {
     .action(historyList);
   history.command("list").description("List saved chats").action(historyList);
   history.command("show <id>").description("Show a saved chat").action(historyShow);
+  history.command("delete <id>").description("Permanently delete a saved chat")
+    .option("-y, --yes", "Skip the confirmation prompt")
+    .action(historyDelete);
+  history.command("prune").description("Permanently delete every saved chat")
+    .option("-y, --yes", "Skip the confirmation prompt")
+    .action(historyPrune);
+  history.command("export <id> [file]").description("Export a saved chat as JSON (use - for stdout)").action(historyExport);
+
+  const config = program.command("config").description("Inspect Luma configuration locations");
+  config.command("path").description("Print the active config.toml path").action(configPath);
+
+  program.command("providers").description("List model providers supported by this Luma build").action(providersList);
 
   program.command("summary")
     .description("Manage saved conversation summaries")

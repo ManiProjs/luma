@@ -122,6 +122,9 @@ impl PermissionProfile {
         if !self.allow_network && matches!(tool, "web_search" | "fetch_url" | "http_request") {
             return PermissionDecision::Deny;
         }
+        if tool == "http_request" && mutating && self.require_approval_for_mutations {
+            return PermissionDecision::RequireApproval;
+        }
         if self.allowed_tools.iter().any(|item| item == tool) {
             return PermissionDecision::Allow;
         }
@@ -171,6 +174,9 @@ pub struct AgentConfiguration {
     pub workspace: Option<String>,
     pub allowed_workspaces: Vec<String>,
     pub enabled_tools: Vec<String>,
+    /// Explicit Teammates network preference. `None` keeps the personal-agent
+    /// default (enabled) while preserving older stored configurations.
+    pub network_access: Option<bool>,
     pub permissions: PermissionProfile,
     /// Current supervisor policy is one active task per core process until
     /// workspace leases/isolation are available. Keep this explicit so a
@@ -192,6 +198,7 @@ impl Default for AgentConfiguration {
             workspace: None,
             allowed_workspaces: Vec::new(),
             enabled_tools: Vec::new(),
+            network_access: None,
             permissions: PermissionProfile::default(),
             max_concurrent_tasks: 1,
             recover_interrupted_tasks: false,
@@ -368,10 +375,11 @@ impl RuntimeStore {
             return Ok(());
         }
         let timestamp = now();
-        let configuration = AgentConfiguration {
+        let mut configuration = AgentConfiguration {
             use_global_context: false,
             ..AgentConfiguration::default()
         };
+        enable_teammate_network_tools(&mut configuration);
         let db = self.db()?;
         db.execute(
             "INSERT OR IGNORE INTO agents (id,name,description,kind,status,configuration,configuration_revision,created_at,updated_at) VALUES (?1,'Global','Shared defaults for teammates','teammates','idle',?2,1,?3,?3)",
@@ -468,7 +476,7 @@ impl RuntimeStore {
         name: &str,
         description: Option<String>,
         kind: AgentKind,
-        configuration: AgentConfiguration,
+        mut configuration: AgentConfiguration,
     ) -> Result<AgentRecord> {
         let name = name.trim();
         if name.is_empty() || name.len() > 120 {
@@ -478,6 +486,9 @@ impl RuntimeStore {
             bail!(
                 "max_concurrent_tasks must be 1; the supervisor serializes tasks until workspace isolation is available"
             );
+        }
+        if kind == AgentKind::Teammates {
+            enable_teammate_network_tools(&mut configuration);
         }
         let timestamp = now();
         let record = AgentRecord {
@@ -1367,6 +1378,27 @@ impl RuntimeStore {
     }
 }
 
+fn enable_teammate_network_tools(configuration: &mut AgentConfiguration) {
+    let enabled = configuration.network_access.unwrap_or(true);
+    configuration.network_access = Some(enabled);
+    configuration.permissions.allow_network = enabled;
+    if enabled {
+        for tool in ["web_search", "fetch_url"] {
+            if !configuration
+                .permissions
+                .allowed_tools
+                .iter()
+                .any(|item| item == tool)
+            {
+                configuration
+                    .permissions
+                    .allowed_tools
+                    .push(tool.to_owned());
+            }
+        }
+    }
+}
+
 pub(crate) fn validate_workspace(path: &str, configuration: &AgentConfiguration) -> Result<()> {
     let canonical = PathBuf::from(path)
         .canonicalize()
@@ -1744,6 +1776,41 @@ mod tests {
     }
 
     #[test]
+    fn teammate_task_history_is_isolated_by_agent() {
+        let store = RuntimeStore::in_memory();
+        let first = store
+            .create_agent(
+                "Researcher",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let second = store
+            .create_agent(
+                "Reviewer",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let first_task = store
+            .create_task(&first.id, "Research the project", None, None, false, None)
+            .unwrap();
+        let second_task = store
+            .create_task(&second.id, "Review the project", None, None, false, None)
+            .unwrap();
+
+        let first_history = store.list_tasks(Some(&first.id), 50).unwrap();
+        let second_history = store.list_tasks(Some(&second.id), 50).unwrap();
+
+        assert_eq!(first_history.len(), 1);
+        assert_eq!(first_history[0].id, first_task.id);
+        assert_eq!(second_history.len(), 1);
+        assert_eq!(second_history[0].id, second_task.id);
+    }
+
+    #[test]
     fn restart_recovery_never_requeues_uncertain_side_effects() {
         let store = RuntimeStore::in_memory();
         let mut configuration = AgentConfiguration::default();
@@ -1982,6 +2049,56 @@ mod tests {
     }
 
     #[test]
+    fn new_teammates_receive_personal_agent_network_tools_by_default() {
+        let store = RuntimeStore::in_memory();
+        let teammate = store
+            .create_agent(
+                "Researcher",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        assert_eq!(teammate.configuration.network_access, Some(true));
+        assert!(teammate.configuration.permissions.allow_network);
+        assert!(
+            teammate
+                .configuration
+                .permissions
+                .allowed_tools
+                .contains(&"web_search".to_owned())
+        );
+        assert!(
+            teammate
+                .configuration
+                .permissions
+                .allowed_tools
+                .contains(&"fetch_url".to_owned())
+        );
+    }
+
+    #[test]
+    fn teammates_can_explicitly_disable_network_access() {
+        let store = RuntimeStore::in_memory();
+        let configuration = AgentConfiguration {
+            network_access: Some(false),
+            ..AgentConfiguration::default()
+        };
+        let teammate = store
+            .create_agent("Offline", None, AgentKind::Teammates, configuration)
+            .unwrap();
+        assert_eq!(teammate.configuration.network_access, Some(false));
+        assert!(!teammate.configuration.permissions.allow_network);
+        assert_eq!(
+            teammate
+                .configuration
+                .permissions
+                .decide("web_search", false),
+            PermissionDecision::Deny
+        );
+    }
+
+    #[test]
     fn permission_profiles_deny_before_allow() {
         let mut profile = PermissionProfile::default();
         profile.denied_tools.push("read_file".into());
@@ -2003,8 +2120,8 @@ mod tests {
 
         profile.allow_network = true;
         assert_eq!(
-            profile.decide("http_request", false),
-            PermissionDecision::Allow
+            profile.decide("http_request", true),
+            PermissionDecision::RequireApproval
         );
     }
 }

@@ -245,10 +245,11 @@ export function useSession(initialSetup = false) {
     }
   }
 
-  function openModelPicker() {
+  function openModelPicker(scope: "global" | "session" = "global") {
     setState((current) => ({
       ...current,
       modelPicker: {
+        scope,
         stage: "providers",
         providers: [],
         models: [],
@@ -318,6 +319,10 @@ export function useSession(initialSetup = false) {
         const requestedModel = modelCommand[1]?.trim();
         if (!requestedModel) {
           openModelPicker();
+          return;
+        }
+        if (requestedModel.toLowerCase() === "session") {
+          openModelPicker("session");
           return;
         }
         try {
@@ -394,6 +399,11 @@ export function useSession(initialSetup = false) {
           ? [...(currentConfig.providers ?? []), provider]
           : (currentConfig.providers ?? []).filter((item) => item.id !== provider.id || saveProvider),
       };
+      if (picker.scope === "session") {
+        client.send({ type: "set_session_model", data: { request_id: crypto.randomUUID(), model: config.model } });
+        setState((current) => ({ ...current, modelPicker: null }));
+        return;
+      }
       pendingModel.current = { provider: provider.id, model };
       client.send({ type: "save_setup_config", data: { request_id: crypto.randomUUID(), config } });
       setState((current) => ({ ...current, modelPicker: current.modelPicker ? { ...current.modelPicker, loading: true } : null }));

@@ -1,8 +1,8 @@
 {
   "name": "desktop",
-  "productName": "desktop",
+  "productName": "Luma",
   "version": "1.0.0",
-  "description": "My Electron application description",
+  "description": "Luma desktop workspace for Code and Teammates",
   "main": ".vite/build/main.js",
   "private": true,
   "scripts": {

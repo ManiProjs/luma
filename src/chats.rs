@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -73,6 +73,45 @@ pub fn load(id: &str) -> Result<ChatArchive> {
     serde_json::from_slice(&data).with_context(|| format!("parsing chat {}", path.display()))
 }
 
+pub fn delete(id: &str) -> Result<bool> {
+    let path = path_for(id)?;
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => {
+            Err(error).with_context(|| format!("deleting chat archive {}", path.display()))
+        }
+    }
+}
+
+/// Permanently remove every saved chat archive. Returns the number of files removed.
+pub fn prune() -> Result<usize> {
+    let directory = chats_dir();
+    prune_directory(&directory)
+}
+
+fn prune_directory(directory: &Path) -> Result<usize> {
+    if !directory.exists() {
+        return Ok(0);
+    }
+
+    let mut removed = 0;
+    for entry in fs::read_dir(&directory)? {
+        let path = entry?.path();
+        if path.extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.file_type().is_file() {
+            continue;
+        }
+        fs::remove_file(&path)
+            .with_context(|| format!("removing saved chat {}", path.display()))?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
 pub fn list() -> Result<Vec<ChatSummary>> {
     let directory = chats_dir();
     if !directory.exists() {
@@ -124,4 +163,31 @@ pub fn add_summary(id: &str, summary: String) -> Result<()> {
     chat.summary = Some(summary.trim().to_owned());
     chat.updated_at = now();
     save(&chat)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delete_rejects_invalid_ids_and_reports_missing_archives() {
+        assert!(delete("../config").is_err());
+        assert!(!delete(&new_id()).unwrap());
+    }
+
+    #[test]
+    fn prune_removes_every_chat_archive_and_keeps_other_files() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("chat-one.json"), "{}").unwrap();
+        fs::write(directory.path().join("chat-two.json"), "not valid JSON").unwrap();
+        fs::write(directory.path().join("notes.txt"), "keep me").unwrap();
+        fs::create_dir(directory.path().join("nested.json")).unwrap();
+
+        assert_eq!(prune_directory(directory.path()).unwrap(), 2);
+        assert!(!directory.path().join("chat-one.json").exists());
+        assert!(!directory.path().join("chat-two.json").exists());
+        assert!(directory.path().join("notes.txt").exists());
+        assert!(directory.path().join("nested.json").is_dir());
+        assert_eq!(prune_directory(directory.path()).unwrap(), 0);
+    }
 }

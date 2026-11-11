@@ -790,9 +790,14 @@ or test results.
                 Ok(action) => action,
 
                 Err(error) => {
-                    tx.send(AgentEvent::Error(format!("ReAct failed: {}", error)))
-                        .await?;
-
+                    // A malformed/unavailable ReAct action is not a failed
+                    // user request. Fall back to the normal answer path so
+                    // the model can still respond using the conversation
+                    // context gathered so far.
+                    tx.send(AgentEvent::SystemMessage(format!(
+                        "The ReAct step hit a problem ({error}). Continuing with a direct response instead."
+                    )))
+                    .await?;
                     self.run_conversation(tx, cancel).await?;
                     return Ok(());
                 }
@@ -933,7 +938,9 @@ or test results.
 
         if let Some(root) = &self.workspace_root {
             if let Err(error) = validate_agent_tool_paths(root, name, input) {
-                let message = format!("Workspace policy denied tool `{name}`: {error}");
+                let message = format!(
+                    "Failed to run tool\n{name}: workspace policy denied this operation: {error}"
+                );
                 tx.send(AgentEvent::Error(message.clone())).await?;
                 self.record_observation(name, &message);
                 return Ok(());
@@ -951,7 +958,7 @@ or test results.
             let (path, diff) = match preview_file_change(name, input) {
                 Ok(preview) => preview,
                 Err(error) => {
-                    let message = format!("{name} failed: {error}");
+                    let message = format!("Failed to run tool\n{name}: {error}");
                     tx.send(AgentEvent::Error(message.clone())).await?;
                     self.record_observation(name, &message);
                     return Ok(());
@@ -973,11 +980,15 @@ or test results.
                 return Ok(());
             }
         } else {
-            let mutating = name == "run_command";
+            // HTTP requests other than the dedicated read-only web tools are
+            // treated as side effects and always go through approval.
+            let mutating = name == "run_command" || name == "http_request";
             match self.permission_profile.decide(name, mutating) {
                 PermissionDecision::Allow => {}
                 PermissionDecision::Deny => {
-                    let message = format!("Permission policy denied tool `{name}`.");
+                    let message = format!(
+                        "Failed to run tool\n{name}: permission policy denied this operation."
+                    );
                     tx.send(AgentEvent::Error(message.clone())).await?;
                     self.record_observation(name, &message);
                     return Ok(());
@@ -1022,7 +1033,7 @@ or test results.
         let (result, failed) = match execution {
             Ok(result) => (result, false),
             Err(error) => {
-                let message = format!("{} failed: {}", name, error);
+                let message = format!("Failed to run tool\n{name}: {error}");
                 tx.send(AgentEvent::ToolFinished {
                     name: name.to_owned(),
                     duration_ms: started.elapsed().as_millis(),

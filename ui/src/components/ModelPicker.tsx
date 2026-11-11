@@ -6,6 +6,7 @@ import { theme } from "../theme";
 
 type Props = {
   providers: SupportedProvider[];
+  scope: "global" | "session";
   models: SupportedModel[];
   stage: "providers" | "models";
   loading: boolean;
@@ -18,7 +19,7 @@ type Props = {
 
 type CustomStage = "name" | "endpoint" | "key" | "model" | "save" | "providerKey";
 
-export function ModelPicker({ providers, models, stage, loading, error, savedApiKeys = {}, onSelectProvider, onChooseModel, onClose }: Props) {
+export function ModelPicker({ providers, models, stage, loading, error, savedApiKeys = {}, scope, onSelectProvider, onChooseModel, onClose }: Props) {
   const [index, setIndex] = useState(0);
   const [customStage, setCustomStage] = useState<CustomStage | null>(null);
   const [name, setName] = useState("");
@@ -51,6 +52,7 @@ export function ModelPicker({ providers, models, stage, loading, error, savedApi
   useEffect(() => { setIndex(0); setSearch(""); }, [stage]);
 
   useInput((input, key) => {
+    if (/^\u001B?\[(?:<\d+;\d+;\d+[Mm]|\d+;\d+R)$/.test(input)) return;
     if (key.escape) { onClose(); return; }
     if (customStage) {
       if (key.backspace || key.delete) {
@@ -86,7 +88,8 @@ export function ModelPicker({ providers, models, stage, loading, error, savedApi
           setCustomStage("model");
         }
         else if (customStage === "model" && model.trim()) {
-          if (draftProvider) setCustomStage("save");
+          if (draftProvider && scope === "global") setCustomStage("save");
+          else if (draftProvider) onChooseModel(model.trim(), draftProvider, false, apiKey.trim() || null);
           else onChooseModel(model.trim());
         }
         else if (customStage === "save" && draftProvider) onChooseModel(model.trim(), draftProvider, save, apiKey.trim() || null);
@@ -141,7 +144,7 @@ export function ModelPicker({ providers, models, stage, loading, error, savedApi
   }
 
   return <Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={1} marginY={1}>
-    <Text bold color={theme.accent}>{stage === "providers" ? "Choose a provider" : "Choose a model"}</Text>
+    <Text bold color={theme.accent}>{scope === "session" ? "Choose a session model" : stage === "providers" ? "Choose a provider" : "Choose a model"}</Text>
     {stage === "models" ? <Text color="gray">Search: {search || "type to filter models"}</Text> : null}
     {loading ? <Text color="gray">Loading…</Text> : visibleEntries.map((entry, visibleIndex) => {
       const itemIndex = Math.max(0, Math.min(index - 6, entries.length - 12)) + visibleIndex;

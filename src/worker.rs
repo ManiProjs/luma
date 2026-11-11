@@ -91,19 +91,14 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
         model_config.endpoint = endpoint.clone();
     }
 
-    let mut registry = tools::default_registry();
-    let global_enabled_tools = if inherit_global {
-        global_configuration
-            .map(|value| value.enabled_tools.as_slice())
-            .unwrap_or(&[])
+    let mut registry = if agent_record.kind == crate::runtime::AgentKind::Teammates {
+        tools::teammate_registry()
     } else {
-        &[]
+        tools::default_registry()
     };
-    let enabled_tools = if agent_record.configuration.enabled_tools.is_empty() {
-        global_enabled_tools
-    } else {
-        agent_record.configuration.enabled_tools.as_slice()
-    };
+    // A Teammate owns its own tool selection. Global context shares memory,
+    // skills and defaults; it must not silently replace the agent's tools.
+    let enabled_tools = agent_record.configuration.enabled_tools.as_slice();
     if !enabled_tools.is_empty() {
         // The runtime only exposes explicitly configured tools. Read-only
         // policy is enforced again inside Agent before invocation.
@@ -131,7 +126,20 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
         }
     }
     let mut agent = Agent::new(model, react, registry, history, galaxy);
-    agent.set_permission_profile(agent_record.configuration.permissions.clone());
+    let mut permissions = agent_record.configuration.permissions.clone();
+    if agent_record.kind == crate::runtime::AgentKind::Teammates {
+        permissions.allow_network = agent_record.configuration.network_access.unwrap_or(true);
+        if permissions.allow_network {
+            for tool in ["web_search", "fetch_url"] {
+                if !permissions.denied_tools.iter().any(|item| item == tool)
+                    && !permissions.allowed_tools.iter().any(|item| item == tool)
+                {
+                    permissions.allowed_tools.push(tool.to_owned());
+                }
+            }
+        }
+    }
+    agent.set_permission_profile(permissions);
     agent.set_workspace_root(&std::env::current_dir()?)?;
     if inherit_global {
         if let Some(global_configuration) = global_configuration {
@@ -148,17 +156,17 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     if !agent_record.configuration.system_prompt.trim().is_empty() {
         agent.add_system_context(agent_record.configuration.system_prompt.clone());
     }
-    if !inherit_global {
-        for skill_name in &agent_record.configuration.skills {
-            let skill = tools::skills::load_agent_skill(&std::env::current_dir()?, skill_name)
-                .with_context(|| {
-                    format!(
-                        "loading skill '{skill_name}' for teammate {}",
-                        agent_record.name
-                    )
-                })?;
-            agent.add_system_context(skill);
-        }
+    // An agent's own skills remain its own even when it also opts into the
+    // Global teammate's shared context.
+    for skill_name in &agent_record.configuration.skills {
+        let skill = tools::skills::load_agent_skill(&std::env::current_dir()?, skill_name)
+            .with_context(|| {
+                format!(
+                    "loading skill '{skill_name}' for teammate {}",
+                    agent_record.name
+                )
+            })?;
+        agent.add_system_context(skill);
     }
     let workspace_id = std::env::current_dir()?
         .canonicalize()?

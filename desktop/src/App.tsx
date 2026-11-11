@@ -9,9 +9,10 @@ import LumaWordmark, { LumaMark } from "./components/LumaWordmark";
 
 import { themes, useTheme } from "./renderer/Theme";
 
-import { useLuma } from "./renderer/hooks/useLuma";
+import { useLuma, type AgentTool } from "./renderer/hooks/useLuma";
 
 import SetupWizard from "./setup/SetupWizard";
+import ModelPickerDialog from "./components/ModelPickerDialog";
 
 import type { SetupConfig } from "./stores/setupStore";
 
@@ -23,6 +24,10 @@ import { formatChatPrompt, type ChatAttachment } from "../../shared/attachments"
 import { MascotCustomizer } from "./components/MascotCustomizer";
 
 type AppMode = "agent" | "ide" | "changes" | "teammates";
+type TeammateToolRun = { id: string; name: string; input: string; durationMs?: number; failed?: boolean; diff?: string };
+type TeammateTimelineSegment =
+  | { kind: "text"; id: string; content: string }
+  | { kind: "tools"; id: string; tools: TeammateToolRun[] };
 
 export type WorkspaceNode =
   | {
@@ -47,12 +52,33 @@ export type GitChange = {
 const SLASH_COMMANDS = [
   { command: "/help", description: "Show available commands" },
   { command: "/clear", description: "Clear the conversation" },
+  { command: "/new", description: "Start a fresh conversation" },
+  { command: "/quit", description: "Quit Luma" },
+  { command: "/exit", description: "Quit Luma (alias)" },
   { command: "/history", description: "List recent saved chats" },
+  { command: "/history list", description: "List saved chats" },
+  { command: "/history show", description: "Inspect an archived chat by ID" },
+  { command: "/history delete", description: "Delete an archived chat by ID" },
+  { command: "/history prune", description: "Delete every saved chat" },
+  { command: "/restore", description: "Restore a saved chat by ID" },
+  { command: "/summary:add", description: "Save a summary for this chat" },
+  { command: "/status", description: "Show model, workspace and session status" },
+  { command: "/workspace", description: "Show the active workspace" },
+  { command: "/version", description: "Show the Luma version" },
+  { command: "/doctor", description: "Inspect model, workspace and session health" },
+  { command: "/tools", description: "List tools enabled in this session" },
+  { command: "/skills", description: "Discover available Agent Skills" },
+  { command: "/teammates", description: "List persistent personal agents" },
+  { command: "/agents", description: "List persistent personal agents (alias)" },
+  { command: "/tasks", description: "List recent persistent tasks" },
+  { command: "/approvals", description: "List pending approvals" },
+  { command: "/schedules", description: "List scheduled teammate work" },
+  { command: "/memory", description: "List saved user and workspace memories" },
   { command: "/resume", description: "Resume an interrupted task" },
   { command: "/plan", description: "Create a plan without implementing" },
-  { command: "/restore", description: "Restore a saved chat" },
-  { command: "/summary:add", description: "Save a chat summary" },
   { command: "/init", description: "Initialize workspace instructions" },
+  { command: "/model", description: "Change the default model" },
+  { command: "/model session", description: "Change the model for this session only" },
 ];
 
 function ChevronIcon({ open }: { open: boolean }) {
@@ -208,61 +234,78 @@ function TopBar({
   setMode,
   connected,
   onSettings,
+  sidebarBlur,
+  sidebarVisible,
+  onToggleSidebar,
 }: {
   mode: AppMode;
   setMode: (mode: AppMode) => void;
   connected: boolean;
   onSettings: () => void;
+  sidebarBlur: boolean;
+  sidebarVisible: boolean;
+  onToggleSidebar: () => void;
 }) {
+  const platform = window.luma.platform;
+  const macOS = platform === "darwin";
   return (
     <header
-      className="
+      className={`
         drag-region
-        luma-topbar flex h-[54px] shrink-0 items-center
+        luma-topbar flex h-16 shrink-0 items-center
         border-b border-[var(--luma-border)]
-        bg-[var(--luma-surface)]
-      "
+        ${sidebarBlur ? "luma-topbar-glass" : "bg-[var(--luma-surface)]"}
+      `}
     >
       <div
-        className="
+        className={`
           flex h-full w-full items-center
-          pl-[82px] pr-3
+          ${macOS ? "pl-[82px]" : "pl-5"} pr-4
           pointer-events-none
-        "
+        `}
       >
-        <div className="no-drag pointer-events-auto">
+        <button
+          type="button"
+          onClick={onToggleSidebar}
+          aria-label={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
+          aria-pressed={sidebarVisible}
+          title={`${sidebarVisible ? "Hide" : "Show"} sidebar (${macOS ? "⌘" : "Ctrl"}+B)`}
+          className="no-drag pointer-events-auto ml-3 flex h-8 w-8 items-center justify-center rounded-md text-[var(--luma-text-muted)] hover:bg-[var(--luma-surface-hover)] hover:text-[var(--luma-text)]"
+        >
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M9 4v16" />
+          </svg>
+        </button>
+
+        <div className="no-drag pointer-events-auto ml-2">
           <LumaWordmark compact section={mode === "teammates" ? "teammates" : undefined} />
         </div>
 
-        <div className="luma-mode-picker no-drag pointer-events-auto relative grid grid-cols-2 items-center rounded-lg border border-[var(--luma-border)] bg-[var(--luma-bg)]">
+        <div className="luma-mode-picker no-drag pointer-events-auto relative ml-5 flex h-9 min-w-[220px] items-center rounded-lg border border-[var(--luma-border-strong)] bg-[var(--luma-bg)] p-1" role="group" aria-label="Luma workspace">
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute bottom-1 left-1 top-1 w-[calc((100%_-_8px)_/_2)] rounded-md bg-[var(--luma-accent-soft)] shadow-[inset_0_0_0_1px_var(--luma-border)] transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+            className="absolute bottom-1 left-1 top-1 w-[calc((100%_-_8px)_/_2)] rounded-md bg-[var(--luma-surface-raised)] shadow-sm transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
             style={{
               transform: `translateX(${mode === "teammates" ? 100 : 0}%)`,
             }}
           />
           <ModeButton active={mode !== "teammates"} onClick={() => setMode("agent")} tooltip="Code" label="Code">
-            <span className="font-mono text-[12px] font-semibold tracking-[-0.08em]">&lt;/&gt;</span>
+            <span className="flex h-full w-full items-center justify-center gap-2"><span className="font-mono text-[12px] font-semibold">&lt;/&gt;</span><span>Code</span></span>
           </ModeButton>
           <ModeButton active={mode === "teammates"} onClick={() => setMode("teammates")} tooltip="Teammates" label="Teammates">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M18 20a6 6 0 0 0-12 0" />
-              <circle cx="12" cy="8" r="4" />
-            </svg>
+            <span className="flex h-full w-full items-center justify-center gap-2">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M18 20a6 6 0 0 0-12 0" />
+                <circle cx="12" cy="8" r="4" />
+              </svg>
+              <span>Teammates</span>
+            </span>
           </ModeButton>
         </div>
 
-        <div className="no-drag pointer-events-auto ml-auto flex items-center gap-2">
-          <div
-            className="
-              flex items-center gap-1.5
-              rounded-full border border-[var(--luma-border)]
-              bg-[var(--luma-bg)] px-2.5 py-1
-              text-[12px]
-              text-[var(--luma-text-secondary)]
-            "
-          >
+        <div className="no-drag pointer-events-auto ml-auto flex items-center gap-3">
+          <div className="luma-connection-status flex items-center gap-2 text-[11px] text-[var(--luma-text-muted)]" role="status" aria-live="polite">
             <span
               className={`h-1.5 w-1.5 rounded-full ${
                 connected
@@ -271,8 +314,7 @@ function TopBar({
               }`}
               aria-hidden="true"
             />
-            <span className="sr-only">{connected ? 'Connected' : 'Disconnected'}</span>
-            <span aria-hidden="true">{connected ? 'Connected' : 'Disconnected'}</span>
+            {connected ? "Core connected" : "Core offline"}
           </div>
 
           <button
@@ -281,7 +323,7 @@ function TopBar({
             aria-label="Settings"
             className="
               flex h-8 w-8 items-center justify-center
-              rounded-lg
+              rounded-md
               text-[var(--luma-text-muted)]
               transition-colors
               hover:bg-[var(--luma-surface-hover)]
@@ -317,7 +359,7 @@ function ModeButton({
       aria-label={label}
       aria-pressed={active}
       className={`
-        relative z-10 flex h-7 items-center justify-center gap-1.5 rounded-md
+        relative z-10 flex flex-1 h-7 items-center justify-center gap-1.5 rounded-md
         text-[13px] font-medium
         transition-colors
         ${
@@ -345,7 +387,12 @@ function SettingsPanel({
   workspacePath,
   sidebarBlur,
   onSidebarBlurChange,
-  onReconfigure,
+  compactHistory,
+  onCompactHistoryChange,
+  reducedMotion,
+  onReducedMotionChange,
+  onChangeModel,
+  onOpenTour,
 }: {
   open: boolean;
   onClose: () => void;
@@ -354,12 +401,17 @@ function SettingsPanel({
   workspacePath: string;
   sidebarBlur: boolean;
   onSidebarBlurChange: (enabled: boolean) => void;
-  onReconfigure: () => void;
+  compactHistory: boolean;
+  onCompactHistoryChange: (enabled: boolean) => void;
+  reducedMotion: boolean;
+  onReducedMotionChange: (enabled: boolean) => void;
+  onChangeModel: () => void;
+  onOpenTour: () => void;
 }) {
   const { theme, setTheme, definition } = useTheme();
   const trapRef = useFocusTrap(open);
 
-  const [section, setSection] = useState<"appearance" | "general">(
+  const [section, setSection] = useState<"appearance" | "general" | "behavior">(
     "appearance",
   );
 
@@ -392,7 +444,7 @@ function SettingsPanel({
         type="button"
         aria-label="Close settings"
         onClick={onClose}
-        className="fixed inset-0 z-30 cursor-default bg-black/40"
+        className="luma-modal-overlay fixed inset-0 z-30 cursor-default bg-black/40"
       />
 
       <div
@@ -402,15 +454,16 @@ function SettingsPanel({
         aria-labelledby="settings-title"
         aria-describedby="settings-description"
         className="
+          luma-modal-content
           no-drag
           fixed left-1/2 top-1/2 z-40
           flex h-[560px] w-[720px]
           -translate-x-1/2 -translate-y-1/2
           overflow-hidden
-          rounded-xl
+          rounded-lg
           border border-[var(--luma-border-strong)]
           bg-[var(--luma-surface-raised)]
-          shadow-2xl
+          shadow-lg ring-1 ring-[var(--luma-border)]
         "
       >
         <div
@@ -441,18 +494,23 @@ function SettingsPanel({
           >
             General
           </SettingsNavButton>
+          <SettingsNavButton
+            active={section === "behavior"}
+            onClick={() => setSection("behavior")}
+          >
+            Behavior
+          </SettingsNavButton>
         </div>
 
         <div className="min-w-0 flex-1 p-4">
           {section === "appearance" && (
             <>
-              <div className="mb-3">
-                <h2 className="text-[13px] font-medium">Appearance</h2>
-
-                <p className="mt-0.5 text-[12px] text-[var(--luma-text-secondary)]">
-                  Customize the visual appearance of Luma.
-                </p>
-              </div>
+          <div className="mb-4">
+            <h2 className="text-[13px] font-medium text-[var(--luma-text)]">Appearance</h2>
+            <p className="mt-0.5 text-[12px] text-[var(--luma-text-muted)]">
+              Customize the look and feel of Luma.
+            </p>
+          </div>
 
               <div className="grid grid-cols-2 gap-2">
                 {themes.map((item) => (
@@ -465,13 +523,13 @@ function SettingsPanel({
                 ))}
               </div>
 
-              <label className="mt-3 flex cursor-pointer items-center justify-between gap-4 rounded-md border border-[var(--luma-border)] bg-[var(--luma-surface)] px-3 py-3">
-                <span className="min-w-0">
-                  <span className="block text-[12px] font-medium">Sidebar blur</span>
-                  <span className="mt-0.5 block text-[11px] text-[var(--luma-text-muted)]">Use a translucent glass effect where supported</span>
-                </span>
-                <input type="checkbox" checked={sidebarBlur} onChange={(event) => onSidebarBlurChange(event.target.checked)} className="shrink-0 accent-[var(--luma-accent)]" />
-              </label>
+      {window.luma.platform !== "linux" && <SettingsRow
+        title="Sidebar blur"
+        description="Use the native translucent surface"
+        value={sidebarBlur ? "Enabled" : "Disabled"}
+        actionLabel={sidebarBlur ? "Disable" : "Enable"}
+        onAction={() => onSidebarBlurChange(!sidebarBlur)}
+      />}
 
               <div
                 className="
@@ -481,8 +539,6 @@ function SettingsPanel({
                   p-3
                 "
               >
-                <div className="luma-kicker mb-2">Preview</div>
-
                 <div className="flex items-center gap-2">
                   <div
                     className="
@@ -514,11 +570,10 @@ function SettingsPanel({
 
           {section === "general" && (
             <>
-              <div className="mb-3">
-                <h2 className="text-[13px] font-medium">General</h2>
-
-                <p className="mt-0.5 text-[12px] text-[var(--luma-text-secondary)]">
-                  Workspace, model, and connection status for this session.
+              <div className="mb-4">
+                <h2 className="text-[13px] font-medium text-[var(--luma-text)]">General</h2>
+                <p className="mt-0.5 text-[12px] text-[var(--luma-text-muted)]">
+                  Workspace, model, and connection settings.
                 </p>
               </div>
 
@@ -543,13 +598,44 @@ function SettingsPanel({
                 }
                 value={setupConfig?.model.name ?? "Not configured"}
                 actionLabel="Change"
-                onAction={onReconfigure}
+                onAction={onChangeModel}
               />
 
               <SettingsRow
                 title="Confirmations"
                 description="Luma asks before running tools that change files"
                 value="Required"
+              />
+
+              <SettingsRow
+                title="Desktop tour"
+                description="Take another look around the Luma interface"
+                value="Available"
+                actionLabel="Show tour"
+                onAction={onOpenTour}
+              />
+            </>
+          )}
+
+          {section === "behavior" && (
+            <>
+              <div className="mb-4">
+                <h2 className="text-[13px] font-medium text-[var(--luma-text)]">Behavior</h2>
+                <p className="mt-0.5 text-[12px] text-[var(--luma-text-muted)]">Tune motion and workspace density.</p>
+              </div>
+              <SettingsRow
+                title="Compact history"
+                description="Use denser conversation rows in the sidebar"
+                value={compactHistory ? "Enabled" : "Disabled"}
+                actionLabel={compactHistory ? "Disable" : "Enable"}
+                onAction={() => onCompactHistoryChange(!compactHistory)}
+              />
+              <SettingsRow
+                title="Reduce motion"
+                description="Minimize interface transitions and animations"
+                value={reducedMotion ? "Enabled" : "Disabled"}
+                actionLabel={reducedMotion ? "Disable" : "Enable"}
+                onAction={() => onReducedMotionChange(!reducedMotion)}
               />
             </>
           )}
@@ -610,30 +696,25 @@ function SettingsRow({
   onAction?: () => void;
 }) {
   return (
-    <div
-      className="
-        mb-2 flex items-center
-        rounded-md
-        border border-[var(--luma-border)]
-        bg-[var(--luma-surface)]
-        px-3 py-2.5
-      "
-    >
-      <div className="min-w-0">
+    <div className="flex items-center justify-between border-b border-[var(--luma-border)] py-3 last:border-none">
+      <div className="min-w-0 pr-4">
         <div className="text-[13px] font-medium">{title}</div>
-
         <div className="mt-0.5 text-[12px] text-[var(--luma-text-muted)]">
           {description}
         </div>
       </div>
 
-      <div className="ml-auto flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2">
         <span className="text-[12px] text-[var(--luma-text-secondary)]">
           {value}
         </span>
 
         {actionLabel && onAction && (
-          <button type="button" onClick={onAction} className="luma-btn-ghost h-8 px-2.5">
+          <button
+            type="button"
+            onClick={onAction}
+            className="text-[12px] font-medium text-[var(--luma-accent)] hover:text-[var(--luma-accent-hover)]"
+          >
             {actionLabel}
           </button>
         )}
@@ -658,26 +739,23 @@ function ThemeCard({
       className={`
         text-left
         rounded-md
-        border
         p-2.5
         transition-colors
         ${
           selected
             ? `
-              border-[var(--luma-accent)]
               bg-[var(--luma-accent-soft)]
+              ring-1 ring-[var(--luma-accent)]
             `
             : `
-              border-[var(--luma-border)]
-              bg-[var(--luma-surface)]
               hover:bg-[var(--luma-surface-hover)]
             `
         }
       `}
     >
-      <div className="mb-2 flex items-center gap-1.5">
+      <div className="flex items-center gap-2">
         <span
-          className="h-2 w-2 rounded-full"
+          className="h-2 w-2 rounded-full shrink-0"
           style={{
             backgroundColor: theme.accent,
           }}
@@ -686,7 +764,7 @@ function ThemeCard({
         <span className="text-[12px] font-medium">{theme.name}</span>
       </div>
 
-      <div className="text-[12px] leading-4 text-[var(--luma-text-muted)]">
+      <div className="mt-1 text-[11px] leading-4 text-[var(--luma-text-muted)]">
         {theme.description}
       </div>
     </button>
@@ -805,7 +883,7 @@ function ChatRow({
   return (
     <div
       className={`
-        group mb-0.5 flex items-center
+        luma-chat-row group mb-0.5 flex items-center
         rounded-md
         ${
           active
@@ -832,7 +910,7 @@ function ChatRow({
 
           <span
             className={`
-              truncate text-[12px]
+              truncate text-[11px]
               ${active ? "text-[var(--luma-text)]" : "text-[var(--luma-text-secondary)]"}
             `}
           >
@@ -840,7 +918,7 @@ function ChatRow({
           </span>
         </div>
 
-        <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[var(--luma-text-muted)]">
+        <div className="mt-0 flex items-center gap-1.5 text-[10px] leading-4 text-[var(--luma-text-muted)]">
           {projectName && <span className="truncate">{projectName}</span>}
 
           {projectName && <span className="opacity-40">·</span>}
@@ -879,13 +957,13 @@ function ChatRow({
   );
 }
 
-function Sidebar({ mode, onOpenChat, onOpenIDE, onOpenChanges, teammatesSidebar, sidebarBlur }: { mode: AppMode; onOpenChat: () => void; onOpenIDE: () => void; onOpenChanges: () => void; teammatesSidebar: React.ReactNode; sidebarBlur: boolean }) {
+function Sidebar({ mode, onOpenChat, onOpenIDE, onOpenChanges, onProjectFolderChange, teammatesSidebar, sidebarBlur }: { mode: AppMode; onOpenChat: () => void; onOpenIDE: () => void; onOpenChanges: () => void; onProjectFolderChange: (projectId: string, path: string) => Promise<void>; teammatesSidebar: React.ReactNode; sidebarBlur: boolean }) {
   const chats = useWorkspaceStore((state) => state.chats);
   const syncHistory = useWorkspaceStore((state) => state.syncHistory);
   const projects = useWorkspaceStore((state) => state.projects);
   const activeChatId = useWorkspaceStore((state) => state.activeChatId);
   const activeProjectId = useWorkspaceStore((state) => state.activeProjectId);
-  const createChat = useWorkspaceStore((state) => state.createChat);
+  const startNewChat = useWorkspaceStore((state) => state.startNewChat);
   const selectChat = useWorkspaceStore((state) => state.selectChat);
   const togglePin = useWorkspaceStore((state) => state.togglePin);
   const renameChat = useWorkspaceStore((state) => state.renameChat);
@@ -918,19 +996,6 @@ function Sidebar({ mode, onOpenChat, onOpenIDE, onOpenChanges, teammatesSidebar,
       window.clearInterval(timer);
     };
   }, [syncHistory]);
-
-  useEffect(() => {
-    const handleShortcut = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
-        event.preventDefault();
-        createChat();
-        onOpenChat();
-      }
-    };
-
-    window.addEventListener("keydown", handleShortcut);
-    return () => window.removeEventListener("keydown", handleShortcut);
-  }, [createChat, onOpenChat]);
 
   const projectById = useMemo(() => {
     const map = new Map<string, string>();
@@ -1021,10 +1086,20 @@ function Sidebar({ mode, onOpenChat, onOpenIDE, onOpenChanges, teammatesSidebar,
     deleteProject(projectId);
   }
 
+  async function handleChooseProjectFolder(project: (typeof projects)[number]) {
+    try {
+      const result = await window.luma.chooseProjectWorkspace();
+      if (result.canceled || !result.path) return;
+      await onProjectFolderChange(project.id, result.path);
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    }
+  }
+
   return (
     <aside
       className={`
-        luma-sidebar flex w-[256px] shrink-0 flex-col
+        luma-sidebar flex w-full min-w-0 shrink-0 flex-col
         border-r border-[var(--luma-border)]
         ${sidebarBlur ? "luma-sidebar-glass" : "bg-[var(--luma-surface)]"}
       `}
@@ -1032,38 +1107,38 @@ function Sidebar({ mode, onOpenChat, onOpenIDE, onOpenChanges, teammatesSidebar,
       role="navigation"
       aria-label={mode === "teammates" ? "Teammates and workspace navigation" : "Chat and project navigation"}
     >
-      {mode !== "teammates" && <div className="px-2.5 pt-2.5">
+      {mode !== "teammates" && <nav className="luma-workspace-picker no-drag relative mx-4 mb-6 grid grid-cols-3 items-center rounded-lg border border-[var(--luma-border-strong)] bg-[var(--luma-bg)] p-[3px]" aria-label="Workspace">
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute bottom-[3px] left-[3px] top-[3px] w-[calc((100%_-_6px)_/_3)] rounded-md bg-[var(--luma-surface-raised)] shadow-[inset_0_0_0_1px_var(--luma-border)] transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
+          style={{ transform: `translateX(${mode === "ide" ? 100 : mode === "changes" ? 200 : 0}%)` }}
+        />
+        <WorkspacePickerButton active={mode === "agent"} onClick={onOpenChat}><span className="font-mono text-[12px]">&lt;/&gt;</span>Code</WorkspacePickerButton>
+        <WorkspacePickerButton active={mode === "ide"} onClick={onOpenIDE}><FileIcon />Files</WorkspacePickerButton>
+        <WorkspacePickerButton active={mode === "changes"} onClick={onOpenChanges}><span className="text-[13px]">◷</span>Changes</WorkspacePickerButton>
+      </nav>}
+
+      {mode !== "teammates" && <div className="luma-new-chat px-4 pb-6">
         <button
           type="button"
           onClick={() => {
-            createChat();
+            startNewChat();
             onOpenChat();
           }}
           className="
-            flex h-9 w-full items-center justify-center gap-2
+            flex h-10 w-full items-center justify-center gap-2
             rounded-lg border border-[var(--luma-border-strong)]
-            bg-[var(--luma-surface-raised)] px-3
-            text-[12px] font-medium text-[var(--luma-text)]
+            bg-[var(--luma-surface-raised)] px-4
+            text-[13px] font-medium text-[var(--luma-text)]
             shadow-sm transition-colors
             hover:border-[var(--luma-accent)] hover:bg-[var(--luma-surface-hover)]
           "
         >
           <span className="text-[var(--luma-accent)]"><PlusIcon /></span>
           New chat
-          <span className="ml-auto text-[10px] font-normal text-[var(--luma-text-muted)]">⌘ N</span>
+          <span className="ml-auto text-[11px] font-normal text-[var(--luma-text-muted)]">{window.luma.platform === "darwin" ? "⌘ N" : "Ctrl N"}</span>
         </button>
       </div>}
-
-      <nav className="luma-workspace-picker no-drag relative mx-2.5 mt-2 grid grid-cols-3 items-center rounded-lg border border-[var(--luma-border-strong)] bg-[var(--luma-bg)] p-[3px]" aria-label="Workspace">
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute bottom-[3px] left-[3px] top-[3px] w-[calc((100%_-_6px)_/_3)] rounded-md bg-[var(--luma-surface-raised)] shadow-[inset_0_0_0_1px_var(--luma-border)] transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none"
-          style={{ transform: `translateX(${mode === "ide" ? 100 : mode === "changes" ? 200 : 0}%)`, opacity: mode === "teammates" ? 0 : 1 }}
-        />
-        <WorkspacePickerButton active={mode === "agent"} onClick={onOpenChat}><span className="font-mono text-[12px]">&lt;/&gt;</span>Code</WorkspacePickerButton>
-        <WorkspacePickerButton active={mode === "ide"} onClick={onOpenIDE}><FileIcon />Files</WorkspacePickerButton>
-        <WorkspacePickerButton active={mode === "changes"} onClick={onOpenChanges}><span className="text-[13px]">◷</span>Changes</WorkspacePickerButton>
-      </nav>
 
       {mode === "teammates" ? (
         <div className="min-h-0 flex-1 overflow-auto px-2.5 py-3">{teammatesSidebar}</div>
@@ -1164,6 +1239,7 @@ function Sidebar({ mode, onOpenChat, onOpenIDE, onOpenChanges, teammatesSidebar,
                   <button
                     type="button"
                     onClick={() => selectProject(project.id)}
+                    title={project.workspacePath ?? "Choose a folder for this Project"}
                     className={`
                       min-w-0 flex-1 truncate
                       px-2 py-1.5
@@ -1175,10 +1251,22 @@ function Sidebar({ mode, onOpenChat, onOpenIDE, onOpenChanges, teammatesSidebar,
                       }
                     `}
                   >
-                    {project.name}
+                    <span className="truncate">{project.name}</span>
+                    <span className="ml-2 shrink-0 text-[10px] text-[var(--luma-text-muted)]" aria-label={project.workspacePath ? "Folder assigned" : "Folder not assigned"}>
+                      {project.workspacePath ? "Folder" : "Set folder"}
+                    </span>
                   </button>
 
                   <div className="mr-1 flex gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      onClick={() => void handleChooseProjectFolder(project)}
+                      aria-label={`Choose folder for ${project.name}`}
+                      title={project.workspacePath ?? "Choose Project folder"}
+                      className="px-1 text-[11px] text-[var(--luma-text-muted)] hover:text-[var(--luma-accent)] focus:text-[var(--luma-accent)]"
+                    >
+                      <FolderIcon />
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleRenameProject(project.id, project.name)}
@@ -1464,10 +1552,20 @@ function EmptyAgentState({ onPrompt }: { onPrompt: (prompt: string) => void }) {
 function AgentMessageView({
   role,
   content,
+  detailsExpanded = false,
 }: {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "error";
   content: string;
+  detailsExpanded?: boolean;
 }) {
+  if (role === "error") {
+    const [, ...details] = content.split("\n");
+    const detailText = details.length > 0 ? details.join("\n") : content;
+    return <div className="luma-tool-error" role="status">
+      <span className="luma-tool-error-title">Failed to run tool</span>
+      {detailsExpanded && detailText && <pre>{detailText}</pre>}
+    </div>;
+  }
   return (
     <div
       className={`luma-message-row flex gap-3 ${role === "user" ? "is-user" : "is-assistant"}`}
@@ -1555,30 +1653,24 @@ function AgentMessageView({
 
 function ToolActivity({
   tools,
+  errorCount,
+  expanded,
+  onToggle,
 }: {
-  tools: ReturnType<typeof useLuma>["tools"];
+  tools: AgentTool[];
+  errorCount: number;
+  expanded: boolean;
+  onToggle: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "o") return;
-      event.preventDefault();
-      setExpanded((value) => !value);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
-  if (tools.length === 0) {
+  if (tools.length === 0 && errorCount === 0) {
     return null;
   }
 
   return (
-    <section className="mt-2 rounded-md border border-[var(--luma-border)] px-2 py-1">
-      <button type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} className="flex w-full items-center gap-2 py-1 text-left text-[12px] text-[var(--luma-text-secondary)] hover:text-[var(--luma-text)]">
+    <section className="luma-tool-group my-2 rounded-md border border-[var(--luma-border)] px-2 py-1">
+      <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex w-full items-center gap-2 py-1 text-left text-[12px] text-[var(--luma-text-secondary)] hover:text-[var(--luma-text)]">
         <span aria-hidden="true">{expanded ? "⌄" : "›"}</span>
-        <span>{tools.length} tool{tools.length === 1 ? "" : "s"} ran</span>
+        <span>{tools.length} tool{tools.length === 1 ? "" : "s"} ran{errorCount > 0 ? ` · ${errorCount} failed` : ""}</span>
         <span className="ml-auto text-[var(--luma-text-muted)]">⌘O</span>
       </button>
       {expanded && <div role="list" aria-label="Code tool activity" className="space-y-2 pb-1">
@@ -1736,23 +1828,33 @@ function ErrorMessage({ error }: { error: string }) {
 
 function Composer({
   thinking,
+  preparing,
   onSend,
+  onCommand,
+  onNewChat,
+  onQuit,
   onCancel,
   value,
   onChange,
+  onChangeModel,
 }: {
   thinking: boolean;
+  preparing: boolean;
   onSend: (text: string) => void;
+  onCommand: (text: string) => void;
+  onNewChat: () => void;
+  onQuit: () => void;
   onCancel: () => void;
   value: string;
   onChange: (value: string) => void;
+  onChangeModel: (scope: "global" | "session") => void;
 }) {
   const [selectedCommand, setSelectedCommand] = useState(0);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [attaching, setAttaching] = useState(false);
   const matches = useMemo(() => {
-    if (!value.startsWith("/") || value.includes(" ") || value.length < 2) return [];
+    if (!value.startsWith("/")) return [];
     const query = value.toLowerCase();
     return SLASH_COMMANDS.filter((item) => item.command.startsWith(query));
   }, [value]);
@@ -1770,7 +1872,20 @@ function Composer({
       return;
     }
 
-    onSend(formatChatPrompt(text, attachments));
+    const modelCommand = text.match(/^\/model(?:\s+(session))?$/i);
+    const localNewChat = /^\/(?:new|clear)$/i.test(text);
+    const localQuit = /^\/(?:quit|exit)$/i.test(text);
+    if (attachments.length === 0 && modelCommand) {
+      onChangeModel(modelCommand[1] ? "session" : "global");
+    } else if (attachments.length === 0 && localNewChat) {
+      onNewChat();
+    } else if (attachments.length === 0 && localQuit) {
+      onQuit();
+    } else if (attachments.length === 0 && text.startsWith("/")) {
+      onCommand(text);
+    } else {
+      onSend(formatChatPrompt(text, attachments));
+    }
     setAttachments([]);
     setAttachmentError("");
     onChange("");
@@ -1812,7 +1927,7 @@ function Composer({
           focus-within:border-[var(--luma-accent)]
         "
       >
-        <button type="button" onClick={() => void attachFiles()} disabled={thinking || attaching} aria-label="Attach files" title="Attach text files" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)] hover:text-[var(--luma-text)] disabled:opacity-40"><PlusIcon /></button>
+        <button type="button" onClick={() => void attachFiles()} disabled={thinking || preparing || attaching} aria-label="Attach files" title="Attach text files" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)] hover:text-[var(--luma-text)] disabled:opacity-40"><PlusIcon /></button>
         <textarea
           value={value}
           onChange={(event) => onChange(event.target.value)}
@@ -1845,8 +1960,8 @@ function Composer({
             }
           }}
           rows={1}
-          placeholder={thinking ? "Luma is working..." : "Ask Luma anything..."}
-          disabled={thinking}
+          placeholder={preparing ? "Preparing a new conversation…" : thinking ? "Luma is working..." : "Ask Luma anything..."}
+          disabled={thinking || preparing}
           className="
             min-h-[28px] max-h-32 flex-1
             resize-none
@@ -1881,7 +1996,7 @@ function Composer({
           <button
             type="button"
             onClick={submit}
-            disabled={!value.trim() && attachments.length === 0}
+            disabled={preparing || (!value.trim() && attachments.length === 0)}
             className="
               flex h-8 w-8 shrink-0
               items-center justify-center
@@ -1899,7 +2014,7 @@ function Composer({
       </div>
 
       {matches.length > 0 && !thinking && (
-        <div className="mx-auto mb-2 w-full max-w-[860px] overflow-hidden rounded-lg border border-[var(--luma-border-strong)] bg-[var(--luma-surface-raised)] shadow-xl">
+        <div className="luma-command-menu mx-auto mb-2 max-h-64 w-full max-w-[860px] overflow-y-auto rounded-lg border border-[var(--luma-border-strong)] bg-[var(--luma-surface-raised)] shadow-xl">
           {matches.map((item, index) => (
             <button
               key={item.command}
@@ -1924,8 +2039,10 @@ function Composer({
   );
 }
 
-function AgentView() {
+function AgentView({ onChangeModel }: { onChangeModel: (scope: "global" | "session") => void }) {
   const [draft, setDraft] = useState("");
+  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const [toolGroupExpansion, setToolGroupExpansion] = useState<Record<string, boolean>>({});
   const {
     sessionId,
     messages,
@@ -1934,27 +2051,79 @@ function AgentView() {
     error,
     confirmation,
     sendPrompt,
+    runCommand,
     respondToConfirmation,
     cancel,
   } = useLuma();
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "o") return;
+      event.preventDefault();
+      const latestGroup = [...messages].reverse().find((message) => message.role === "tools");
+      if (latestGroup) {
+        setToolGroupExpansion((current) => ({
+          ...current,
+          [latestGroup.id]: !(current[latestGroup.id] ?? false),
+        }));
+      } else {
+        setDetailsExpanded((value) => !value);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [messages]);
+
   const chats = useWorkspaceStore((state) => state.chats);
   const activeChatId = useWorkspaceStore((state) => state.activeChatId);
+  const isPendingNewChat = useWorkspaceStore((state) => state.isPendingNewChat);
   const draftChat = useWorkspaceStore((state) => state.draft);
   const historyLoaded = useWorkspaceStore((state) => state.historyLoaded);
   const setActiveChatId = useWorkspaceStore((state) => state.setActiveChatId);
   const setChatMessages = useWorkspaceStore((state) => state.setChatMessages);
+  const startNewChat = useWorkspaceStore((state) => state.startNewChat);
+  const selectChat = useWorkspaceStore((state) => state.selectChat);
+
+  const handleCommand = useCallback((text: string) => {
+    const restore = text.match(/^\/restore\s+(\S+)$/i);
+    if (restore && chats.some((chat) => chat.id === restore[1])) {
+      selectChat(restore[1]);
+      return;
+    }
+    void runCommand(text);
+  }, [chats, runCommand, selectChat]);
+  const preparingNewChat = isPendingNewChat && (!sessionId || sessionId !== activeChatId);
 
   const loadedChatId = useRef<string | null>(null);
   const skipPersist = useRef(false);
+  const clearRequestedForDraft = useRef<string | null>(null);
+  const previousSessionForDraft = useRef<string | null>(null);
 
   useEffect(() => {
     if (!historyLoaded) {
       return;
     }
 
-    if (!activeChatId) {
-      if (sessionId) setActiveChatId(sessionId);
+    if (!activeChatId) return;
+
+    if (draftChat?.id === activeChatId) {
+      if (clearRequestedForDraft.current !== draftChat.id) {
+        if (thinking || confirmation !== null) void cancel();
+        previousSessionForDraft.current = sessionId;
+        clearRequestedForDraft.current = draftChat.id;
+        skipPersist.current = true;
+        loadedChatId.current = draftChat.id;
+        void window.luma.clearSession();
+        return;
+      }
+
+      // /clear is serialized before get_session in the main process. Wait for
+      // its new core chat ID before associating the in-memory draft with it.
+      if (sessionId && sessionId !== previousSessionForDraft.current && sessionId !== draftChat.id) {
+        clearRequestedForDraft.current = sessionId;
+        loadedChatId.current = sessionId;
+        setActiveChatId(sessionId);
+      }
       return;
     }
 
@@ -1972,23 +2141,8 @@ function AgentView() {
       return;
     }
 
-    if (draftChat?.id === activeChatId) {
-      if (thinking || confirmation !== null) void cancel();
-      skipPersist.current = true;
-      loadedChatId.current = activeChatId;
-      void window.luma.clearSession();
-      return;
-    }
-
     if (sessionId) setActiveChatId(sessionId);
   }, [activeChatId, cancel, chats, confirmation, draftChat, historyLoaded, sessionId, setActiveChatId, thinking]);
-
-  useEffect(() => {
-    if (sessionId && draftChat && activeChatId === draftChat.id && draftChat.id !== sessionId) {
-      loadedChatId.current = sessionId;
-      setActiveChatId(sessionId);
-    }
-  }, [activeChatId, draftChat, sessionId, setActiveChatId]);
 
   useEffect(() => {
     if (!activeChatId || loadedChatId.current !== activeChatId) {
@@ -2010,26 +2164,40 @@ function AgentView() {
     error !== null ||
     confirmation !== null;
 
+  // A pending chat is still an empty conversation: show the welcome state
+  // until the first prompt is sent instead of leaving a blank transcript.
+  const showEmptyState = !hasContent;
+
   return (
-    <div className="relative flex h-full flex-col">
+    <div className="luma-agent-view relative flex h-full flex-col">
       <div className="min-h-0 flex-1 overflow-auto">
-        {!hasContent && (
+        {showEmptyState && (
           <>
             <EmptyAgentState onPrompt={setDraft} />
           </>
         )}
 
-        {hasContent && (
-          <div className="mx-auto max-w-[900px] space-y-4 px-6 py-5">
-            {messages.map((message) => (
+        {!showEmptyState && (
+          <div className="luma-agent-transcript mx-auto max-w-[900px] space-y-4 px-6 py-5">
+            {messages.map((message) => message.role === "tools" ? (
+              <ToolActivity
+                key={message.id}
+                tools={message.tools ?? []}
+                errorCount={message.tools?.filter((tool) => tool.failed).length ?? 0}
+                expanded={toolGroupExpansion[message.id] ?? false}
+                onToggle={() => setToolGroupExpansion((current) => ({
+                  ...current,
+                  [message.id]: !(current[message.id] ?? false),
+                }))}
+              />
+            ) : (
               <AgentMessageView
                 key={message.id}
                 role={message.role}
                 content={message.content}
+                detailsExpanded={detailsExpanded}
               />
             ))}
-
-            <ToolActivity tools={tools} />
 
             {thinking && <ThinkingIndicator />}
 
@@ -2047,10 +2215,15 @@ function AgentView() {
 
       <Composer
         thinking={thinking}
+        preparing={preparingNewChat}
         onSend={sendPrompt}
+        onCommand={handleCommand}
+        onNewChat={startNewChat}
+        onQuit={() => void window.luma.quit()}
         onCancel={cancel}
         value={draft}
         onChange={setDraft}
+        onChangeModel={onChangeModel}
       />
     </div>
   );
@@ -2198,12 +2371,14 @@ function IDEView({
   selectedFile,
   onFileSelect,
   onWorkspaceChange,
+  onChooseWorkspace,
 }: {
   selectedFile: string | null;
   onFileSelect: (path: string) => void;
   onWorkspaceChange: (path: string) => void;
+  onChooseWorkspace: () => Promise<boolean>;
 }) {
-  const { theme } = useTheme();
+  const { appearance } = useTheme();
   const [nodes, setNodes] = useState<WorkspaceNode[]>([]);
   const [workspacePath, setWorkspacePath] = useState("");
   const [content, setContent] = useState("");
@@ -2280,12 +2455,10 @@ function IDEView({
   const chooseWorkspace = async () => {
     if (dirty && !window.confirm("Discard unsaved changes before opening another workspace?")) return;
     try {
-      const result = await window.luma.chooseWorkspace();
-      if (!result.canceled) {
-        onFileSelect("");
-        setWorkspacePath(result.path);
-        await refreshWorkspace();
-      }
+      const changed = await onChooseWorkspace();
+      if (!changed) return;
+      onFileSelect("");
+      await refreshWorkspace();
     } catch (error) {
       setFileError(error instanceof Error ? error.message : String(error));
     }
@@ -2302,7 +2475,7 @@ function IDEView({
 
   const language = getLanguage(selectedFile);
 
-  const monacoTheme = theme === "solarized" ? "vs-dark" : "vs-dark";
+  const monacoTheme = appearance === "light" ? "vs" : "vs-dark";
 
   return (
     <div className="flex h-full min-w-0">
@@ -2632,20 +2805,50 @@ function TeammatesPanel({ onSidebarChange }: { onSidebarChange: (sidebar: React.
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
   const agentTasks = tasks.filter((task) => task.agent_id === selectedAgentId && !task.schedule_id);
-  const taskAssistantText = (taskId: string) => runtimeEvents
-    .filter((event) => event.task_id === taskId && event.event_type === "task.agent_event")
-    .map((event) => event.payload as { type?: string; data?: unknown })
-    .filter((event) => event.type === "TextDelta" && typeof event.data === "string")
-    .map((event) => event.data as string).join("");
+  const taskTimeline = (taskId: string): TeammateTimelineSegment[] => {
+    const segments: TeammateTimelineSegment[] = [];
+    for (const event of runtimeEvents
+      .filter((item) => item.task_id === taskId && item.event_type === "task.agent_event")
+      .sort((left, right) => left.sequence - right.sequence)) {
+      const agentEvent = event.payload as { type?: string; data?: unknown };
+      if (agentEvent.type === "TextDelta" && typeof agentEvent.data === "string") {
+        const last = segments[segments.length - 1];
+        if (last?.kind === "text") last.content += agentEvent.data;
+        else segments.push({ kind: "text", id: event.event_id, content: agentEvent.data });
+      } else if (agentEvent.type === "PlanGenerated" && typeof agentEvent.data === "string") {
+        segments.push({ kind: "text", id: event.event_id, content: `### Plan\n${agentEvent.data}` });
+      } else if (agentEvent.type === "ToolStarted" && typeof agentEvent.data === "object" && agentEvent.data !== null && "name" in agentEvent.data) {
+        const data = agentEvent.data as { name: string; input?: string };
+        const tool = { id: event.event_id, name: data.name, input: data.input ?? "" };
+        const last = segments[segments.length - 1];
+        if (last?.kind === "tools") last.tools.push(tool);
+        else segments.push({ kind: "tools", id: event.event_id, tools: [tool] });
+      } else if (agentEvent.type === "ToolFinished" && typeof agentEvent.data === "object" && agentEvent.data !== null && "name" in agentEvent.data) {
+        const data = agentEvent.data as { name: string; duration_ms?: number; failed?: boolean; diff?: string | null };
+        const last = segments[segments.length - 1];
+        if (last?.kind === "tools") {
+          for (let index = last.tools.length - 1; index >= 0; index -= 1) {
+            if (last.tools[index].name === data.name && last.tools[index].durationMs === undefined) {
+              last.tools[index] = { ...last.tools[index], durationMs: data.duration_ms, failed: data.failed, diff: data.diff ?? undefined };
+              break;
+            }
+          }
+        }
+      }
+    }
+    return segments;
+  };
 
   useEffect(() => {
     onSidebarChange(
       <div>
         <div className="mb-2 flex items-center justify-between px-1">
           <span className="luma-kicker">Your teammates</span>
-          <button type="button" disabled={busy} onClick={() => setCreateOpen(true)} className="text-[11px] text-[var(--luma-accent)] hover:underline">+ Create</button>
+          <button type="button" disabled={busy} onClick={() => setCreateOpen(true)} className="luma-btn-ghost inline-flex h-6 items-center gap-1 px-2 text-[10px]" aria-label="Create teammate">
+            <PlusIcon /> Create
+          </button>
         </div>
-        {agents.length === 0 && <p className="px-1 py-3 text-[11px] text-[var(--luma-text-muted)]">Create a teammate to give Luma a persistent identity and task queue.</p>}
+        {agents.length === 0 && <p className="px-1 py-3 text-[11px] text-[var(--luma-text-muted)]">No teammates yet. Create one to give it a persistent identity and workspace.</p>}
         <div className="space-y-1">
           {agents.map((agent) => (
             <button key={agent.id} type="button" onClick={() => setSelectedAgentId(agent.id)} className={`luma-teammate-nav-item w-full rounded-md border px-2.5 py-2 text-left transition-colors ${selectedAgentId === agent.id ? "is-selected" : ""}`}>
@@ -2712,26 +2915,35 @@ function TeammatesPanel({ onSidebarChange }: { onSidebarChange: (sidebar: React.
 
         <div className="flex min-h-0 flex-1">
           <div className="luma-teammates-content flex min-h-0 flex-1 flex-col">
-            {selectedAgent && <div className="luma-teammate-header flex shrink-0 items-center justify-between border-b border-[var(--luma-border)] px-4 py-2"><div className="flex items-center gap-2"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={28} active={selectedAgent.status === "active"} /><div><div className="text-[12px] font-semibold">{selectedAgent.name}</div><div className="text-[10px] capitalize text-[var(--luma-text-muted)]">{selectedAgent.id === "agent_global" ? "Global teammate · shared defaults" : selectedAgent.status}</div></div></div><div className="flex gap-1"><button type="button" onClick={() => setActiveTab("chat")} className={`rounded-md px-3 py-1.5 text-[11px] ${activeTab === "chat" ? "is-active" : "text-[var(--luma-text-muted)] hover:bg-[var(--luma-surface-hover)]"}`}>Chat</button><button type="button" onClick={() => setActiveTab("settings")} className={`rounded-md px-3 py-1.5 text-[11px] ${activeTab === "settings" ? "is-active" : "text-[var(--luma-text-muted)] hover:bg-[var(--luma-surface-hover)]"}`}>Settings</button></div></div>}
+            {selectedAgent && <div className="luma-teammate-header flex shrink-0 items-center gap-2 border-b border-[var(--luma-border)] px-4 py-2"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={26} active={selectedAgent.status === "active"} /><div><div className="text-[12px] font-semibold">{selectedAgent.name}</div><div className="text-[10px] capitalize text-[var(--luma-text-muted)]">{selectedAgent.status} · {agentTasks.length} conversations</div></div><div className="ml-auto flex items-center gap-1 rounded-md border border-[var(--luma-border)] p-0.5"><button type="button" onClick={() => setActiveTab("chat")} aria-pressed={activeTab === "chat"} className={`h-7 rounded px-2.5 text-[11px] transition-colors ${activeTab === "chat" ? "bg-[var(--luma-surface-raised)] text-[var(--luma-text)]" : "text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]"}`}>Chat</button><button type="button" onClick={() => setActiveTab("settings")} aria-pressed={activeTab === "settings"} className={`h-7 rounded px-2.5 text-[11px] transition-colors ${activeTab === "settings" ? "bg-[var(--luma-surface-raised)] text-[var(--luma-text)]" : "text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]"}`}>Settings</button></div></div>}
           <div className="min-h-0 flex-1 overflow-auto p-4">
-            {!selectedAgent ? <div className="flex h-full items-center justify-center text-[12px] text-[var(--luma-text-muted)]">Select or create an agent to get started.</div> : activeTab === "chat" ? (
+            {!selectedAgent ? <div className="flex h-full items-center justify-center text-[12px] text-[var(--luma-text-muted)]">Select a teammate to start chatting.</div> : activeTab === "chat" ? (
               <div className="mx-auto flex h-full w-full max-w-[850px] flex-col">
                 <div className="min-h-0 flex-1 space-y-5 overflow-auto pb-5">
-                  {agentTasks.length === 0 ? <div className="flex h-full flex-col items-center justify-center text-center"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={76} active /><h3 className="mt-4 text-[16px] font-semibold">Chat with {selectedAgent.name}</h3><p className="mt-1 max-w-sm text-[12px] leading-6 text-[var(--luma-text-muted)]">Ask a question, hand over a task, or just start a conversation. Your teammate keeps the thread's context between messages.</p></div> : agentTasks.slice().reverse().map((task) => {
-                    const answer = taskAssistantText(task.id);
+                  {agentTasks.length === 0 ? <div className="flex h-full flex-col items-center justify-center text-center"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={76} active /><h3 className="mt-4 text-[16px] font-semibold">Chat with {selectedAgent.name}</h3><p className="mt-1 max-w-sm text-[12px] leading-6 text-[var(--luma-text-muted)]">Start a conversation. Messages and task context are kept separately for this teammate.</p></div> : agentTasks.slice().reverse().map((task) => {
+                    const timeline = taskTimeline(task.id);
+                    const hasAnswer = timeline.some((segment) => segment.kind === "text");
                     return <article key={task.id} className="space-y-3">
-                      <div className="luma-teammate-user-message ml-auto max-w-[88%] px-1 py-2"><div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">You</div><p className="whitespace-pre-wrap break-words text-[12px] leading-6">{task.request}</p></div>
-                      <div className="luma-teammate-assistant-message flex items-start gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={30} active={task.status === "running"} /><div className="min-w-0 flex-1 pt-0.5"><div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">{selectedAgent.name}<span className="font-normal normal-case tracking-normal">{task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : task.status === "waiting_for_approval" ? "· needs approval" : ""}</span></div>{answer ? <div className="whitespace-pre-wrap break-words text-[12px] leading-6">{answer}</div> : <div className="text-[11px] text-[var(--luma-text-muted)]">{task.status === "completed" ? "No text response was recorded for this task." : task.error ?? (task.status === "failed" ? "Task failed." : task.status === "cancelled" ? "Cancelled." : "Thinking…")}</div>}{task.status === "failed" || task.status === "interrupted" ? <button type="button" disabled={busy} onClick={() => void perform(() => window.luma.retryTask(task.id))} className="mt-2 text-[10px] text-[var(--luma-accent)] hover:underline">Retry</button> : null}</div></div>
+                      <div className="flex justify-end"><div className="luma-teammate-user-message max-w-[88%] px-3 py-2"><div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">You</div><p className="whitespace-pre-wrap break-words text-[12px] leading-6">{task.request}</p></div></div>
+                      <div className="luma-teammate-assistant-message flex items-start gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={30} active={task.status === "running"} /><div className="min-w-0 flex-1 pt-0.5"><div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">{selectedAgent.name}<span className="font-normal normal-case tracking-normal">{task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : task.status === "waiting_for_approval" ? "· needs approval" : ""}</span></div><div className="luma-teammate-assistant-bubble space-y-2">
+                        {timeline.map((segment) => segment.kind === "tools" ? (
+                          <details key={segment.id} className="luma-task-tool-group rounded-md border border-[var(--luma-border)] px-2 py-1.5">
+                            <summary className="cursor-pointer select-none text-[10px] text-[var(--luma-text-muted)]">{segment.tools.length} tool{segment.tools.length === 1 ? "" : "s"} ran</summary>
+                            <div className="mt-2 space-y-2">{segment.tools.map((tool) => <div key={tool.id} className="border-l-2 border-[var(--luma-border-strong)] pl-2"><div className="text-[10px] font-medium text-[var(--luma-text-secondary)]">{tool.name}<span className="ml-2 font-normal text-[var(--luma-text-muted)]">{tool.durationMs === undefined ? "running" : `${tool.durationMs} ms${tool.failed ? " · failed" : ""}`}</span></div>{tool.input && <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-muted)]">{tool.input}</pre>}{tool.diff && <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-muted)]">{tool.diff}</pre>}</div>)}</div>
+                          </details>
+                        ) : <div key={segment.id} className="prose prose-sm max-w-none text-[12px] leading-6"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre({ children }) { return <pre className="my-2 overflow-x-auto rounded-md border border-[var(--luma-border)] bg-[var(--luma-bg)] p-3">{children}</pre>; }, p({ children }) { return <p className="mb-2 last:mb-0">{children}</p>; }, ul({ children }) { return <ul className="mb-2 ml-4 list-disc">{children}</ul>; }, ol({ children }) { return <ol className="mb-2 ml-4 list-decimal">{children}</ol>; }, li({ children }) { return <li className="mb-1">{children}</li>; }, h1({ children }) { return <h1 className="mb-2 mt-3 text-[14px] font-semibold">{children}</h1>; }, h2({ children }) { return <h2 className="mb-2 mt-3 text-[13px] font-semibold">{children}</h2>; }, h3({ children }) { return <h3 className="mb-2 mt-3 text-[12px] font-semibold">{children}</h3>; } }}>{segment.content}</ReactMarkdown></div>)}
+                        {!hasAnswer && timeline.length === 0 && <div className="text-[11px] text-[var(--luma-text-muted)]">{task.status === "completed" ? "No text response was recorded for this task." : task.error ?? (task.status === "failed" ? "Task failed." : task.status === "cancelled" ? "Cancelled." : "Thinking…")}</div>}
+                        {task.status === "failed" || task.status === "interrupted" ? <button type="button" disabled={busy} onClick={() => void perform(() => window.luma.retryTask(task.id))} className="mt-2 text-[10px] text-[var(--luma-accent)] hover:underline">Retry</button> : null}
+                      </div></div></div>
                     </article>;
                   })}
-                  {approvals.filter((approval) => approval.agent_id === selectedAgent.id).map((approval) => <div key={approval.id} className="ml-10 rounded-lg border border-[var(--luma-warning)]/30 bg-[var(--luma-warning)]/5 p-3"><div className="text-[11px] font-semibold">{selectedAgent.name} needs your approval · {approval.tool}</div><pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-muted)]">{approval.arguments}</pre><div className="mt-2 flex justify-end gap-2"><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, false))} className="luma-btn-secondary h-7 px-2 text-[10px]">Deny</button><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, true))} className="luma-btn-primary h-7 px-2.5 text-[10px]">Approve</button></div></div>)}
                 </div>
                 <form className="luma-teammate-composer shrink-0 p-2" onSubmit={(event) => {
                   event.preventDefault();
                   const text = chatPrompt.trim() || (chatAttachments.length ? "Please inspect the attached files." : "");
                   if (!text || busy || selectedAgent.status === "stopped" || selectedAgent.status === "paused") return;
                   void perform(async () => {
-                    await window.luma.createTask({ agentId: selectedAgent.id, request: formatChatPrompt(text, chatAttachments), workspace: selectedAgent.configuration.workspace ?? undefined });
+                      await window.luma.createTask({ agentId: selectedAgent.id, request: formatChatPrompt(text, chatAttachments), workspace: workspacePath || selectedAgent.configuration.workspace || undefined });
                     setChatPrompt("");
                     setChatAttachments([]);
                   });
@@ -2765,6 +2977,7 @@ function TeammatesPanel({ onSidebarChange }: { onSidebarChange: (sidebar: React.
                   <MascotCustomizer value={mascotDraft} seed={selectedAgent.name} onChange={setMascotDraft} />
                   <textarea value={personalityDraft} onChange={(event) => setPersonalityDraft(event.target.value)} rows={4} className="luma-input w-full resize-y text-[11px]" placeholder="How should this teammate behave?" />
                   {selectedAgent.id !== "agent_global" && <label className="mt-3 flex items-start gap-2 text-[11px] text-[var(--luma-text-secondary)]"><input type="checkbox" checked={selectedAgent.configuration.use_global_context} onChange={(event) => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, use_global_context: event.target.checked, ...(event.target.checked ? { skills: [] } : {}) } }); })} className="mt-0.5 accent-[var(--luma-accent)]" /><span>Use the global skills, memory, connectors, etc.</span></label>}
+                  <label className="mt-3 flex items-start gap-2 text-[11px] text-[var(--luma-text-secondary)]"><input type="checkbox" checked={selectedAgent.configuration.network_access ?? true} onChange={(event) => { const enabled = event.target.checked; void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, network_access: enabled, permissions: { ...selectedAgent.configuration.permissions, allow_network: enabled } } }); }); }} className="mt-0.5 accent-[var(--luma-accent)]" /><span><strong>Internet access</strong><small className="mt-0.5 block text-[var(--luma-text-muted)]">Allow web search and fetching public webpages. Requests that can change external data still require approval.</small></span></label>
                   {!selectedAgent.configuration.use_global_context && <input value={skillsDraft} onChange={(event) => setSkillsDraft(event.target.value)} className="luma-input mt-2 h-8 w-full text-[11px]" placeholder="Skills: research, code-review" />}
                   <button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, mascot: mascotDraft, system_prompt: personalityDraft, skills: selectedAgent.configuration.use_global_context ? [] : [...new Set(skillsDraft.split(",").map((skill) => skill.trim()).filter(Boolean))] } }); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save changes</button>
                 </section>
@@ -2806,7 +3019,8 @@ function TeammatesPanel({ onSidebarChange }: { onSidebarChange: (sidebar: React.
               system_prompt: agentPersonality.trim(), mascot: agentMascot, use_global_context: agentUseGlobalContext, skills: [],
               provider: null, model: null, endpoint: null, workspace: agentWorkspace.trim() || workspacePath || null,
               allowed_workspaces: agentWorkspace.trim() || workspacePath ? [agentWorkspace.trim() || workspacePath] : [], enabled_tools: [],
-              permissions: { allowed_tools: ["read_file", "list_directory", "search_files", "git_status", "git_diff", "find_symbols", "find_references", "git_log", "git_show", "git_blame", "git_branches", "file_metadata", "find_todos", "count_lines", "inspect_project", "list_skills", "load_skill"], denied_tools: [], auto_approve_read_only: true, require_approval_for_mutations: true, allow_network: false },
+              network_access: true,
+              permissions: { allowed_tools: ["read_file", "list_directory", "search_files", "git_status", "git_diff", "find_symbols", "find_references", "git_log", "git_show", "git_blame", "git_branches", "file_metadata", "find_todos", "count_lines", "inspect_project", "list_skills", "load_skill", "web_search", "fetch_url"], denied_tools: [], auto_approve_read_only: true, require_approval_for_mutations: true, allow_network: true },
               max_concurrent_tasks: 1, recover_interrupted_tasks: false,
             };
             const created = await window.luma.createAgent({ name: agentName.trim(), description: agentDescription.trim() || null, kind: "teammates", configuration });
@@ -2830,7 +3044,7 @@ function TeammatesPanel({ onSidebarChange }: { onSidebarChange: (sidebar: React.
                 <label className="luma-create-context"><input type="checkbox" checked={agentUseGlobalContext} onChange={(event) => setAgentUseGlobalContext(event.target.checked)} className="mt-0.5 accent-[var(--luma-accent)]" /><span><strong>Share global context</strong><small>Use the global skills, memory, connectors, etc.</small></span></label>
                 <label className="luma-create-field">Initial memory <span>Optional</span><textarea value={agentInitialMemory} onChange={(event) => setAgentInitialMemory(event.target.value)} rows={3} placeholder="Facts or preferences this teammate should remember…" className="luma-input mt-1.5 w-full resize-y text-[12px]" /></label>
                 <label className="luma-create-field">Workspace <span>Optional</span><input value={agentWorkspace} onChange={(event) => setAgentWorkspace(event.target.value)} placeholder={workspacePath || "Use current workspace"} className="luma-input mt-1.5 h-10 w-full text-[12px]" /></label>
-                <div className="luma-create-security"><span aria-hidden="true">⌁</span><p><strong>Safe by default.</strong> Network access is off, read-only tools can run automatically, and changes require your approval.</p></div>
+                <div className="luma-create-security"><span aria-hidden="true">⌁</span><p><strong>Personal-agent ready.</strong> Web search and public webpages are available. External requests that can change data and workspace mutations require approval.</p></div>
               </div>
             </div>
             <footer className="luma-create-footer flex items-center justify-between border-t border-[var(--luma-border)] px-6 py-4"><span>{agentName.trim() ? "Ready when you are." : "A name is all you need to get started."}</span><div className="flex gap-2"><button type="button" disabled={busy} onClick={() => setCreateOpen(false)} className="luma-btn-secondary h-9 px-3 text-[11px]">Cancel</button><button type="submit" disabled={busy || !agentName.trim()} className="luma-btn-primary h-9 px-4 text-[11px]">{busy ? "Creating…" : "Create teammate"}</button></div></footer>
@@ -2841,8 +3055,32 @@ function TeammatesPanel({ onSidebarChange }: { onSidebarChange: (sidebar: React.
   );
 }
 
+function DesktopTour({ onFinish }: { onFinish: () => void }) {
+  const [step, setStep] = useState(0);
+  const steps = [
+    { title: "Welcome to Luma", body: "Luma brings coding work and persistent teammates into one focused desktop workspace. This quick tour shows you where everything lives." },
+    { title: "Your projects and history", body: "Create Projects and give each one its own folder. Your recent conversations stay in the sidebar, ready to pick up where you left off." },
+    { title: "Code, files, and changes", body: "Use Code to talk through a task, Files to inspect your workspace, and Changes to review what has been modified." },
+    { title: "Meet your teammates", body: "Switch to Teammates to chat with persistent agents, tune their instructions, manage memory and skills, and review their ongoing work." },
+    { title: "Make Luma yours", body: "Open Settings to adjust appearance and your model. You can replay this tour any time from Settings → General." },
+  ];
+  const current = steps[step];
+  return (
+    <div className="luma-tour-backdrop fixed inset-0 z-[180] flex items-center justify-center p-5" role="presentation">
+      <section className="luma-tour-panel w-full max-w-[440px] rounded-xl border border-[var(--luma-border-strong)] bg-[var(--luma-surface)] p-6 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="luma-tour-title">
+        <div className="mb-5 flex items-center justify-between"><span className="luma-kicker">A QUICK TOUR</span><span className="text-[11px] text-[var(--luma-text-muted)]">{step + 1} of {steps.length}</span></div>
+        <div className="mb-5 flex gap-1.5" aria-hidden="true">{steps.map((item, index) => <span key={item.title} className={`h-1 flex-1 rounded-full ${index <= step ? "bg-[var(--luma-accent)]" : "bg-[var(--luma-border-strong)]"}`} />)}</div>
+        <h2 id="luma-tour-title" className="text-[20px] font-semibold tracking-tight">{current.title}</h2>
+        <p className="mt-3 min-h-[76px] text-[13px] leading-6 text-[var(--luma-text-secondary)]">{current.body}</p>
+        <footer className="mt-6 flex items-center justify-between"><button type="button" onClick={onFinish} className="text-[12px] text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]">Skip tour</button><div className="flex items-center gap-2">{step > 0 && <button type="button" onClick={() => setStep((value) => value - 1)} className="luma-btn-secondary h-8 px-3 text-[12px]">Back</button>}<button type="button" onClick={() => step === steps.length - 1 ? onFinish() : setStep((value) => value + 1)} className="luma-btn-primary h-8 px-3 text-[12px]">{step === steps.length - 1 ? "Finish" : "Next"}</button></div></footer>
+      </section>
+    </div>
+  );
+}
+
 export default function App() {
   const [mode, setMode] = useState<AppMode>("agent");
+  const [sidebarVisible, setSidebarVisible] = useState(true);
   const [teammatesSidebar, setTeammatesSidebar] = useState<React.ReactNode>(null);
   const [sidebarBlur, setSidebarBlur] = useState(() => {
     try {
@@ -2850,6 +3088,14 @@ export default function App() {
     } catch {
       return true;
     }
+  });
+  const [compactHistory, setCompactHistory] = useState(() => {
+    try { return window.localStorage.getItem("luma.compact-history") !== "false"; }
+    catch { return true; }
+  });
+  const [reducedMotion, setReducedMotion] = useState(() => {
+    try { return window.localStorage.getItem("luma.reduce-motion") === "true"; }
+    catch { return false; }
   });
 
   useEffect(() => {
@@ -2860,16 +3106,87 @@ export default function App() {
     }
   }, [sidebarBlur]);
 
+  useEffect(() => {
+    document.documentElement.dataset.compactHistory = String(compactHistory);
+    document.documentElement.dataset.reducedMotion = String(reducedMotion);
+    try {
+      window.localStorage.setItem("luma.compact-history", String(compactHistory));
+      window.localStorage.setItem("luma.reduce-motion", String(reducedMotion));
+    } catch {
+      // Keep the current preferences for this session if storage is unavailable.
+    }
+  }, [compactHistory, reducedMotion]);
+
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [workspacePath, setWorkspacePath] = useState("");
+  const [workspaceSwitching, setWorkspaceSwitching] = useState(false);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [modelPickerScope, setModelPickerScope] = useState<"global" | "session" | null>(null);
 
   const [connected, setConnected] = useState(false);
 
   const [setupComplete, setSetupComplete] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+  const tourChecked = useRef(false);
 
   const [setupConfig, setSetupConfig] = useState<SetupConfig | null>(null);
+  const activeProjectId = useWorkspaceStore((state) => state.activeProjectId);
+  const setProjectWorkspace = useWorkspaceStore((state) => state.setProjectWorkspace);
+  const selectProject = useWorkspaceStore((state) => state.selectProject);
+
+  useEffect(() => {
+    if (!setupComplete || tourChecked.current) return;
+    tourChecked.current = true;
+    try {
+      if (window.localStorage.getItem("luma.desktop-tour") !== "completed") setTourOpen(true);
+    } catch {
+      setTourOpen(true);
+    }
+  }, [setupComplete]);
+
+  const finishTour = useCallback(() => {
+    try { window.localStorage.setItem("luma.desktop-tour", "completed"); } catch { /* Tour can still be dismissed for this session. */ }
+    setTourOpen(false);
+  }, []);
+
+  const chooseWorkspaceForCurrentScope = useCallback(async (): Promise<boolean> => {
+    setWorkspaceSwitching(true);
+    try {
+      const state = useWorkspaceStore.getState();
+      const activeProject = state.projects.find((project) => project.id === state.activeProjectId);
+      if (activeProject) {
+        const selected = await window.luma.chooseProjectWorkspace();
+        if (selected.canceled || !selected.path) return false;
+        state.setProjectWorkspace(activeProject.id, selected.path);
+        const switched = await window.luma.setWorkspace(selected.path);
+        setWorkspacePath(switched.path);
+        return true;
+      }
+      const result = await window.luma.chooseWorkspace();
+      if (result.canceled) return false;
+      setWorkspacePath(result.path);
+      return true;
+    } finally {
+      setWorkspaceSwitching(false);
+    }
+  }, []);
+
+  const handleProjectFolderChange = useCallback(async (projectId: string, path: string) => {
+    setProjectWorkspace(projectId, path);
+    if (useWorkspaceStore.getState().activeProjectId !== projectId) return;
+    setWorkspaceSwitching(true);
+    try {
+      const switched = await window.luma.setWorkspace(path);
+      setWorkspacePath(switched.path);
+    } finally {
+      setWorkspaceSwitching(false);
+    }
+  }, [setProjectWorkspace]);
+
+  useEffect(() => {
+    document.documentElement.dataset.platform = window.luma.platform;
+  }, []);
 
   useEffect(() => {
     window.luma.getWorkspace().then((workspaceInfo) => {
@@ -2882,6 +3199,49 @@ export default function App() {
       }
     });
   }, []);
+
+  useEffect(() => {
+    if (!setupComplete) return;
+    let cancelled = false;
+    const activateWorkspace = async () => {
+      setWorkspaceSwitching(true);
+      try {
+        if (activeProjectId) {
+          const project = useWorkspaceStore.getState().projects.find((item) => item.id === activeProjectId);
+          if (!project) return;
+          let projectPath = project.workspacePath;
+          if (!projectPath) {
+            const selected = await window.luma.chooseProjectWorkspace();
+            if (cancelled) return;
+            if (selected.canceled || !selected.path) {
+              selectProject(null);
+              return;
+            }
+            projectPath = selected.path;
+            setProjectWorkspace(project.id, projectPath);
+          }
+          const result = await window.luma.setWorkspace(projectPath);
+          if (!cancelled) setWorkspacePath(result.path);
+          return;
+        }
+        const result = await window.luma.getDefaultWorkspace();
+        if (cancelled) return;
+        const active = await window.luma.getWorkspace();
+        if (active.path !== result.path) {
+          const switched = await window.luma.setWorkspace(result.path);
+          if (!cancelled) setWorkspacePath(switched.path);
+        } else {
+          setWorkspacePath(active.path);
+        }
+      } catch (error) {
+        if (!cancelled) window.alert(error instanceof Error ? error.message : String(error));
+      } finally {
+        if (!cancelled) setWorkspaceSwitching(false);
+      }
+    };
+    void activateWorkspace();
+    return () => { cancelled = true; };
+  }, [activeProjectId, selectProject, setProjectWorkspace, setupComplete]);
 
   useEffect(() => {
     let mounted = true;
@@ -2920,6 +3280,22 @@ export default function App() {
     const unsubscribeSettings = window.luma.onOpenSettings(() => {
       setSettingsOpen(true);
     });
+    const unsubscribeNewChat = window.luma.onNewChat(() => {
+      useWorkspaceStore.getState().startNewChat();
+      setMode("agent");
+    });
+    const unsubscribeOpenWorkspace = window.luma.onOpenWorkspace(() => {
+      void chooseWorkspaceForCurrentScope().catch((error) => {
+        window.alert(error instanceof Error ? error.message : String(error));
+      });
+    });
+    const unsubscribeToggleSidebar = window.luma.onToggleSidebar(() => {
+      setSidebarVisible((visible) => !visible);
+    });
+    const unsubscribeWorkspace = window.luma.onWorkspaceChanged((path) => {
+      setWorkspacePath(path);
+      setSelectedFile(null);
+    });
 
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key === ",") {
@@ -2934,9 +3310,13 @@ export default function App() {
       mounted = false;
       unsubscribe();
       unsubscribeSettings();
+      unsubscribeNewChat();
+      unsubscribeOpenWorkspace();
+      unsubscribeToggleSidebar();
+      unsubscribeWorkspace();
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, []);
+  }, [chooseWorkspaceForCurrentScope]);
 
   if (!setupComplete) {
     return (
@@ -2954,18 +3334,22 @@ export default function App() {
   return (
     <div
       className="
-        flex h-screen w-screen
+        luma-app-shell flex h-screen w-screen
         flex-col overflow-hidden
-        bg-transparent
+        bg-[var(--luma-bg)]
         text-[var(--luma-text)]
       "
     >
       {/* Live region for screen reader announcements */}
       <div id="luma-announcer" aria-live="polite" className="sr-only" />
+      {tourOpen && <DesktopTour onFinish={finishTour} />}
       <TopBar
         mode={mode}
         setMode={setMode}
         connected={connected}
+        sidebarBlur={sidebarBlur}
+        sidebarVisible={sidebarVisible}
+        onToggleSidebar={() => setSidebarVisible((visible) => !visible)}
         onSettings={() => setSettingsOpen((current) => !current)}
       />
 
@@ -2977,30 +3361,42 @@ export default function App() {
         workspacePath={workspacePath}
         sidebarBlur={sidebarBlur}
         onSidebarBlurChange={setSidebarBlur}
-        onReconfigure={() => {
-          setSettingsOpen(false);
-          setSetupComplete(false);
-        }}
+        compactHistory={compactHistory}
+        onCompactHistoryChange={setCompactHistory}
+        reducedMotion={reducedMotion}
+        onReducedMotionChange={setReducedMotion}
+        onChangeModel={() => { setSettingsOpen(false); setModelPickerScope("global"); }}
+        onOpenTour={() => { setSettingsOpen(false); setTourOpen(true); }}
       />
+      {modelPickerScope && <ModelPickerDialog scope={modelPickerScope} onClose={() => setModelPickerScope(null)} onChanged={(config) => { if (modelPickerScope === "global") setSetupConfig(config); }} />}
 
       <div className="flex min-h-0 flex-1">
-        <Sidebar mode={mode} onOpenChat={() => setMode("agent")} onOpenIDE={() => setMode("ide")} onOpenChanges={() => setMode("changes")} teammatesSidebar={teammatesSidebar} sidebarBlur={sidebarBlur} />
+        <div
+          className="luma-sidebar-slot"
+          data-open={sidebarVisible}
+          aria-hidden={!sidebarVisible}
+          inert={!sidebarVisible || workspaceSwitching}
+        >
+          <Sidebar mode={mode} onOpenChat={() => setMode("agent")} onOpenIDE={() => setMode("ide")} onOpenChanges={() => setMode("changes")} onProjectFolderChange={handleProjectFolderChange} teammatesSidebar={teammatesSidebar} sidebarBlur={sidebarBlur} />
+        </div>
 
-        <main className="min-w-0 flex-1 overflow-hidden bg-[var(--luma-bg)]">
-          <div key={mode} className="luma-view-transition h-full min-w-0">
+        <main className="luma-main-surface relative min-w-0 flex-1 overflow-hidden bg-[var(--luma-bg)]" aria-busy={workspaceSwitching} inert={workspaceSwitching}>
+          <div key={`${mode}:${workspacePath}`} className="luma-view-transition h-full min-w-0">
           {mode === "teammates" && <TeammatesPanel onSidebarChange={setTeammatesSidebar} />}
-          {mode === "agent" && <AgentView />}
+          {mode === "agent" && <AgentView onChangeModel={setModelPickerScope} />}
 
           {mode === "ide" && (
             <IDEView
               selectedFile={selectedFile}
               onFileSelect={setSelectedFile}
               onWorkspaceChange={setWorkspacePath}
+              onChooseWorkspace={chooseWorkspaceForCurrentScope}
             />
           )}
 
           {mode === "changes" && <ChangesView onOpenFile={(path) => { setSelectedFile(path); setMode("ide"); }} />}
           </div>
+          {workspaceSwitching && <div className="luma-workspace-switch-overlay"><span className="luma-progress-indicator" />Opening Project workspace…</div>}
         </main>
       </div>
     </div>

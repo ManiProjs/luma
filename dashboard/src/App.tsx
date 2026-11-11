@@ -1,198 +1,136 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MascotAvatar } from "./components/MascotAvatar";
 import type { AgentConfiguration, AgentRecord, MemoryEntry, RuntimeEvent, ScheduleRecord, TaskRecord } from "../../shared/protocol";
 import { formatChatPrompt, readBrowserChatAttachments, type ChatAttachment } from "../../shared/attachments";
 import { MascotCustomizer } from "./components/MascotCustomizer";
 
-type Mode = "agent" | "ide" | "changes";
-function ModePicker({ teammatesOpen, onSelectCode, onOpenTeammates }: { teammatesOpen: boolean; onSelectCode: () => void; onOpenTeammates: () => void }) {
-  return (
-    <nav
-      className="mode-picker"
-      aria-label="Teammate"
-      style={{ "--mode-index": teammatesOpen ? 1 : 0, "--mode-count": 2 } as CSSProperties}
-    >
-      <span className="mode-picker-indicator" aria-hidden="true" />
-      <button type="button" className="mode-picker-button" data-section="code" aria-label="Code" aria-pressed={!teammatesOpen} aria-current={!teammatesOpen ? "page" : undefined} title="Code" onClick={onSelectCode}>
-        <span className="mode-code-icon">&lt;/&gt;</span>
-      </button>
-      <button type="button" className="mode-picker-button" data-section="teammates" aria-label="Teammates" aria-pressed={teammatesOpen} aria-current={teammatesOpen ? "page" : undefined} title="Teammates" onClick={onOpenTeammates}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M18 20a6 6 0 0 0-12 0" /><circle cx="12" cy="8" r="4" />
-        </svg>
-      </button>
-    </nav>
-  );
-}
+type DashboardSection = "overview" | "teammates" | "tasks" | "approvals" | "schedules" | "memory" | "settings" | "chat";
 
-function DashboardShell({ teammatesOpen, onSelectCode, onOpenTeammates }: { teammatesOpen: boolean; onSelectCode: () => void; onOpenTeammates: () => void }) {
-  return (
-    <>
-      <div className={`app ${teammatesOpen ? "teammates-mode" : ""}`}>
-        <aside className="sidebar">
-          <div className="brand">
-            <span className="brand-mark" aria-hidden="true" />
-            <div>
-              <div className="brand-name">Luma</div>
-              <div className="brand-subtitle">Code workspace</div>
-            </div>
-          </div>
+const dashboardSections: { id: DashboardSection; label: string; icon: string }[] = [
+  { id: "overview", label: "Overview", icon: "⌂" },
+  { id: "teammates", label: "Teammates", icon: "◉" },
+  { id: "tasks", label: "Tasks", icon: "≡" },
+  { id: "approvals", label: "Approvals", icon: "✓" },
+  { id: "schedules", label: "Schedules", icon: "◷" },
+  { id: "memory", label: "Memory", icon: "⌘" },
+  { id: "settings", label: "Settings", icon: "⚙" },
+];
 
-          <div className="workspace-label">WORKSPACE</div>
-          <div className="workspace">
-            <span className="workspace-icon" aria-hidden="true">⌘</span>
-            <span id="workspace-name">Workspace</span>
-            <span className="workspace-chevron" aria-hidden="true">⌄</span>
-          </div>
+function DashboardShell() {
+  const [section, setSection] = useState<DashboardSection>("overview");
+  const [appearance, setAppearance] = useState<"light" | "dark">(() => {
+    const saved = window.localStorage.getItem("luma.dashboard.appearance");
+    return saved === "light" || saved === "dark" ? saved : window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  });
+  const [agents, setAgents] = useState<AgentRecord[]>([]);
+  const [tasks, setTasks] = useState<TaskRecord[]>([]);
+  const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
+  const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
+  const [memory, setMemory] = useState<MemoryEntry[]>([]);
+  const [memoryDraft, setMemoryDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [error, setError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState(0);
 
-          <div className="section-label"><span>EXPLORER</span></div>
-          <div id="explorer" className="explorer">
-            <div className="empty">Loading workspace…</div>
-          </div>
+  useEffect(() => {
+    document.documentElement.dataset.theme = "luma";
+    document.documentElement.dataset.appearance = appearance;
+    window.localStorage.setItem("luma.dashboard.appearance", appearance);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute("content", appearance === "light" ? "#f4f6f8" : "#101010");
+  }, [appearance]);
 
-          <div className="section-label"><span>HISTORY</span><button id="refresh-history" className="icon-button" title="Refresh history" aria-label="Refresh history">↻</button></div>
-          <div id="chat-history" className="chat-history"><div className="empty">Loading chats…</div></div>
+  const refresh = async () => {
+    try {
+      const [agentResponse, taskResponse, approvalResponse, scheduleResponse, memoryResponse] = await Promise.all([
+        fetch("/api/agents"), fetch("/api/tasks?limit=500"), fetch("/api/approvals"), fetch("/api/schedules"),
+        fetch("/api/memory?scope=user&scope_id=default"),
+      ]);
+      const responses = [agentResponse, taskResponse, approvalResponse, scheduleResponse, memoryResponse];
+      const failed = responses.find((response) => !response.ok);
+      if (failed) throw new Error(`Runtime API returned ${failed.status}`);
+      const [nextAgents, nextTasks, nextApprovals, nextSchedules, nextMemory] = await Promise.all(responses.map((response) => response.json())) as [AgentRecord[], TaskRecord[], ApprovalRecord[], ScheduleRecord[], MemoryEntry[]];
+      setAgents(nextAgents);
+      setTasks(nextTasks);
+      setApprovals(nextApprovals);
+      setSchedules(nextSchedules);
+      setMemory(nextMemory);
+      setLastUpdated(Date.now());
+      setConnected(true);
+      setError("");
+    } catch (reason) {
+      setConnected(false);
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
 
-          <div className="sidebar-bottom">
-            <button id="new-file" className="sidebar-action"><span>＋</span>New File</button>
-            <button id="new-folder" className="sidebar-action"><span>＋</span>New Folder</button>
-            <div className="connection">
-              <span id="connection-dot" className="connection-dot" />
-              <span id="connection-text"> Connecting </span>
-            </div>
-          </div>
-        </aside>
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 5000);
+    return () => window.clearInterval(timer);
+  }, []);
 
-        <main className={`main ${teammatesOpen ? "teammates-mode" : ""}`}>
-          <header className="topbar">
-            <div className="breadcrumbs">
-              <span className="breadcrumb-root">Luma</span>
-              <span className="breadcrumb-separator">›</span>
-              <span id="current-file">{teammatesOpen ? "Teammates" : "Agent"}</span>
-            </div>
+  async function perform(url: string, body?: unknown, method = "POST") {
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(url, { method, headers: { "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error ?? `Request failed (${response.status})`);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
 
-            <div className="topbar-actions">
-              <ModePicker teammatesOpen={teammatesOpen} onSelectCode={onSelectCode} onOpenTeammates={onOpenTeammates} />
-              <button id="toggle-ide" className="ide-toggle" title="Open IDE" hidden>Open IDE</button>
-              <button id="refresh-tree" className="icon-button" title="Refresh workspace" aria-label="Refresh workspace">↻</button>
-              <button id="theme-toggle" className="icon-button" title="Switch theme" aria-label="Switch theme">☼</button>
-            </div>
-          </header>
+  const activeTasks = tasks.filter((task) => ["queued", "running", "waiting_for_approval"].includes(task.status));
+  const agentName = (id: string) => agents.find((agent) => agent.id === id)?.name ?? "Unknown teammate";
+  const sectionTitle = section === "chat" ? "Chat" : dashboardSections.find((item) => item.id === section)?.label ?? "Overview";
 
-          {teammatesOpen ? <TeammatesPanel /> : <>
-          <div className="workspace-layout" id="workspace-layout">
-            <section id="changes" className="changes-area hidden">
-              <div className="changes-header">
-                <div><strong>Working tree</strong><span id="git-branch">Checking repository…</span></div>
-                <button id="refresh-changes" className="ide-toggle">Refresh</button>
-              </div>
-              <div className="changes-content">
-                <div id="change-files" className="change-files"><div className="empty">Loading changes…</div></div>
-                <pre id="change-diff" className="change-diff">Select a changed file to review its diff.</pre>
-              </div>
-            </section>
-
-            <section id="ide" className="editor-area hidden">
-              <div id="tabs" className="tabs" />
-              <div className="editor-toolbar">
-                <div id="editor-path">No file open</div>
-                <div className="editor-actions">
-                  <button id="save-file" disabled>Save <kbd>⌘S</kbd></button>
-                  <button id="show-diff" disabled>Diff</button>
-                </div>
-              </div>
-              <div className="editor-container">
-                <div id="line-numbers" className="line-numbers" />
-                <div id="editor" />
-              </div>
-              <div className="editor-statusbar">
-                <span id="editor-language"> Plain Text </span>
-                <span id="editor-position"> Ln 1, Col 1 </span>
-                <span id="editor-state"> No file </span>
-              </div>
-            </section>
-
-            <aside className="agent-panel">
-              <div className="agent-header">
-                <div>
-                  <div className="agent-title"><span id="agent-status-dot" className="agent-dot" />Code</div>
-                  <div id="agent-status-detail" className="agent-detail">Ready</div>
-                </div>
-                <div className="agent-header-actions">
-                  <div id="model-name" className="model-name">—</div>
-                </div>
-              </div>
-
-              <div id="agent-content" className="agent-content">
-                <div id="messages" className="messages">
-                  <div id="chat-empty" className="chat-empty">
-                    <h2>What would you like to work on?</h2>
-                    <p>Ask a question or describe a change. Luma can work with the files in this workspace.</p>
-                    <div className="suggestions">
-                      <button data-prompt="Explain this project.">Explain this project</button>
-                      <button data-prompt="Find the main entry point.">Find the entry point</button>
-                      <button data-prompt="Check the project for errors.">Check for errors</button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div id="plan-panel" className="plan-panel hidden">
-                <div className="panel-title"><span>Plan</span><span id="plan-count"> 0 steps </span></div>
-                <div id="plan" />
-              </div>
-
-              <div id="confirmation" className="confirmation hidden">
-                <div className="confirmation-title">Luma wants to perform an action</div>
-                <div id="confirmation-name" className="confirmation-name" />
-                <pre id="confirmation-input" />
-                <div className="confirmation-actions">
-                  <button id="deny" className="secondary">Deny</button>
-                  <button id="allow" className="primary">Allow</button>
-                </div>
-              </div>
-
-              <form id="chat-form" className="composer">
-                <input id="chat-file-input" type="file" multiple hidden />
-                <button type="button" id="attach-button" aria-label="Attach files" title="Attach text files">+</button>
-                <textarea id="chat-input" rows={1} placeholder="Ask Luma anything…" />
-                <button type="submit" id="send-button">↑</button>
-                <button type="button" id="cancel-button" hidden aria-label="Cancel generation" title="Cancel generation">■</button>
-              </form>
-            </aside>
-          </div>
-
-          <section className="terminal-panel">
-            <div className="terminal-header">
-              <div className="terminal-title"><span className="terminal-live-dot" />TERMINAL <span className="terminal-caption">Workspace shell</span></div>
-              <button id="clear-terminal">Clear</button>
-            </div>
-            <div id="terminal-output" className="terminal-output">
-              <div className="terminal-line muted">Luma terminal ready.</div>
-            </div>
-            <form id="terminal-form" className="terminal-input">
-              <span>$</span>
-              <input id="terminal-command" autoComplete="off" spellCheck={false} placeholder="Run a command…" />
-            </form>
-          </section>
-          </>}
-        </main>
+  return <div className="management-shell">
+    <aside className="management-sidebar">
+      <div className="management-brand"><span className="management-brand-mark">L</span><div><strong>Luma</strong><small>CONTROL CENTER</small></div></div>
+      <div className="management-nav-label">MANAGE</div>
+      <nav aria-label="Luma management">
+        {dashboardSections.map((item) => <button key={item.id} type="button" className={section === item.id ? "active" : ""} aria-current={section === item.id ? "page" : undefined} onClick={() => setSection(item.id)}><span>{item.icon}</span>{item.label}{item.id === "approvals" && approvals.length > 0 ? <b>{approvals.length}</b> : null}</button>)}
+      </nav>
+      <div className="management-sidebar-bottom"><span className={`management-status-dot ${connected ? "connected" : "disconnected"}`} />Runtime {connected ? "connected" : "disconnected"}</div>
+    </aside>
+    <main className="management-main">
+      <header className="management-topbar"><div><span className="management-breadcrumb">LUMA</span><span className="management-separator">/</span><strong>{sectionTitle}</strong></div><div><button type="button" className="management-refresh" onClick={() => void refresh()} disabled={busy}>Refresh</button><button type="button" className="management-chat-button" onClick={() => setSection(section === "chat" ? "overview" : "chat")}>{section === "chat" ? "Close chat" : "Open chat"}</button></div></header>
+      {error && <div className="management-error" role="alert">{error}</div>}
+      <div className="management-content" key={section}>
+        {section === "overview" && <>
+          <div className="management-page-heading"><div><div className="management-eyebrow">CONTROL CENTER</div><h1>Overview</h1><p>Monitor your agents and the work Luma is handling.</p></div><span>Updated {lastUpdated ? new Date(lastUpdated).toLocaleTimeString() : "—"}</span></div>
+          <div className="management-metrics"><div><span>Teammates</span><strong>{agents.length}</strong><small>Persistent agents</small></div><div><span>Active tasks</span><strong>{activeTasks.length}</strong><small>Queued or running</small></div><div><span>Approvals</span><strong>{approvals.length}</strong><small>Waiting for you</small></div><div><span>Schedules</span><strong>{schedules.filter((item) => item.enabled).length}</strong><small>Enabled routines</small></div></div>
+          <div className="management-overview-grid"><section className="management-section"><header><div><h2>Teammates</h2><p>Persistent agents and their current status.</p></div><button type="button" onClick={() => setSection("teammates")}>Manage</button></header>{agents.length === 0 ? <p className="management-empty">No teammates yet.</p> : agents.map((agent) => <div className="management-agent-row" key={agent.id}><MascotAvatar seed={agent.name} mascot={agent.configuration.mascot} size={32} active={agent.status === "active"} /><div><strong>{agent.name}</strong><small>{agent.id === "agent_global" ? "Global teammate" : agent.kind}</small></div><span className={`management-pill ${agent.status}`}>{agent.status}</span></div>)}</section>
+            <section className="management-section"><header><div><h2>Recent work</h2><p>Latest tasks across all teammates.</p></div><button type="button" onClick={() => setSection("tasks")}>All tasks</button></header>{tasks.slice(0, 7).map((task) => <div className="management-task-row" key={task.id}><div><strong>{task.title || task.request.slice(0, 70)}</strong><small>{agentName(task.agent_id)} · {new Date(task.updated_at * 1000).toLocaleString()}</small></div><span className={`management-pill ${task.status}`}>{task.status.replaceAll("_", " ")}</span></div>)}{tasks.length === 0 && <p className="management-empty">No tasks have been run yet.</p>}</section></div>
+          {approvals.length > 0 && <section className="management-section management-approval-summary"><header><div><h2>Needs your attention</h2><p>Tool actions waiting for approval.</p></div><button type="button" onClick={() => setSection("approvals")}>Review approvals</button></header>{approvals.slice(0, 3).map((approval) => <div className="management-task-row" key={approval.id}><div><strong>{agentName(approval.agent_id)} · {approval.tool}</strong><small>{approval.arguments.slice(0, 120)}</small></div><div className="management-row-actions"><button type="button" disabled={busy} onClick={() => void perform(`/api/approvals/${approval.id}`, { allowed: false })}>Deny</button><button type="button" disabled={busy} onClick={() => void perform(`/api/approvals/${approval.id}`, { allowed: true })}>Approve</button></div></div>)}</section>}
+        </>}
+        {section === "teammates" && <TeammatesPanel />}
+        {section === "chat" && <TeammatesPanel initialAgentId="agent_global" initialTab="chat" />}
+        {section === "tasks" && <><div className="management-page-heading"><div><div className="management-eyebrow">OPERATIONS</div><h1>Tasks</h1><p>Work queued and completed by your teammates.</p></div></div><section className="management-section">{tasks.map((task) => <div className="management-task-row" key={task.id}><div><strong>{task.title || task.request.slice(0, 90)}</strong><small>{agentName(task.agent_id)} · {new Date(task.created_at * 1000).toLocaleString()}</small></div><div className="management-row-actions"><span className={`management-pill ${task.status}`}>{task.status.replaceAll("_", " ")}</span>{["failed", "interrupted"].includes(task.status) && <button type="button" disabled={busy} onClick={() => void perform(`/api/tasks/${task.id}/retry`)}>Retry</button>}{["queued", "running", "waiting_for_approval"].includes(task.status) && <button type="button" disabled={busy} onClick={() => void perform(`/api/tasks/${task.id}/cancel`)}>Cancel</button>}</div></div>)}</section></>}
+        {section === "approvals" && <><div className="management-page-heading"><div><div className="management-eyebrow">OPERATIONS</div><h1>Approvals</h1><p>Review actions requested by your teammates.</p></div></div><section className="management-section">{approvals.map((approval) => <div className="management-approval-row" key={approval.id}><div><strong>{agentName(approval.agent_id)} wants to run {approval.tool}</strong><pre>{approval.arguments}</pre></div><div className="management-row-actions"><button type="button" disabled={busy} onClick={() => void perform(`/api/approvals/${approval.id}`, { allowed: false })}>Deny</button><button type="button" disabled={busy} onClick={() => void perform(`/api/approvals/${approval.id}`, { allowed: true })}>Approve</button></div></div>)}{approvals.length === 0 && <p className="management-empty">Nothing is waiting for approval.</p>}</section></>}
+        {section === "schedules" && <><div className="management-page-heading"><div><div className="management-eyebrow">AUTOMATION</div><h1>Schedules</h1><p>Recurring work configured for your teammates.</p></div></div><section className="management-section">{schedules.map((schedule) => <div className="management-task-row" key={schedule.id}><div><strong>{schedule.title}</strong><small>{agentName(schedule.agent_id)} · {schedule.enabled ? `Next ${new Date(schedule.next_run_at * 1000).toLocaleString()}` : "Disabled"}</small></div><div className="management-row-actions"><span className={`management-pill ${schedule.enabled ? "active" : "disabled"}`}>{schedule.enabled ? "enabled" : "disabled"}</span><button type="button" disabled={busy} onClick={() => void perform(`/api/schedules/${schedule.id}`, undefined, "DELETE")}>Remove</button></div></div>)}{schedules.length === 0 && <p className="management-empty">No schedules configured.</p>}</section></>}
+        {section === "memory" && <><div className="management-page-heading"><div><div className="management-eyebrow">CONTEXT</div><h1>Global memory</h1><p>Facts shared with teammates that use global context.</p></div></div><section className="management-section management-memory-form"><textarea value={memoryDraft} onChange={(event) => setMemoryDraft(event.target.value)} placeholder="Add a fact or preference to global memory…" rows={3} /><button type="button" disabled={busy || !memoryDraft.trim()} onClick={async () => { await perform("/api/memory", { scope: "user", scope_id: "default", content: memoryDraft.trim(), source: "dashboard" }); setMemoryDraft(""); }}>Save memory</button></section><section className="management-section">{memory.map((entry) => <div className="management-memory-row" key={entry.id}><p>{entry.content}</p><button type="button" disabled={busy} onClick={() => void perform(`/api/memory/${entry.id}`, undefined, "DELETE")}>Delete</button></div>)}{memory.length === 0 && <p className="management-empty">Global memory is empty.</p>}</section></>}
+        {section === "settings" && <><div className="management-page-heading"><div><div className="management-eyebrow">CONFIGURATION</div><h1>Settings</h1><p>Runtime, appearance and workspace information.</p></div></div><section className="management-section management-settings"><div><span>Appearance</span><div className="management-appearance-switch"><button type="button" aria-pressed={appearance === "light"} className={appearance === "light" ? "active" : ""} onClick={() => setAppearance("light")}>Light</button><button type="button" aria-pressed={appearance === "dark"} className={appearance === "dark" ? "active" : ""} onClick={() => setAppearance("dark")}>Dark</button></div></div><div><span>Runtime</span><strong>{connected ? "Connected" : "Disconnected"}</strong></div><div><span>Workspace</span><strong>Managed by the Luma core process</strong></div><div><span>Agent persistence</span><strong>SQLite-backed task and teammate records</strong></div><div><span>Safety</span><strong>Tool permissions and approvals are enforced by the runtime</strong></div></section></>}
       </div>
-      <div id="toast" className="toast hidden" />
-    </>
-  );
+    </main>
+  </div>;
 }
 
 type ApprovalRecord = { id: string; agent_id: string; task_id: string; tool: string; arguments: string };
 
-function TeammatesPanel() {
+function TeammatesPanel({ initialAgentId, initialTab = "chat" }: { initialAgentId?: string; initialTab?: "chat" | "settings" }) {
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>([]);
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeEvent[]>([]);
-  const [selected, setSelected] = useState("");
+  const [selected, setSelected] = useState(initialAgentId ?? "");
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -207,8 +145,9 @@ function TeammatesPanel() {
   const [prompt, setPrompt] = useState("");
   const [chatPrompt, setChatPrompt] = useState("");
   const [chatAttachments, setChatAttachments] = useState<ChatAttachment[]>([]);
+  const [errorDetailsExpanded, setErrorDetailsExpanded] = useState(false);
   const chatFileInput = useRef<HTMLInputElement>(null);
-  const [activeTab, setActiveTab] = useState<"chat" | "settings">("chat");
+  const [activeTab, setActiveTab] = useState<"chat" | "settings">(initialTab);
   const [memory, setMemory] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -223,7 +162,8 @@ function TeammatesPanel() {
       ]);
       for (const response of [agentResponse, approvalResponse, scheduleResponse]) if (!response.ok) throw new Error(`Runtime API returned ${response.status}`);
       const [nextAgents, nextApprovals, nextSchedules] = await Promise.all([agentResponse.json(), approvalResponse.json(), scheduleResponse.json()]) as [AgentRecord[], ApprovalRecord[], ScheduleRecord[]];
-      const nextSelected = selected && nextAgents.some((agent) => agent.id === selected) ? selected : nextAgents.find((agent) => agent.kind === "teammates")?.id ?? nextAgents[0]?.id ?? "";
+      const preferred = initialAgentId && nextAgents.some((agent) => agent.id === initialAgentId) ? initialAgentId : null;
+      const nextSelected = selected && nextAgents.some((agent) => agent.id === selected) ? selected : preferred ?? nextAgents.find((agent) => agent.id === "agent_global")?.id ?? nextAgents.find((agent) => agent.kind === "teammates")?.id ?? nextAgents[0]?.id ?? "";
       const taskResponse = await fetch(`/api/tasks?agent_id=${encodeURIComponent(nextSelected)}&limit=500`);
       if (!taskResponse.ok) throw new Error(`Runtime API returned ${taskResponse.status}`);
       const nextTasks = await taskResponse.json() as TaskRecord[];
@@ -239,6 +179,16 @@ function TeammatesPanel() {
     const timer = window.setInterval(() => void refresh(), 3000);
     return () => window.clearInterval(timer);
   }, [selected]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "o") return;
+      event.preventDefault();
+      setErrorDetailsExpanded((expanded) => !expanded);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     if (!selected) { setMemoryEntries([]); setRuntimeEvents([]); return; }
@@ -304,8 +254,8 @@ function TeammatesPanel() {
       <div className="teammates-body">
         <aside className="teammates-list"><div className="teammates-list-heading"><div className="teammates-section-title">AGENTS</div><button type="button" disabled={busy} onClick={() => setCreateOpen(true)}>+ Create</button></div>{agents.map((agent) => <div className={`teammate-row-wrap ${selected === agent.id ? "selected" : ""}`} key={agent.id}><button type="button" onClick={() => setSelected(agent.id)} className="teammate-row"><MascotAvatar seed={agent.name} mascot={agent.configuration.mascot} size={30} active={agent.status === "active"} /><span><strong>{agent.name}</strong><small>{agent.id === "agent_global" ? "Global · protected" : agent.status}</small></span></button></div>)}</aside>
         <main className="teammates-detail">{!activeAgent ? <div className="teammates-empty"><MascotAvatar seed="luma-welcome" size={76} /><p>Create a teammate and give it a name, a workspace and work to own.</p></div> : <>
-          <div className="teammates-agent-heading"><div className="teammates-agent-identity"><MascotAvatar seed={activeAgent.name} mascot={activeAgent.configuration.mascot} size={42} active={activeAgent.status === "active"} /><div><h3>{activeAgent.name}</h3><p>{activeAgent.id === "agent_global" ? "Global teammate · shared defaults" : `${activeAgent.status} · ${activeAgent.kind}`}</p></div></div><div className="teammates-agent-actions"><button type="button" className={activeTab === "chat" ? "active" : ""} onClick={() => setActiveTab("chat")}>Chat</button><button type="button" className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>Settings</button>{activeAgent.id !== "agent_global" && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Delete ${activeAgent.name}? Cancel active tasks first.`)) void perform(`/api/agents/${activeAgent.id}`, undefined, "DELETE"); }}>Delete</button>}</div></div>
-          {activeTab === "chat" ? <div className="teammates-chat"><div className="teammates-chat-messages">{agentTasks.length === 0 ? <div className="teammates-empty"><MascotAvatar seed={activeAgent.name} mascot={activeAgent.configuration.mascot} size={76} active /><h3>Chat with {activeAgent.name}</h3><p>Ask a question, hand over a task, or just start a conversation. Your teammate keeps the thread's context between messages.</p></div> : agentTasks.slice().reverse().map((task) => { const answer = taskAssistantText(task.id); return <article className="teammates-chat-turn" key={task.id}><div className="teammates-chat-user"><small>YOU</small><p>{task.request}</p></div><div className="teammates-chat-reply"><MascotAvatar seed={activeAgent.name} mascot={activeAgent.configuration.mascot} size={28} active={task.status === "running"} /><div><small>{activeAgent.name} {task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : ""}</small><p>{answer || task.error || (task.status === "completed" ? "No text response was recorded." : "Thinking…")}</p>{["failed", "interrupted"].includes(task.status) && <button type="button" onClick={() => void perform(`/api/tasks/${task.id}/retry`)}>Retry</button>}</div></div></article>; })}{approvals.filter((approval) => approval.agent_id === activeAgent.id).map((approval) => <div className="teammate-approval" key={approval.id}><strong>{activeAgent.name} needs approval · {approval.tool}</strong><pre>{approval.arguments}</pre><div><button type="button" disabled={busy} onClick={() => void perform(`/api/approvals/${approval.id}`, { allowed: false })}>Deny</button><button type="button" disabled={busy} onClick={() => void perform(`/api/approvals/${approval.id}`, { allowed: true })}>Approve</button></div></div>)}</div><form className="teammates-chat-composer" onSubmit={(event) => { event.preventDefault(); const text = chatPrompt.trim() || (chatAttachments.length ? "Please inspect the attached files." : ""); if (!text || busy || activeAgent.status === "stopped" || activeAgent.status === "paused") return; void (async () => { await perform("/api/tasks", { agent_id: activeAgent.id, request: formatChatPrompt(text, chatAttachments), workspace: activeAgent.configuration.workspace ?? undefined }); setChatPrompt(""); setChatAttachments([]); })(); }}>
+          <div className="teammates-agent-heading"><div className="teammates-agent-identity"><MascotAvatar seed={activeAgent.name} mascot={activeAgent.configuration.mascot} size={42} active={activeAgent.status === "active"} /><div><h3>{activeAgent.name}</h3><p>{activeAgent.id === "agent_global" ? "Global teammate · shared defaults" : `${activeAgent.status} · ${activeAgent.kind}`} · {agentTasks.length} saved tasks</p></div></div><div className="teammates-agent-actions"><button type="button" className={activeTab === "chat" ? "active" : ""} onClick={() => setActiveTab("chat")}>Chat</button><button type="button" className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>Settings</button>{activeAgent.id !== "agent_global" && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Delete ${activeAgent.name}? Cancel active tasks first.`)) void perform(`/api/agents/${activeAgent.id}`, undefined, "DELETE"); }}>Delete</button>}</div></div>
+          {activeTab === "chat" ? <div className="teammates-chat"><div className="teammates-chat-messages">{agentTasks.length === 0 ? <div className="teammates-empty"><MascotAvatar seed={activeAgent.name} mascot={activeAgent.configuration.mascot} size={76} active /><h3>Chat with {activeAgent.name}</h3><p>Ask a question, hand over a task, or just start a conversation. This teammate's history stays separate from every other teammate.</p></div> : agentTasks.slice().reverse().map((task) => { const answer = taskAssistantText(task.id); const failed = ["failed", "interrupted"].includes(task.status); const detail = (task.error ?? "").replace(/^ReAct failed:\s*/i, "").replace(/^Failed to run tool\s*/i, ""); return <article className="teammates-chat-turn" key={task.id}><div className="teammates-chat-user"><small>YOU</small><p>{task.request}</p></div><div className="teammates-chat-reply"><MascotAvatar seed={activeAgent.name} mascot={activeAgent.configuration.mascot} size={28} active={task.status === "running"} /><div className="teammates-chat-reply-content"><small>{activeAgent.name} {task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : ""}</small><div className="teammates-chat-reply-bubble"><p>{answer || (failed ? "Failed to run tool · Cmd+O for details" : task.status === "completed" ? "No text response was recorded." : "Thinking…")}</p>{failed && errorDetailsExpanded && detail && <pre className="teammates-error-details">{detail}</pre>}{failed && <button type="button" onClick={() => void perform(`/api/tasks/${task.id}/retry`)}>Retry</button>}</div></div></div></article>; })}{approvals.filter((approval) => approval.agent_id === activeAgent.id).map((approval) => <div className="teammate-approval" key={approval.id}><strong>{activeAgent.name} needs approval · {approval.tool}</strong><pre>{approval.arguments}</pre><div><button type="button" disabled={busy} onClick={() => void perform(`/api/approvals/${approval.id}`, { allowed: false })}>Deny</button><button type="button" disabled={busy} onClick={() => void perform(`/api/approvals/${approval.id}`, { allowed: true })}>Approve</button></div></div>)}</div><form className="teammates-chat-composer" onSubmit={(event) => { event.preventDefault(); const text = chatPrompt.trim() || (chatAttachments.length ? "Please inspect the attached files." : ""); if (!text || busy || activeAgent.status === "stopped" || activeAgent.status === "paused") return; void (async () => { await perform("/api/tasks", { agent_id: activeAgent.id, request: formatChatPrompt(text, chatAttachments), workspace: activeAgent.configuration.workspace ?? undefined }); setChatPrompt(""); setChatAttachments([]); })(); }}>
             <input ref={chatFileInput} type="file" multiple hidden onChange={(event) => { if (event.currentTarget.files?.length) void attachTeammateFiles(event.currentTarget.files); event.currentTarget.value = ""; }} />
             {chatAttachments.length > 0 && <div className="chat-attachment-list">{chatAttachments.map((attachment, index) => <span className="chat-attachment-chip" key={`${attachment.name}-${index}`}><span>{attachment.name}</span><button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setChatAttachments((items) => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></span>)}</div>}
             <div className="teammates-chat-input-row"><button type="button" className="chat-attach-button" aria-label="Attach files" title="Attach text files" disabled={busy || activeAgent.status === "stopped" || activeAgent.status === "paused"} onClick={() => chatFileInput.current?.click()}>+</button><textarea value={chatPrompt} onChange={(event) => setChatPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message ${activeAgent.name}…`} rows={2} /></div>
@@ -350,20 +300,5 @@ function TeammatesPanel() {
 }
 
 export default function App() {
-  const [mode, setMode] = useState<Mode>("agent");
-  const [teammatesOpen, setTeammatesOpen] = useState(false);
-  const modeRef = useRef(mode);
-  modeRef.current = mode;
-
-  useEffect(() => {
-    void import("./controller.js").then(() => {
-      window.dispatchEvent(new CustomEvent<Mode>("luma:mode-change", { detail: modeRef.current }));
-    });
-  }, []);
-
-  useEffect(() => {
-    window.dispatchEvent(new CustomEvent<Mode>("luma:mode-change", { detail: mode }));
-  }, [mode]);
-
-  return <DashboardShell teammatesOpen={teammatesOpen} onSelectCode={() => { setMode("agent"); setTeammatesOpen(false); }} onOpenTeammates={() => setTeammatesOpen(true)} />;
+  return <DashboardShell />;
 }

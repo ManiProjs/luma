@@ -195,6 +195,10 @@ impl DesktopServer {
                 self.change_model(request_id, model, stdout).await
             }
 
+            ClientMessage::SetSessionModel { request_id, model } => {
+                self.change_session_model(request_id, model, stdout).await
+            }
+
             ClientMessage::StartDashboard {
                 request_id,
                 host,
@@ -627,6 +631,95 @@ impl DesktopServer {
         .await
     }
 
+    async fn change_session_model<W>(
+        &mut self,
+        request_id: String,
+        model: crate::config::ModelConfig,
+        stdout: &mut W,
+    ) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        let provider = crate::provider::provider_by_id(&model.provider)
+            .or_else(|| {
+                config::load()
+                    .ok()?
+                    .providers
+                    .into_iter()
+                    .find(|provider| provider.id == model.provider)
+            })
+            .or_else(|| {
+                model
+                    .provider
+                    .starts_with("custom-")
+                    .then(|| crate::provider::SupportedProvider {
+                        id: model.provider.clone(),
+                        name: "Custom provider".into(),
+                        description: "Custom OpenAI-compatible provider".into(),
+                        category: crate::provider::ProviderCategory::Custom,
+                        protocol: crate::provider::ProviderProtocol::OpenAiCompatible,
+                        endpoint: model.endpoint.clone(),
+                        requires_api_key: model.api_key.is_some(),
+                        supports_model_discovery: true,
+                        api_key_env: None,
+                    })
+            });
+        let Some(provider) = provider else {
+            return report_error(
+                stdout,
+                Some(request_id),
+                format!("Unknown provider: {}", model.provider),
+                ErrorCategory::Fatal,
+            )
+            .await;
+        };
+        if model.name.trim().is_empty() || model.endpoint.trim().is_empty() {
+            return report_error(
+                stdout,
+                Some(request_id),
+                "Provider endpoint and model name are required.".into(),
+                ErrorCategory::Fatal,
+            )
+            .await;
+        }
+        let request = ModelRequest {
+            provider,
+            api_key: model.api_key.clone(),
+            endpoint: Some(model.endpoint.clone()),
+        };
+        if let Err(error) = provider_for(&request.provider)
+            .test(&request, &model.name)
+            .await
+        {
+            return report_error(
+                stdout,
+                Some(request_id),
+                format!("Model test failed: {error}"),
+                ErrorCategory::Transient,
+            )
+            .await;
+        }
+        self.model.replace(&model).await;
+        self.session
+            .set_model(model.provider.clone(), model.name.clone());
+        write_event(
+            stdout,
+            ServerEvent::ModelChanged {
+                request_id,
+                provider: model.provider,
+                model: model.name,
+            },
+        )
+        .await?;
+        write_event(
+            stdout,
+            ServerEvent::Session {
+                session: self.session.view(),
+            },
+        )
+        .await
+    }
+
     async fn start_dashboard<W>(
         &mut self,
         request_id: String,
@@ -941,6 +1034,51 @@ where
         ClientMessage::HistoryShow { request_id, id } => match chats::load(&id) {
             Ok(chat) => {
                 write_event(stdout, ServerEvent::HistoryChat { request_id, chat }).await?;
+            }
+            Err(error) => {
+                report_error(
+                    stdout,
+                    Some(request_id),
+                    error.to_string(),
+                    ErrorCategory::Transient,
+                )
+                .await?;
+            }
+        },
+
+        ClientMessage::HistoryDelete { request_id, id } => match chats::delete(&id) {
+            Ok(deleted) => {
+                write_event(
+                    stdout,
+                    ServerEvent::HistoryDeleted {
+                        request_id,
+                        id,
+                        deleted,
+                    },
+                )
+                .await?;
+            }
+            Err(error) => {
+                report_error(
+                    stdout,
+                    Some(request_id),
+                    error.to_string(),
+                    ErrorCategory::Transient,
+                )
+                .await?;
+            }
+        },
+
+        ClientMessage::HistoryPrune { request_id } => match chats::prune() {
+            Ok(removed) => {
+                write_event(
+                    stdout,
+                    ServerEvent::HistoryPruned {
+                        request_id,
+                        removed,
+                    },
+                )
+                .await?;
             }
             Err(error) => {
                 report_error(

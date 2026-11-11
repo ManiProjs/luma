@@ -28,7 +28,6 @@ fn main() {
     for required in [
         output.join("index.html"),
         output.join("assets/app.js"),
-        output.join("assets/controller.js"),
         output.join("assets/style.css"),
     ] {
         if !required.is_file() {

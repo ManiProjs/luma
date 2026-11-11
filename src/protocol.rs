@@ -91,6 +91,12 @@ pub enum ClientMessage {
         model: String,
     },
 
+    /// Change the active model for this session without saving global config.
+    SetSessionModel {
+        request_id: String,
+        model: crate::config::ModelConfig,
+    },
+
     /// List archived conversations without loading the agent model.
     HistoryList {
         request_id: String,
@@ -100,6 +106,17 @@ pub enum ClientMessage {
     HistoryShow {
         request_id: String,
         id: String,
+    },
+
+    /// Delete one archived conversation.
+    HistoryDelete {
+        request_id: String,
+        id: String,
+    },
+
+    /// Permanently remove all saved conversation archives.
+    HistoryPrune {
+        request_id: String,
     },
 
     /// Save or replace the summary attached to an archived conversation.
@@ -236,8 +253,11 @@ impl ClientMessage {
             | Self::GetModels { request_id, .. }
             | Self::TestProvider { request_id, .. }
             | Self::SetModel { request_id, .. }
+            | Self::SetSessionModel { request_id, .. }
             | Self::HistoryList { request_id }
             | Self::HistoryShow { request_id, .. }
+            | Self::HistoryDelete { request_id, .. }
+            | Self::HistoryPrune { request_id }
             | Self::SummaryAdd { request_id, .. }
             | Self::StartDashboard { request_id, .. }
             | Self::AgentsList { request_id }
@@ -293,8 +313,11 @@ impl ClientMessage {
             | Self::GetModels { .. }
             | Self::TestProvider { .. }
             | Self::SetModel { .. }
+            | Self::SetSessionModel { .. }
             | Self::HistoryList { .. }
             | Self::HistoryShow { .. }
+            | Self::HistoryDelete { .. }
+            | Self::HistoryPrune { .. }
             | Self::SummaryAdd { .. }
             | Self::StartDashboard { .. }
             | Self::AgentsList { .. }
@@ -392,6 +415,15 @@ pub enum ServerEvent {
     HistoryChat {
         request_id: String,
         chat: ChatArchive,
+    },
+    HistoryDeleted {
+        request_id: String,
+        id: String,
+        deleted: bool,
+    },
+    HistoryPruned {
+        request_id: String,
+        removed: usize,
     },
     SummarySaved {
         request_id: String,
@@ -561,6 +593,26 @@ mod tests {
     }
 
     #[test]
+    fn session_model_switch_carries_full_config_without_losing_request_id() {
+        let message = ClientMessage::SetSessionModel {
+            request_id: "session-switch-1".into(),
+            model: crate::config::ModelConfig {
+                provider: "openai".into(),
+                endpoint: "https://api.openai.com/v1".into(),
+                name: "gpt-4.1".into(),
+                api_key: Some("secret".into()),
+            },
+        };
+        let line = encode(&message).unwrap();
+        assert!(line.contains(r#""type":"set_session_model""#));
+        let decoded = decode(line.trim_end()).unwrap();
+        assert_eq!(decoded.request_id(), Some("session-switch-1"));
+        assert!(
+            matches!(decoded, ClientMessage::SetSessionModel { model, .. } if model.name == "gpt-4.1")
+        );
+    }
+
+    #[test]
     fn archive_and_dashboard_requests_keep_their_ids() {
         let requests = [
             ClientMessage::HistoryList {
@@ -569,6 +621,13 @@ mod tests {
             ClientMessage::HistoryShow {
                 request_id: "history-show".into(),
                 id: "chat-1".into(),
+            },
+            ClientMessage::HistoryDelete {
+                request_id: "history-delete".into(),
+                id: "chat-1".into(),
+            },
+            ClientMessage::HistoryPrune {
+                request_id: "history-prune".into(),
             },
             ClientMessage::SummaryAdd {
                 request_id: "summary-add".into(),

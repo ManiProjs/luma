@@ -20,6 +20,7 @@ use tokio_util::sync::CancellationToken;
 use crate::agent::Confirmation;
 use crate::commands;
 use crate::event::AgentEvent;
+use crate::tools::Tool;
 
 // ============================================================================
 // Channels
@@ -482,7 +483,7 @@ impl Session {
             return Ok(None);
         }
 
-        if text == "/history" {
+        if text == "/history" || text == "/history list" {
             let output = crate::chats::list()?
                 .into_iter()
                 .take(10)
@@ -494,6 +495,250 @@ impl Session {
             } else {
                 output
             });
+            return Ok(None);
+        }
+
+        if text == "/history prune" {
+            if self.state.busy {
+                self.push_system("Cancel the current request before pruning saved chats.");
+            } else {
+                match crate::chats::prune() {
+                    Ok(removed) => {
+                        self.state.messages.clear();
+                        self.state.input_history.clear();
+                        self.state.fresh = true;
+                        self.state.status = DEFAULT_STATUS.into();
+                        self.chat_id = crate::chats::new_id();
+                        self.summary = None;
+                        #[cfg(not(test))]
+                        {
+                            self.chat_created_at = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                        }
+                        self.push_system(format!(
+                            "Permanently removed {removed} saved chat{} and started a fresh conversation.",
+                            if removed == 1 { "" } else { "s" }
+                        ));
+                    }
+                    Err(error) => {
+                        self.push_system(format!("Could not prune saved chats: {error:#}"))
+                    }
+                }
+            }
+            return Ok(None);
+        }
+
+        if let Some(id) = text.strip_prefix("/history delete ") {
+            let id = id.trim();
+            if id.is_empty() {
+                self.push_system("Usage: /history delete <chat-id>");
+            } else if id == self.chat_id {
+                self.push_system("Cannot delete the active chat. Start a new chat first.");
+            } else {
+                match crate::chats::delete(id) {
+                    Ok(true) => self.push_system(format!("Deleted chat {id}.")),
+                    Ok(false) => self.push_system(format!("Saved chat not found: {id}")),
+                    Err(error) => self.push_system(format!("Could not delete chat: {error:#}")),
+                }
+            }
+            return Ok(None);
+        }
+
+        if let Some(id) = text.strip_prefix("/history show ") {
+            match crate::chats::load(id.trim()) {
+                Ok(chat) => {
+                    let preview = chat
+                        .messages
+                        .iter()
+                        .map(|message| format!("[{:?}] {}", message.role, message.content))
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    self.push_system(format!(
+                        "Chat {} · {}\n\n{}",
+                        chat.id, chat.info.model, preview
+                    ));
+                }
+                Err(error) => self.push_system(format!("Could not load chat: {error:#}")),
+            }
+            return Ok(None);
+        }
+
+        if text == "/history show" || text == "/history delete" {
+            self.push_system("Usage: /history show <chat-id>  ·  /history delete <chat-id>");
+            return Ok(None);
+        }
+
+        if text == "/status" {
+            self.push_system(format!(
+                "{} · {}\nWorkspace: {}\nMessages: {} · {}",
+                self.info.provider,
+                self.info.model,
+                self.info.workspace,
+                self.state.messages.len(),
+                if self.state.busy { "running" } else { "idle" },
+            ));
+            return Ok(None);
+        }
+
+        if text == "/workspace" {
+            self.push_system(format!("Workspace: {}", self.info.workspace));
+            return Ok(None);
+        }
+
+        if text == "/version" {
+            self.push_system(format!("Luma {}", env!("CARGO_PKG_VERSION")));
+            return Ok(None);
+        }
+
+        if text == "/doctor" {
+            let workspace_exists = std::path::Path::new(&self.info.workspace).is_dir();
+            self.push_system(format!(
+                "Luma diagnostics\nProvider: {}\nModel: {}\nWorkspace: {} ({})\nEnabled tools: {}\nSession: {}",
+                self.info.provider,
+                self.info.model,
+                self.info.workspace,
+                if workspace_exists { "available" } else { "missing" },
+                self.info.tools.len(),
+                if self.state.busy { "busy" } else { "ready" },
+            ));
+            return Ok(None);
+        }
+
+        if text == "/tools" {
+            self.push_system(if self.info.tools.is_empty() {
+                "No tools are enabled for this session.".into()
+            } else {
+                format!(
+                    "Available tools ({}):\n{}",
+                    self.info.tools.len(),
+                    self.info.tools.join("\n")
+                )
+            });
+            return Ok(None);
+        }
+
+        if text == "/skills" {
+            let output = crate::tools::skills::ListSkills
+                .execute("{}")
+                .unwrap_or_else(|error| format!("Could not discover skills: {error:#}"));
+            self.push_system(output);
+            return Ok(None);
+        }
+
+        if text == "/teammates" || text == "/agents" {
+            let output = match crate::runtime::RuntimeStore::open_default()
+                .and_then(|store| store.list_agents())
+            {
+                Ok(agents) => {
+                    let agents = agents
+                        .into_iter()
+                        .filter(|agent| agent.kind == crate::runtime::AgentKind::Teammates)
+                        .collect::<Vec<_>>();
+                    if agents.is_empty() {
+                        "No persistent teammates yet. Run `luma teammates` to create one."
+                            .to_owned()
+                    } else {
+                        agents
+                            .into_iter()
+                            .map(|agent| {
+                                format!(
+                                    "{}  [{}]  {}",
+                                    agent.name,
+                                    format!("{:?}", agent.status).to_lowercase(),
+                                    agent.id
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    }
+                }
+                Err(error) => format!("Could not list teammates: {error:#}"),
+            };
+            self.push_system(output);
+            return Ok(None);
+        }
+
+        if text == "/tasks" || text == "/approvals" || text == "/schedules" || text == "/memory" {
+            let output = match crate::runtime::RuntimeStore::open_default() {
+                Ok(store) if text == "/tasks" => match store.list_tasks(None, 12) {
+                    Ok(tasks) if tasks.is_empty() => "No persistent tasks.".to_owned(),
+                    Ok(tasks) => tasks
+                        .into_iter()
+                        .map(|task| {
+                            format!(
+                                "{}  [{}]  {}",
+                                task.title,
+                                format!("{:?}", task.status).to_lowercase(),
+                                task.id
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    Err(error) => format!("Could not list tasks: {error:#}"),
+                },
+                Ok(store) if text == "/approvals" => match store.list_pending_approvals() {
+                    Ok(items) if items.is_empty() => "No approvals are waiting.".to_owned(),
+                    Ok(items) => items
+                        .into_iter()
+                        .map(|item| format!("{}  ·  {}  [{}]", item.tool, item.arguments, item.id))
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    Err(error) => format!("Could not list approvals: {error:#}"),
+                },
+                Ok(store) if text == "/schedules" => match store.list_schedules(None) {
+                    Ok(items) if items.is_empty() => "No scheduled tasks.".to_owned(),
+                    Ok(items) => items
+                        .into_iter()
+                        .map(|item| {
+                            format!(
+                                "{}  [{}]  next: {}",
+                                item.title,
+                                if item.enabled { "enabled" } else { "disabled" },
+                                item.next_run_at
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    Err(error) => format!("Could not list schedules: {error:#}"),
+                },
+                Ok(store) => {
+                    let workspace = std::env::current_dir()
+                        .map(|path| path.canonicalize().unwrap_or(path).display().to_string())
+                        .unwrap_or_default();
+                    let user =
+                        store.list_memory(crate::runtime::MemoryScope::User, "default", None, 50);
+                    let project = store.list_memory(
+                        crate::runtime::MemoryScope::Project,
+                        &workspace,
+                        None,
+                        50,
+                    );
+                    match (user, project) {
+                        (Ok(user), Ok(project)) if user.is_empty() && project.is_empty() => {
+                            "No saved user or project memories.".to_owned()
+                        }
+                        (Ok(user), Ok(project)) => user
+                            .into_iter()
+                            .chain(project)
+                            .map(|entry| {
+                                format!(
+                                    "[{}] {}",
+                                    format!("{:?}", entry.scope).to_lowercase(),
+                                    entry.content
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                        (Err(error), _) | (_, Err(error)) => {
+                            format!("Could not list memory: {error:#}")
+                        }
+                    }
+                }
+                Err(error) => format!("Could not open the persistent runtime: {error:#}"),
+            };
+            self.push_system(output);
             return Ok(None);
         }
 
@@ -957,6 +1202,10 @@ impl Session {
     }
 
     fn persist(&self) {
+        if !self.should_archive() {
+            return;
+        }
+
         #[cfg(test)]
         return;
 
@@ -980,17 +1229,39 @@ impl Session {
         }
     }
 
+    fn should_archive(&self) -> bool {
+        self.state
+            .messages
+            .iter()
+            .any(|message| message.role == MessageRole::User)
+    }
+
     fn help_text() -> String {
         [
             "Commands:",
             "  /help    show this message",
             "  /clear   clear the transcript",
-            "  /history list recent saved chats",
+            "  /new     start a fresh conversation",
+            "  /history [list] list recent saved chats",
+            "  /history show <id> inspect an archived chat",
+            "  /history delete <id> delete an archived chat",
+            "  /history prune permanently delete every saved chat and start fresh",
+            "  /status  show model, workspace and session status",
+            "  /workspace show the active workspace",
+            "  /version show the Luma version",
+            "  /doctor  inspect the active model, workspace and session",
+            "  /tools   list tools enabled in this session",
+            "  /skills  discover available Agent Skills",
+            "  /teammates  list persistent personal agents (/agents is an alias)",
+            "  /tasks   list recent persistent tasks",
+            "  /approvals  list pending approvals",
+            "  /schedules  list scheduled teammate work",
+            "  /memory  list saved user and workspace memories",
             "  /resume  resume the interrupted task in this workspace",
             "  /plan <task> create an implementation plan for a task",
             "  /restore <chat-id> restore a saved chat as the active conversation",
             "  /summary:add <text> save a summary for this chat",
-            "  /model   show the current model; /model <model-id> switches it",
+            "  /model   open the global model picker; /model session changes this session only",
             "  /init    inspect the workspace and write GALAXY.md",
             "  /quit    exit",
         ]
@@ -1029,6 +1300,7 @@ mod tests {
         assert_eq!(session.state().messages.len(), 1);
         assert_eq!(session.state().messages[0].role, MessageRole::User);
         assert!(session.state().busy);
+        assert!(session.should_archive());
     }
 
     #[test]
@@ -1041,6 +1313,7 @@ mod tests {
         assert_eq!(session.submit("/clear".into()).unwrap(), None);
         assert!(session.state().messages.is_empty());
         assert_ne!(session.chat_id, previous_chat_id);
+        assert!(!session.should_archive());
     }
 
     #[test]

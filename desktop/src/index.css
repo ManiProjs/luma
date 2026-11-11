@@ -6,10 +6,10 @@
 :root {
   color-scheme: dark;
 
-  --luma-bg: #111213;
-  --luma-surface: #18191a;
-  --luma-surface-raised: #202123;
-  --luma-surface-hover: #292a2c;
+  --luma-bg: #101010;
+  --luma-surface: #171717;
+  --luma-surface-raised: #202020;
+  --luma-surface-hover: #292929;
 
   --luma-border: rgba(236, 233, 226, 0.075);
   --luma-border-strong: rgba(236, 233, 226, 0.14);
@@ -18,7 +18,7 @@
   --luma-text-secondary: #c0bdb5;
   --luma-text-muted: #89867f;
 
-  --luma-accent: #c49a5a;
+  --luma-accent: #78aaff;
   --luma-accent-soft: rgba(255, 255, 255, 0.055);
   --luma-accent-glow: transparent;
 
@@ -27,14 +27,14 @@
   --luma-warning: #fbbf24;
 
   --luma-selection: rgba(255, 255, 255, 0.07);
-  --luma-on-accent: #111213;
+  --luma-on-accent: #101010;
 }
 
 [data-theme="midnight"] {
-  --luma-bg: #05060b;
-  --luma-surface: #090b14;
-  --luma-surface-raised: #0e1120;
-  --luma-surface-hover: #14182a;
+  --luma-bg: #101010;
+  --luma-surface: #171717;
+  --luma-surface-raised: #202020;
+  --luma-surface-hover: #292929;
 
   --luma-border: rgba(139, 156, 255, 0.08);
   --luma-border-strong: rgba(139, 156, 255, 0.14);
@@ -43,9 +43,9 @@
   --luma-text-secondary: #c5cde6;
   --luma-text-muted: #8b93a8;
 
-  --luma-accent: #8b9cff;
+  --luma-accent: #78aaff;
   --luma-accent-soft: rgba(255, 255, 255, 0.055);
-  --luma-accent-glow: rgba(139, 156, 255, 0.2);
+  --luma-accent-glow: transparent;
 
   --luma-success: #5ee6a8;
   --luma-danger: #ff7d91;
@@ -56,21 +56,21 @@
 }
 
 [data-theme="nord"] {
-  --luma-bg: #242933;
-  --luma-surface: #2b303b;
-  --luma-surface-raised: #323946;
-  --luma-surface-hover: #3a4250;
+  --luma-bg: #101010;
+  --luma-surface: #171717;
+  --luma-surface-raised: #202020;
+  --luma-surface-hover: #292929;
 
-  --luma-border: rgba(216, 222, 233, 0.08);
-  --luma-border-strong: rgba(216, 222, 233, 0.14);
+  --luma-border: rgba(242, 242, 242, 0.075);
+  --luma-border-strong: rgba(242, 242, 242, 0.14);
 
   --luma-text: #eceff4;
   --luma-text-secondary: #d8dee9;
   --luma-text-muted: #9aa6b8;
 
-  --luma-accent: #88c0d0;
+  --luma-accent: #78aaff;
   --luma-accent-soft: rgba(255, 255, 255, 0.055);
-  --luma-accent-glow: rgba(136, 192, 208, 0.18);
+  --luma-accent-glow: transparent;
 
   --luma-success: #a3be8c;
   --luma-danger: #bf616a;
@@ -81,21 +81,21 @@
 }
 
 [data-theme="dracula"] {
-  --luma-bg: #191a21;
-  --luma-surface: #21222c;
-  --luma-surface-raised: #282a36;
-  --luma-surface-hover: #303241;
+  --luma-bg: #101010;
+  --luma-surface: #171717;
+  --luma-surface-raised: #202020;
+  --luma-surface-hover: #292929;
 
-  --luma-border: rgba(248, 248, 242, 0.07);
-  --luma-border-strong: rgba(248, 248, 242, 0.12);
+  --luma-border: rgba(242, 242, 242, 0.075);
+  --luma-border-strong: rgba(242, 242, 242, 0.14);
 
   --luma-text: #f8f8f2;
   --luma-text-secondary: #d4d4cc;
   --luma-text-muted: #9aa3c7;
 
-  --luma-accent: #bd93f9;
+  --luma-accent: #78aaff;
   --luma-accent-soft: rgba(255, 255, 255, 0.055);
-  --luma-accent-glow: rgba(189, 147, 249, 0.2);
+  --luma-accent-glow: transparent;
 
   --luma-success: #50fa7b;
   --luma-danger: #ff5555;
@@ -106,13 +106,13 @@
 }
 
 [data-theme="solarized"] {
-  --luma-bg: #002b36;
-  --luma-surface: #073642;
-  --luma-surface-raised: #0b3c47;
-  --luma-surface-hover: #104651;
+  --luma-bg: #101010;
+  --luma-surface: #171717;
+  --luma-surface-raised: #202020;
+  --luma-surface-hover: #292929;
 
-  --luma-border: rgba(238, 232, 213, 0.08);
-  --luma-border-strong: rgba(238, 232, 213, 0.14);
+  --luma-border: rgba(242, 242, 242, 0.075);
+  --luma-border-strong: rgba(242, 242, 242, 0.14);
 
   --luma-text: #eee8d5;
   --luma-text-secondary: #93a1a1;
@@ -120,7 +120,7 @@
 
   --luma-accent: #268bd2;
   --luma-accent-soft: rgba(255, 255, 255, 0.055);
-  --luma-accent-glow: rgba(38, 139, 210, 0.18);
+  --luma-accent-glow: transparent;
 
   --luma-success: #859900;
   --luma-danger: #dc322f;
@@ -133,42 +133,46 @@
 [data-appearance="light"] {
   color-scheme: light;
 
-  --luma-bg: #f3f1ec;
-  --luma-surface: #f9f8f4;
+  --luma-bg: #f4f6f8;
+  --luma-surface: #ffffff;
   --luma-surface-raised: #ffffff;
-  --luma-surface-hover: #eeece6;
+  --luma-surface-hover: #edf1f5;
 
-  --luma-border: rgba(24, 24, 27, 0.08);
-  --luma-border-strong: rgba(24, 24, 27, 0.14);
+  --luma-border: rgba(24, 34, 48, 0.09);
+  --luma-border-strong: rgba(24, 34, 48, 0.16);
 
-  --luma-text: #24221e;
-  --luma-text-secondary: #514d45;
-  --luma-text-muted: #746e64;
+  --luma-text: #202833;
+  --luma-text-secondary: #4b5663;
+  --luma-text-muted: #75808c;
 
-  --luma-accent-soft: rgba(24, 28, 36, 0.055);
+  --luma-accent: #3979d6;
+  --luma-accent-soft: rgba(24, 34, 48, 0.045);
   --luma-accent-glow: transparent;
-  --luma-selection: rgba(24, 28, 36, 0.07);
+  --luma-selection: rgba(24, 34, 48, 0.07);
   --luma-on-accent: #ffffff;
+  --luma-success: #16834e;
+  --luma-danger: #c9363d;
+  --luma-warning: #946000;
 }
 
 [data-appearance="light"][data-theme="luma"] {
-  --luma-accent: #89652f;
+  --luma-accent: #3979d6;
 }
 
 [data-appearance="light"][data-theme="midnight"] {
-  --luma-accent: #4f5fd6;
+  --luma-accent: #3979d6;
 }
 
 [data-appearance="light"][data-theme="nord"] {
-  --luma-accent: #2e7a8c;
+  --luma-accent: #3979d6;
 }
 
 [data-appearance="light"][data-theme="dracula"] {
-  --luma-accent: #7c4dcc;
+  --luma-accent: #3979d6;
 }
 
 [data-appearance="light"][data-theme="solarized"] {
-  --luma-accent: #2076b4;
+  --luma-accent: #3979d6;
 }
 
 html,
@@ -235,17 +239,53 @@ select {
   font: inherit;
 }
 
+/* Prevent text selection on UI chrome */
+.drag-region,
+.luma-sidebar,
+.luma-topbar,
+.luma-mode-picker,
+.luma-workspace-picker,
 button {
-  -webkit-app-region: no-drag;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
-button:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible {
-  outline: 2px solid var(--luma-accent);
-  outline-offset: 2px;
+/* Native-like button feel */
+button {
+  -webkit-app-region: no-drag;
+  cursor: default;
+  transition: opacity 120ms ease, transform 60ms ease;
 }
+
+button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+button:focus-visible {
+  outline: 1.5px solid var(--luma-accent);
+  outline-offset: -1px;
+}
+
+
+/* Modal transitions */
+.luma-modal-overlay {
+  animation: luma-fade-in 150ms ease-out both;
+}
+
+.luma-modal-content {
+  animation: luma-scale-up 150ms cubic-bezier(.2, .75, .25, 1) both;
+}
+
+@keyframes luma-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes luma-scale-up { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
+
+
+
 
 .drag-region {
   -webkit-app-region: drag;
@@ -399,6 +439,397 @@ select:focus-visible {
   .setup-page-forward,
   .setup-page-backward {
     animation: none !important;
+  }
+}
+
+/* Desktop interaction language: native toolbar, sidebar, transcript and controls. */
+.luma-topbar {
+  height: 48px;
+  border-bottom-color: var(--luma-border);
+  background: var(--luma-surface);
+}
+
+button {
+  transition-property: color, background-color, border-color, opacity;
+  transition-duration: 110ms;
+  transition-timing-function: ease-out;
+}
+
+button:active:not(:disabled) {
+  transform: none;
+  opacity: .78;
+}
+
+button:disabled {
+  opacity: .42;
+}
+
+html[data-platform="darwin"] ::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+html[data-platform="win32"] ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+html[data-platform="linux"] ::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+html[data-platform="darwin"] :where(button, input, textarea, select):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--luma-accent) 55%, transparent);
+  outline-offset: 1px;
+}
+
+html[data-platform="win32"] :where(button, input, textarea, select):focus-visible {
+  outline: 2px solid var(--luma-accent);
+  outline-offset: 1px;
+}
+
+html[data-platform="linux"] :where(button, input, textarea, select):focus-visible {
+  outline: 2px solid var(--luma-accent);
+  outline-offset: 0;
+}
+
+.luma-topbar > div {
+  gap: 0;
+}
+
+.luma-topbar > div > button[aria-label="Hide sidebar"],
+.luma-topbar > div > button[aria-label="Show sidebar"] {
+  width: 30px;
+  height: 30px;
+  margin-left: 0;
+  border-radius: 6px;
+  color: var(--luma-text-secondary);
+}
+
+.luma-topbar > div > button[aria-label="Hide sidebar"]:hover,
+.luma-topbar > div > button[aria-label="Show sidebar"]:hover {
+  background: var(--luma-surface-hover);
+}
+
+.luma-mode-picker {
+  width: 184px;
+  height: 32px;
+  margin-left: 16px;
+  padding: 2px;
+  border-color: var(--luma-border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--luma-bg) 78%, var(--luma-surface));
+}
+
+.luma-mode-picker > button {
+  height: 26px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.luma-mode-picker > span {
+  top: 2px;
+  bottom: 2px;
+  border-radius: 5px;
+  background: var(--luma-surface-raised);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .16), inset 0 0 0 1px var(--luma-border);
+}
+
+.luma-connection-status {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.luma-connection-status > span:first-child {
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.luma-sidebar {
+  width: 256px;
+  min-width: 256px;
+  background: var(--luma-surface);
+}
+
+.luma-sidebar-slot,
+.luma-sidebar-slot .luma-sidebar {
+  width: 256px;
+}
+
+.luma-sidebar-slot {
+  flex-basis: 256px;
+}
+
+.luma-sidebar-slot[data-open="false"] {
+  width: 0;
+  flex-basis: 0;
+}
+
+.luma-sidebar-slot .luma-sidebar {
+  min-width: 256px;
+}
+
+.luma-sidebar > nav {
+  margin-top: 8px;
+}
+
+.luma-workspace-picker {
+  min-height: 34px;
+  margin-inline: 12px;
+  margin-bottom: 14px;
+  border-color: var(--luma-border);
+  border-radius: 7px;
+  background: var(--luma-bg);
+}
+
+.luma-workspace-picker > button {
+  height: 27px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+.luma-workspace-picker > span {
+  background: var(--luma-surface-raised);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .14), inset 0 0 0 1px var(--luma-border);
+}
+
+.luma-new-chat {
+  padding-inline: 12px;
+  padding-bottom: 12px;
+}
+
+.luma-new-chat > button {
+  height: 34px;
+  border-radius: 6px;
+  border-color: var(--luma-border-strong);
+  background: var(--luma-surface-raised);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.luma-new-chat > button:hover {
+  border-color: color-mix(in srgb, var(--luma-accent) 42%, var(--luma-border-strong));
+  background: var(--luma-surface-hover);
+}
+
+.luma-sidebar .luma-workspace-nav,
+.luma-sidebar .luma-teammate-nav-item,
+.luma-sidebar [data-active="true"] {
+  border-radius: 5px;
+}
+
+.luma-sidebar .luma-workspace-nav {
+  height: 30px;
+  font-size: 12px;
+}
+
+.luma-sidebar .luma-workspace-nav[data-active="true"] {
+  background: var(--luma-accent-soft);
+}
+
+.luma-sidebar .luma-kicker {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: .045em;
+  text-transform: none;
+}
+
+.luma-sidebar .group.mb-0\.5 {
+  border-radius: 5px;
+}
+
+.luma-sidebar .group.mb-0\.5 > button:first-child {
+  padding-block: 6px;
+}
+
+.luma-sidebar .group.mb-0\.5:has(> button[aria-label^="Rename chat"]) > button:first-child > div:last-child {
+  font-size: 10px;
+}
+
+.luma-agent-transcript {
+  max-width: 880px;
+  padding-top: 28px;
+  padding-bottom: 28px;
+}
+
+.luma-message-row.is-user {
+  padding-top: 7px;
+}
+
+.luma-message-row.is-user::before {
+  top: -5px;
+  right: 2px;
+  color: var(--luma-text-muted);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .025em;
+}
+
+.luma-message-row.is-user .luma-message-content {
+  max-width: min(680px, 82%);
+  border: 1px solid var(--luma-border);
+  border-radius: 10px 10px 3px 10px;
+  background: var(--luma-surface-raised);
+  padding: 8px 11px;
+}
+
+.luma-message-row.is-assistant .luma-message-content {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.luma-message-row.is-assistant {
+  gap: 10px;
+}
+
+.luma-composer-shell {
+  border-top: 1px solid var(--luma-border);
+  background: var(--luma-surface);
+  padding: 12px 20px 13px;
+}
+
+.luma-composer {
+  min-height: 48px;
+  border-radius: 9px;
+  border-color: var(--luma-border-strong);
+  background: var(--luma-bg);
+  box-shadow: none;
+  padding: 8px 10px;
+}
+
+.luma-composer:focus-within {
+  border-color: color-mix(in srgb, var(--luma-accent) 62%, var(--luma-border-strong));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--luma-accent) 12%, transparent);
+}
+
+.luma-composer > button:last-child {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+.luma-command-menu {
+  border-radius: 8px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, .22);
+}
+
+.luma-teammate-user-message {
+  border-radius: 9px 9px 3px 9px;
+  padding: 8px 11px;
+}
+
+.luma-teammate-assistant-bubble {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+}
+
+input:not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+  accent-color: var(--luma-accent);
+  caret-color: var(--luma-accent);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--luma-accent);
+}
+
+::selection {
+  color: var(--luma-text);
+  background: color-mix(in srgb, var(--luma-accent) 30%, transparent);
+}
+
+/* macOS toolbar proportions and rounded controls. */
+html[data-platform="darwin"] .luma-topbar {
+  height: 50px;
+}
+
+html[data-platform="darwin"] .luma-mode-picker {
+  border-radius: 8px;
+}
+
+html[data-platform="darwin"] .luma-mode-picker > button,
+html[data-platform="darwin"] .luma-mode-picker > span {
+  border-radius: 6px;
+}
+
+html[data-platform="darwin"] .luma-sidebar {
+  background: color-mix(in srgb, var(--luma-surface) 72%, transparent);
+}
+
+/* Windows Fluent density and caption-button clearance. */
+html[data-platform="win32"] .luma-topbar {
+  height: 48px;
+}
+
+html[data-platform="win32"] .luma-mode-picker {
+  border-radius: 6px;
+}
+
+html[data-platform="win32"] .luma-sidebar {
+  background: var(--luma-surface);
+}
+
+html[data-platform="win32"] .luma-input,
+html[data-platform="win32"] .luma-btn-primary,
+html[data-platform="win32"] .luma-btn-secondary {
+  border-radius: 4px;
+}
+
+/* Linux keeps the system title bar and a solid GTK-like content surface. */
+html[data-platform="linux"] .luma-topbar {
+  height: 40px;
+  background: var(--luma-surface);
+}
+
+html[data-platform="linux"] .luma-topbar > div {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+html[data-platform="linux"] .luma-mode-picker {
+  height: 30px;
+  border-radius: 5px;
+}
+
+html[data-platform="linux"] .luma-mode-picker > button,
+html[data-platform="linux"] .luma-mode-picker > span {
+  border-radius: 4px;
+}
+
+html[data-platform="linux"] .luma-sidebar {
+  background: var(--luma-surface);
+}
+
+html[data-platform="linux"] .luma-input,
+html[data-platform="linux"] .luma-btn-primary,
+html[data-platform="linux"] .luma-btn-secondary,
+html[data-platform="linux"] .luma-btn-ghost {
+  border-radius: 4px;
+}
+
+@media (max-width: 760px) {
+  .luma-sidebar-slot,
+  .luma-sidebar-slot .luma-sidebar {
+    width: 220px;
+  }
+  .luma-sidebar-slot { flex-basis: 220px; }
+  .luma-sidebar-slot[data-open="false"] { width: 0; flex-basis: 0; }
+  .luma-mode-picker { min-width: 160px; width: 160px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luma-mode-picker > span,
+  .luma-workspace-picker > span,
+  .luma-view-transition {
+    animation: none !important;
+    transition: none !important;
   }
 }
 
@@ -615,11 +1046,7 @@ select:focus-visible {
   font-size: 11px;
 }
 
-.luma-sidebar > div:first-child {
-  padding: 14px 12px 8px;
-}
-
-.luma-sidebar > div:first-child > button {
+.luma-new-chat > button {
   height: 36px;
   justify-content: flex-start;
   border-radius: 7px;
@@ -629,7 +1056,7 @@ select:focus-visible {
 }
 
 .luma-sidebar > nav {
-  margin-top: 6px;
+  margin-top: 12px;
   padding: 0 12px;
 }
 
@@ -741,12 +1168,14 @@ select:focus-visible {
   box-shadow: none;
 }
 .luma-sidebar {
-  width: 248px;
-  min-width: 248px;
+  width: 280px;
+  min-width: 280px;
   background: color-mix(in srgb, var(--luma-surface) 92%, var(--luma-bg));
 }
 .luma-sidebar-glass {
-  background: color-mix(in srgb, var(--luma-surface) 58%, transparent);
+  background: color-mix(in srgb, var(--luma-surface) 80%, transparent);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
 }
 .luma-workspace-picker {
   border-radius: 6px;
@@ -1046,25 +1475,34 @@ select:focus-visible {
 
 /* Luma visual direction: a quiet developer workbench, not a stack of cards. */
 :root {
-  --luma-bg: #111210;
-  --luma-surface: #181916;
-  --luma-surface-raised: #1e201b;
-  --luma-surface-hover: #272923;
-  --luma-border: rgba(235, 231, 220, .075);
-  --luma-border-strong: rgba(235, 231, 220, .14);
-  --luma-text: #eeeae1;
-  --luma-text-secondary: #c4bfb3;
-  --luma-text-muted: #898579;
-  --luma-accent: #b89562;
-  --luma-accent-soft: rgba(184, 149, 98, .10);
+  --luma-bg: #111213;
+  --luma-surface: #18191a;
+  --luma-surface-raised: #202123;
+  --luma-surface-hover: #292a2c;
+  --luma-border: rgba(236, 233, 226, .075);
+  --luma-border-strong: rgba(236, 233, 226, .14);
+  --luma-text: #efede7;
+  --luma-text-secondary: #c0bdb5;
+  --luma-text-muted: #89867f;
+  --luma-accent: #78aaff;
+  --luma-accent-soft: rgba(255, 255, 255, .055);
   --luma-success: #83a88d;
   --luma-danger: #cb8279;
   --luma-warning: #c6a36b;
 }
 
 body { font-size: 13px; line-height: 1.58; letter-spacing: -.006em; }
-.luma-sidebar { width: 252px; min-width: 252px; background: var(--luma-surface); }
-.luma-sidebar-glass { box-shadow: inset -1px 0 var(--luma-border); }
+.luma-sidebar {
+  width: 280px;
+  min-width: 280px;
+  background: var(--luma-surface);
+}
+.luma-sidebar-glass {
+  background: color-mix(in srgb, var(--luma-surface) 80%, transparent);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: inset -1px 0 var(--luma-border);
+}
 .luma-topbar { height: 50px; }
 .luma-mode-picker { margin-left: 20px; border-radius: 5px; }
 .luma-mode-picker > button { height: 27px; font-size: 11px; }
@@ -1109,7 +1547,708 @@ body { font-size: 13px; line-height: 1.58; letter-spacing: -.006em; }
 .luma-sidebar button:active,
 .luma-composer button:active { transform: none; }
 
+/* Let Electron's native material show through the macOS toolbar and sidebar. */
+html[data-platform="darwin"] .luma-topbar-glass {
+  background: color-mix(in srgb, var(--luma-surface) 48%, transparent);
+  backdrop-filter: blur(28px) saturate(1.35);
+  -webkit-backdrop-filter: blur(28px) saturate(1.35);
+}
+
+html[data-platform="darwin"] .luma-app-shell,
+html[data-platform="win32"] .luma-app-shell {
+  background: transparent;
+}
+
+html[data-platform="darwin"] .luma-sidebar-glass {
+  background: color-mix(in srgb, var(--luma-surface) 66%, transparent);
+  backdrop-filter: blur(30px) saturate(1.35);
+  -webkit-backdrop-filter: blur(30px) saturate(1.35);
+  box-shadow: inset -1px 0 color-mix(in srgb, var(--luma-border-strong) 80%, transparent);
+}
+
+html[data-platform="darwin"] .luma-topbar {
+  border-bottom-color: color-mix(in srgb, var(--luma-border) 70%, transparent);
+}
+
+html[data-platform="win32"] .luma-topbar-glass {
+  background: color-mix(in srgb, var(--luma-surface) 72%, transparent);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+
+.luma-command-menu {
+  background: color-mix(in srgb, var(--luma-surface-raised) 94%, transparent);
+  backdrop-filter: blur(22px) saturate(1.2);
+  -webkit-backdrop-filter: blur(22px) saturate(1.2);
+}
+
+html[data-platform="darwin"] .luma-sidebar button,
+html[data-platform="darwin"] .luma-topbar button {
+  -webkit-tap-highlight-color: transparent;
+}
+
 @media (max-width: 760px) {
   .luma-sidebar { width: 220px; min-width: 220px; }
   .luma-agent-empty h1 { font-size: 30px; }
+}
+
+/* Conversation alignment: user messages end at the right edge; replies stay left. */
+.luma-message-row.is-user {
+  position: relative;
+  justify-content: flex-end;
+  padding-top: 10px;
+}
+.luma-message-row.is-user::before {
+  position: absolute;
+  top: -2px;
+  right: 2px;
+  width: auto;
+  color: var(--luma-text-muted);
+  font-size: 8px;
+}
+.luma-message-row.is-user .luma-message-content {
+  margin-left: auto;
+  border: 1px solid var(--luma-border);
+  border-radius: 12px 12px 3px 12px;
+  background: var(--luma-surface-raised);
+  padding: 9px 12px;
+}
+.luma-message-row.is-assistant .luma-message-content {
+  border: 1px solid var(--luma-border);
+  border-radius: 3px 12px 12px 12px;
+  background: var(--luma-surface);
+  padding: 9px 12px;
+}
+.luma-teammate-user-message {
+  border: 1px solid var(--luma-border);
+  border-radius: 12px 12px 3px 12px;
+  background: var(--luma-surface-raised);
+  color: var(--luma-text);
+}
+.luma-teammate-assistant-bubble {
+  display: inline-block;
+  max-width: 100%;
+  margin-top: 2px;
+  border: 1px solid var(--luma-border);
+  border-radius: 3px 12px 12px 12px;
+  background: var(--luma-surface);
+  padding: 9px 12px;
+}
+
+/* Light appearance applies to the native window, controls and editor surface. */
+[data-appearance="light"] html,
+[data-appearance="light"] body,
+[data-appearance="light"] #root,
+[data-appearance="light"] .luma-app-shell,
+[data-appearance="light"] .luma-main-surface {
+  background: var(--luma-bg) !important;
+  color: var(--luma-text);
+}
+[data-appearance="light"] .luma-topbar,
+[data-appearance="light"] .luma-sidebar,
+[data-appearance="light"] .luma-sidebar-glass {
+  background: var(--luma-surface);
+}
+[data-appearance="light"] .luma-composer-shell {
+  border-top: 1px solid var(--luma-border);
+  background: var(--luma-bg);
+}
+[data-appearance="light"] .luma-composer {
+  border-color: var(--luma-border-strong);
+  background: var(--luma-surface);
+  box-shadow: 0 5px 18px rgba(27, 39, 54, .055);
+}
+[data-appearance="light"] .luma-message-row.is-user .luma-message-content,
+[data-appearance="light"] .luma-teammate-user-message {
+  border-color: var(--luma-border);
+  background: #eaf0f7;
+  color: #202833;
+}
+[data-appearance="light"] .luma-message-row.is-assistant .luma-message-content,
+[data-appearance="light"] .luma-teammate-assistant-bubble,
+[data-appearance="light"] .luma-card,
+[data-appearance="light"] .luma-teammates-content section.rounded-lg.border {
+  border-color: var(--luma-border);
+  background: var(--luma-surface);
+  color: var(--luma-text-secondary);
+}
+[data-appearance="light"] .luma-tool-error {
+  border-color: rgba(201, 54, 61, .22);
+  background: #fff5f4;
+  color: #a52d34;
+}
+[data-appearance="light"] .luma-tool-error pre { color: #704347; }
+
+/* Final light tokens intentionally follow the legacy palette declarations. */
+[data-appearance="light"] {
+  color-scheme: light;
+  --luma-bg: #f4f6f8;
+  --luma-surface: #ffffff;
+  --luma-surface-raised: #ffffff;
+  --luma-surface-hover: #edf1f5;
+  --luma-border: rgba(24, 34, 48, .09);
+  --luma-border-strong: rgba(24, 34, 48, .16);
+  --luma-text: #202833;
+  --luma-text-secondary: #4b5663;
+  --luma-text-muted: #75808c;
+  --luma-accent: #3979d6;
+  --luma-accent-soft: rgba(24, 34, 48, .045);
+  --luma-success: #16834e;
+  --luma-danger: #c9363d;
+  --luma-warning: #946000;
+  --luma-selection: rgba(24, 34, 48, .07);
+  --luma-on-accent: #ffffff;
+}
+
+/* Platform-aware renderer: keep one Luma design, use each OS's visual language. */
+html[data-platform="darwin"] {
+  --luma-control-radius: 8px;
+  --luma-panel-radius: 10px;
+}
+
+html[data-platform="win32"] {
+  --luma-control-radius: 6px;
+  --luma-panel-radius: 8px;
+}
+
+html[data-platform="linux"] {
+  --luma-control-radius: 5px;
+  --luma-panel-radius: 7px;
+}
+
+html[data-platform="win32"] body {
+  font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+html[data-platform="linux"] body {
+  font-family: Cantarell, "Noto Sans", system-ui, sans-serif;
+  letter-spacing: 0;
+}
+
+html[data-platform="darwin"] body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+}
+
+html[data-platform="linux"] .luma-topbar-glass,
+html[data-platform="linux"] .luma-sidebar-glass {
+  background: var(--luma-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+
+html[data-platform="linux"] .luma-app-shell,
+html[data-platform="linux"] .luma-main-surface {
+  background: var(--luma-bg);
+}
+
+html[data-platform="win32"] .luma-topbar-glass {
+  background: color-mix(in srgb, var(--luma-surface) 86%, transparent);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+html[data-platform="win32"] .luma-topbar > div {
+  padding-right: 150px;
+}
+
+html[data-platform="darwin"] .luma-input,
+html[data-platform="darwin"] .luma-btn-primary,
+html[data-platform="darwin"] .luma-btn-secondary,
+html[data-platform="darwin"] .luma-btn-ghost {
+  border-radius: var(--luma-control-radius);
+}
+
+html[data-platform="win32"] .luma-input,
+html[data-platform="win32"] .luma-btn-primary,
+html[data-platform="win32"] .luma-btn-secondary,
+html[data-platform="win32"] .luma-btn-ghost {
+  border-radius: var(--luma-control-radius);
+}
+
+html[data-platform="linux"] .luma-input,
+html[data-platform="linux"] .luma-btn-primary,
+html[data-platform="linux"] .luma-btn-secondary,
+html[data-platform="linux"] .luma-btn-ghost {
+  border-radius: var(--luma-control-radius);
+}
+
+html[data-platform="win32"] .luma-modal-content,
+html[data-platform="win32"] .luma-create-dialog,
+html[data-platform="win32"] .luma-mode-picker,
+html[data-platform="win32"] .luma-workspace-picker {
+  border-radius: var(--luma-panel-radius);
+}
+
+html[data-platform="linux"] .luma-modal-content,
+html[data-platform="linux"] .luma-create-dialog,
+html[data-platform="linux"] .luma-mode-picker,
+html[data-platform="linux"] .luma-workspace-picker {
+  border-radius: var(--luma-panel-radius);
+}
+
+/* Sidebar width and contents move together, so the workspace expands naturally. */
+.luma-sidebar-slot {
+  width: 280px;
+  min-width: 0;
+  flex: 0 0 280px;
+  overflow: hidden;
+  transition: width 190ms cubic-bezier(.2, .75, .25, 1), flex-basis 190ms cubic-bezier(.2, .75, .25, 1);
+  will-change: width, flex-basis;
+}
+
+.luma-sidebar-slot[data-open="false"] {
+  width: 0;
+  flex-basis: 0;
+}
+
+.luma-sidebar-slot .luma-sidebar {
+  width: 280px;
+  min-width: 280px;
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 130ms ease, transform 190ms cubic-bezier(.2, .75, .25, 1);
+}
+
+.luma-sidebar-slot[data-open="false"] .luma-sidebar {
+  opacity: 0;
+  transform: translateX(-8px);
+  pointer-events: none;
+}
+
+.luma-view-transition {
+  animation: luma-view-enter 165ms cubic-bezier(.2, .75, .25, 1) both;
+}
+
+@keyframes luma-view-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.luma-modal-overlay,
+.luma-create-overlay {
+  animation-duration: 130ms;
+}
+
+.luma-modal-content,
+.luma-create-dialog {
+  animation-duration: 165ms;
+}
+
+.luma-topbar button,
+.luma-sidebar button,
+.luma-composer button,
+.luma-teammates-content button {
+  transition-timing-function: cubic-bezier(.2, .75, .25, 1);
+}
+
+:where(button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--luma-accent) 82%, white);
+  outline-offset: 2px;
+}
+
+@media (max-width: 760px) {
+  .luma-sidebar-slot { width: 220px; flex-basis: 220px; }
+  .luma-sidebar-slot[data-open="false"] { width: 0; flex-basis: 0; }
+  .luma-sidebar-slot .luma-sidebar { width: 220px; min-width: 220px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luma-sidebar-slot,
+  .luma-sidebar-slot .luma-sidebar {
+    transition: none !important;
+    will-change: auto;
+  }
+}
+
+/* Native desktop pass: use OS chrome and a document-like workspace, not web cards. */
+:root {
+  --luma-control-radius: 6px;
+  --luma-panel-radius: 8px;
+}
+
+body {
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, textarea, select {
+  font: inherit;
+}
+
+.luma-topbar {
+  height: 48px;
+  min-height: 48px;
+  border-bottom: 1px solid var(--luma-border);
+}
+
+.luma-mode-picker {
+  height: 30px;
+  min-width: 164px;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--luma-border);
+  border-radius: 7px;
+  background: var(--luma-surface);
+}
+
+.luma-mode-picker > span {
+  border-radius: 5px;
+  background: var(--luma-surface-raised);
+  box-shadow: inset 0 0 0 1px var(--luma-border-strong);
+}
+
+.luma-mode-picker button {
+  height: 24px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.luma-sidebar-slot,
+.luma-sidebar-slot .luma-sidebar {
+  width: 252px;
+  flex-basis: 252px;
+}
+
+.luma-sidebar-slot .luma-sidebar {
+  min-width: 252px;
+  padding-top: 12px;
+}
+
+.luma-sidebar {
+  border-right: 1px solid var(--luma-border-strong);
+}
+
+.luma-sidebar .luma-workspace-picker {
+  margin: 0 12px 18px;
+  padding: 2px;
+  border: 1px solid var(--luma-border);
+  border-radius: 7px;
+  background: var(--luma-bg);
+}
+
+.luma-sidebar .luma-workspace-picker > span {
+  border-radius: 5px;
+  background: var(--luma-surface-raised);
+  box-shadow: inset 0 0 0 1px var(--luma-border-strong);
+}
+
+.luma-sidebar .luma-workspace-picker button {
+  min-height: 27px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+.luma-sidebar .luma-new-chat {
+  padding: 0 12px 16px;
+}
+
+.luma-sidebar .luma-new-chat button {
+  height: 34px;
+  justify-content: flex-start;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 7px;
+  background: var(--luma-surface);
+  padding-inline: 10px;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.luma-sidebar > div.min-h-0 {
+  padding-inline: 8px;
+}
+
+.luma-workspace-nav,
+.luma-teammate-nav-item {
+  min-height: 29px;
+  border-radius: 5px !important;
+  font-size: 12px;
+}
+
+.luma-workspace-nav[data-active="true"],
+.luma-teammate-nav-item.is-selected {
+  background: var(--luma-selection) !important;
+  color: var(--luma-text) !important;
+}
+
+.luma-workspace-nav[data-active="true"]::before {
+  display: none;
+}
+
+.luma-sidebar button,
+.luma-topbar button,
+.luma-composer button,
+.luma-teammates-content button {
+  transition: background-color 110ms ease, color 110ms ease, border-color 110ms ease;
+}
+
+.luma-sidebar button:active,
+.luma-topbar button:active,
+.luma-composer button:active,
+.luma-teammates-content button:active {
+  transform: none;
+}
+
+.luma-main-surface,
+.luma-teammates-content {
+  background: var(--luma-bg);
+}
+
+.luma-composer-shell {
+  border-top: 1px solid var(--luma-border);
+  background: var(--luma-bg);
+  padding: 12px 0 16px;
+}
+
+.luma-composer {
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 8px;
+  background: var(--luma-surface);
+  box-shadow: none;
+  padding: 9px 11px;
+}
+
+.luma-composer:focus-within {
+  border-color: color-mix(in srgb, var(--luma-accent) 58%, var(--luma-border-strong));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--luma-accent) 13%, transparent);
+}
+
+.luma-message-row.is-user .luma-message-content,
+.luma-message-row.is-assistant .luma-message-content,
+.luma-teammate-user-message,
+.luma-teammate-assistant-bubble {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.luma-message-row.is-user .luma-message-content {
+  margin-left: 0;
+  color: var(--luma-text);
+}
+
+.luma-message-row.is-user::before {
+  position: static;
+  width: 24px;
+  flex: 0 0 24px;
+  padding-top: 3px;
+  color: var(--luma-text-muted);
+}
+
+.luma-message-content {
+  max-width: min(820px, calc(100% - 36px));
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.luma-tool-activity-row {
+  border: 0;
+  border-top: 1px solid var(--luma-border);
+  border-radius: 0;
+  background: transparent;
+  padding: 6px 0;
+}
+
+.luma-teammate-header {
+  min-height: 48px;
+  border-bottom: 1px solid var(--luma-border);
+  background: transparent;
+}
+
+.luma-teammate-header button.is-active {
+  border-radius: 0;
+  background: transparent;
+}
+
+.luma-teammate-user-message {
+  max-width: 82%;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 12px 12px 3px 12px;
+  background: var(--luma-surface-raised);
+  padding: 9px 12px;
+  color: var(--luma-text);
+}
+
+.luma-teammate-assistant-bubble {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  color: var(--luma-text-secondary);
+}
+
+.luma-mode-picker {
+  width: 220px;
+  min-width: 220px;
+  height: 36px;
+  padding: 3px;
+}
+
+.luma-mode-picker button {
+  height: 28px;
+  font-size: 12px;
+}
+
+.luma-sidebar .luma-chat-row button:first-child {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.luma-tour-backdrop {
+  background: color-mix(in srgb, #000 48%, transparent);
+  backdrop-filter: blur(5px);
+  animation: luma-fade-in 160ms ease-out both;
+}
+
+.luma-tour-panel {
+  animation: luma-scale-up 180ms cubic-bezier(.2, .75, .25, 1) both;
+}
+
+.luma-teammates-content section.rounded-lg.border {
+  border: 0;
+  border-top: 1px solid var(--luma-border);
+  border-radius: 0;
+  background: transparent;
+  padding: 14px 0;
+}
+
+.luma-workspace-switch-overlay {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: color-mix(in srgb, var(--luma-bg) 76%, transparent);
+  color: var(--luma-text-secondary);
+  font-size: 12px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.luma-progress-indicator {
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid var(--luma-border-strong);
+  border-top-color: var(--luma-accent);
+  border-radius: 50%;
+  animation: luma-native-spin .75s linear infinite;
+}
+
+@keyframes luma-native-spin { to { transform: rotate(360deg); } }
+
+html[data-platform="darwin"] body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  letter-spacing: -.01em;
+}
+
+html[data-platform="darwin"] .luma-app-shell,
+html[data-platform="darwin"] .luma-topbar,
+html[data-platform="darwin"] .luma-topbar-glass,
+html[data-platform="darwin"] .luma-sidebar,
+html[data-platform="darwin"] .luma-sidebar-glass {
+  background: transparent;
+}
+
+html[data-platform="darwin"] .luma-topbar {
+  border-bottom-color: color-mix(in srgb, var(--luma-border) 72%, transparent);
+}
+
+html[data-platform="darwin"] .luma-sidebar-glass {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: inset -1px 0 var(--luma-border);
+}
+
+html[data-platform="darwin"] .luma-sidebar-slot .luma-sidebar {
+  padding-top: 8px;
+}
+
+html[data-platform="darwin"] .luma-composer {
+  border-radius: 9px;
+}
+
+html[data-platform="darwin"] :where(button, input, textarea, select):focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--luma-accent) 76%, white);
+  outline-offset: 1px;
+}
+
+html[data-platform="win32"] body {
+  font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+}
+
+html[data-platform="win32"] .luma-topbar-glass {
+  background: color-mix(in srgb, var(--luma-surface) 78%, transparent);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+}
+
+html[data-platform="linux"] body {
+  font-family: Cantarell, "Noto Sans", sans-serif;
+}
+
+html[data-platform="linux"] .luma-topbar-glass,
+html[data-platform="linux"] .luma-sidebar-glass {
+  background: var(--luma-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+@media (max-width: 760px) {
+  .luma-sidebar-slot,
+  .luma-sidebar-slot .luma-sidebar { width: 220px; flex-basis: 220px; }
+  .luma-sidebar-slot .luma-sidebar { min-width: 220px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luma-progress-indicator { animation: none; }
+}
+
+/* User-controlled desktop density and motion preferences. Keep the closed
+   sidebar collapsed after all platform-specific sizing rules have applied. */
+.luma-sidebar-slot[data-open="false"] {
+  width: 0 !important;
+  min-width: 0 !important;
+  flex: 0 0 0 !important;
+}
+
+.luma-mode-picker {
+  width: 228px;
+  min-width: 228px;
+  height: 36px;
+  flex: 0 0 228px;
+}
+
+.luma-mode-picker > button {
+  height: 28px;
+  font-size: 12px;
+}
+
+html[data-compact-history="false"] .luma-sidebar .luma-chat-row button:first-child {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+html[data-compact-history="true"] .luma-sidebar .luma-chat-row button:first-child {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+html[data-reduced-motion="true"] *,
+html[data-reduced-motion="true"] *::before,
+html[data-reduced-motion="true"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: 0.01ms !important;
+}
+
+.luma-command-menu code {
+  color: #78AFFF;
 }

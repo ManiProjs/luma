@@ -156,7 +156,6 @@ impl DashboardServer {
         let app = Router::new()
             .route("/", get(index))
             .route("/assets/app.js", get(app_js))
-            .route("/assets/controller.js", get(controller_js))
             .route("/assets/style.css", get(style_css))
             .route("/ws", get(websocket))
             .route("/api/tree", get(api_tree))
@@ -279,16 +278,6 @@ async fn app_js(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse 
         state.dashboard_dir.as_deref(),
         "assets/app.js",
         include_bytes!("../dashboard/dist/assets/app.js"),
-        "application/javascript; charset=utf-8",
-    )
-    .await
-}
-
-async fn controller_js(State(state): State<Arc<DashboardServer>>) -> impl IntoResponse {
-    serve_asset(
-        state.dashboard_dir.as_deref(),
-        "assets/controller.js",
-        include_bytes!("../dashboard/dist/assets/controller.js"),
         "application/javascript; charset=utf-8",
     )
     .await
@@ -1969,11 +1958,6 @@ mod tests {
             (
                 "assets/app.js",
                 include_bytes!("../dashboard/dist/assets/app.js").as_slice(),
-                "application/javascript; charset=utf-8",
-            ),
-            (
-                "assets/controller.js",
-                include_bytes!("../dashboard/dist/assets/controller.js").as_slice(),
                 "application/javascript; charset=utf-8",
             ),
             (

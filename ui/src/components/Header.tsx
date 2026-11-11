@@ -2,6 +2,7 @@ import { Box, Text, useStdout } from "ink";
 
 import { glyphs, theme } from "../theme";
 import type { UiSessionInfo } from "../state";
+import { usePulseColor } from "../hooks/usePulseColor";
 
 type Props = {
   session: UiSessionInfo;
@@ -9,13 +10,14 @@ type Props = {
 
 export function Header({ session }: Props) {
   const { stdout } = useStdout();
+  const brandColor = usePulseColor(true, theme.brand, "#B4D3FF");
   const workspace = session.workspace.replace(/\/$/, "").split("/").pop() || session.workspace;
   const ruleWidth = Math.max(1, Math.min((stdout.columns || 72) - 2, 96));
 
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-        <Text color={theme.brand} bold>{glyphs.logo} LUMA</Text>
+        <Text color={brandColor} bold>{glyphs.logo} LUMA</Text>
         <Text color={theme.chrome}>/</Text>
         <Text color="white" bold>{workspace}</Text>
         <Text color={theme.chrome}>·</Text>

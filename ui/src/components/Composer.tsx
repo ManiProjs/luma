@@ -32,15 +32,32 @@ type Props = {
 const COMMANDS = [
   "/help",
   "/clear",
+  "/new",
   "/quit",
   "/init",
   "/model",
+  "/model session",
   "/tools",
+  "/skills",
+  "/teammates",
+  "/agents",
+  "/tasks",
+  "/approvals",
+  "/schedules",
+  "/memory",
   "/history",
+  "/history list",
+  "/history show",
+  "/history delete",
+  "/history prune",
   "/restore",
   "/summary:add",
   "/plan",
   "/resume",
+  "/status",
+  "/workspace",
+  "/version",
+  "/doctor",
 ];
 
 export function Composer({
@@ -66,9 +83,12 @@ export function Composer({
   const [cursor, setCursor] = useState(value.length);
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const commandPrefix = value.slice(0, cursor);
-  const suggestions = commandPrefix.startsWith("/") && !/\s/.test(commandPrefix)
+  const suggestions = commandPrefix.startsWith("/")
     ? COMMANDS.filter((command) => command.startsWith(commandPrefix.toLowerCase()))
     : [];
+  const suggestionWindowSize = 6;
+  const suggestionStart = Math.max(0, Math.min(selectedSuggestion - 2, suggestions.length - suggestionWindowSize));
+  const visibleSuggestions = suggestions.slice(suggestionStart, suggestionStart + suggestionWindowSize);
 
   // Keep the insertion point in sync when the parent clears the prompt after submit.
   useEffect(() => {
@@ -81,7 +101,7 @@ export function Composer({
 
   useInput((input, key) => {
     if (disabled) return;
-    if (/^\u001B\[(?:<\d+;\d+;\d+[Mm]|\d+;\d+R)$/.test(input)) return;
+    if (/^\u001B?\[(?:<\d+;\d+;\d+[Mm]|\d+;\d+R)$/.test(input)) return;
     if (attachmentMode && key.escape) {
       onCancelAttachment();
       return;
@@ -170,10 +190,16 @@ export function Composer({
   return (
     <Box flexDirection="column" marginTop={1}>
       {suggestions.length > 0 ? <Box flexDirection="column" marginBottom={1}>
-        <Text color={theme.chrome}>COMMANDS  ·  Tab complete  ·  ↑/↓ select</Text>
-        {suggestions.slice(0, 6).map((command, index) => <Text key={command} color={index === selectedSuggestion ? theme.accent : theme.muted}>
-          {index === selectedSuggestion ? "› " : "  "}{command}
-        </Text>)}
+        <Text color={theme.chrome}>COMMANDS {selectedSuggestion + 1}/{suggestions.length}  ·  Tab complete  ·  ↑/↓ scroll</Text>
+        {visibleSuggestions.map((command, index) => {
+          const absoluteIndex = suggestionStart + index;
+          return (
+            <Text key={command} color={theme.brand} bold={absoluteIndex === selectedSuggestion}>
+              {absoluteIndex === selectedSuggestion ? "› " : "  "}{command}
+            </Text>
+          );
+        })}
+        {suggestionStart > 0 || suggestionStart + visibleSuggestions.length < suggestions.length ? <Text color={theme.chrome}>  {suggestionStart > 0 ? "↑ more" : ""}{suggestionStart > 0 && suggestionStart + visibleSuggestions.length < suggestions.length ? "  ·  " : ""}{suggestionStart + visibleSuggestions.length < suggestions.length ? "↓ more" : ""}</Text> : null}
       </Box> : null}
       {confirmation ? <Box flexDirection="column" borderStyle="single" borderLeft borderColor={theme.warning} paddingLeft={1} marginBottom={1}>
         <Text color={theme.warning} bold>Approval required  ·  {confirmation.name}</Text>

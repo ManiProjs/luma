@@ -30,14 +30,14 @@ export const themes: ThemeDefinition[] = [
   {
     id: "system",
     name: "Match System",
-    description: "Follows the macOS appearance.",
-    accent: "#c49a5a",
+    description: "Follows your operating system's appearance.",
+    accent: "#78aaff",
   },
   {
     id: "luma",
     name: "Luma Dark",
     description: "The default Luma interface.",
-    accent: "#c49a5a",
+    accent: "#78aaff",
   },
   {
     id: "luma-light",
@@ -49,25 +49,25 @@ export const themes: ThemeDefinition[] = [
     id: "midnight",
     name: "Midnight",
     description: "Deep blue-black with cool highlights.",
-    accent: "#8b9cff",
+    accent: "#78aaff",
   },
   {
     id: "nord",
     name: "Nord",
     description: "Cool blue-gray developer palette.",
-    accent: "#88c0d0",
+    accent: "#78aaff",
   },
   {
     id: "dracula",
     name: "Dracula",
     description: "Dark purple with vivid accents.",
-    accent: "#bd93f9",
+    accent: "#78aaff",
   },
   {
     id: "solarized",
     name: "Solarized",
     description: "Warm, muted colors for long sessions.",
-    accent: "#268bd2",
+    accent: "#78aaff",
   },
 ];
 

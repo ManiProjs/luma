@@ -26,6 +26,7 @@ import {
   type ScheduleRecord,
   type TaskRecord,
   type RuntimeEvent,
+  type ModelConfig,
 } from "../../shared/protocol";
 import type { ChatAttachment } from "../../shared/attachments";
 
@@ -40,6 +41,7 @@ type PendingRequest = {
 
 let mainWindow: BrowserWindow | null = null;
 let workspaceRoot = path.resolve(process.env.LUMA_WORKSPACE || process.cwd());
+let defaultWorkspaceRoot = workspaceRoot;
 
 let lumaProcess: ChildProcessWithoutNullStreams | null = null;
 let respawnAttempts = 0;
@@ -440,15 +442,19 @@ function createWindow() {
 
     title: "Luma",
 
-    titleBarStyle: "hiddenInset",
-    transparent: true,
-    backgroundColor: "#00000000",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : process.platform === "win32" ? "hidden" : "default",
+    ...(process.platform === "darwin" ? { trafficLightPosition: { x: 18, y: 20 } } : {}),
+    transparent: process.platform !== "linux",
+    backgroundColor: process.platform === "linux" ? "#101010" : "#00000000",
     // Let the OS compositor draw the material behind transparent renderer
     // surfaces instead of trying to imitate acrylic with CSS blur alone.
     ...(process.platform === "darwin"
       ? { vibrancy: "sidebar" as const, visualEffectState: "followWindow" as const }
       : process.platform === "win32"
-        ? { backgroundMaterial: "acrylic" as const }
+        ? {
+            backgroundMaterial: "acrylic" as const,
+            titleBarOverlay: { color: "#171717", symbolColor: "#efede7", height: 48 },
+          }
         : {}),
 
     webPreferences: {
@@ -506,6 +512,17 @@ function createApplicationMenu() {
     {
       label: "File",
       submenu: [
+        {
+          label: "New Chat",
+          accelerator: "CommandOrControl+N",
+          click: () => mainWindow?.webContents.send("luma:new-chat"),
+        },
+        {
+          label: "Open Workspace…",
+          accelerator: "CommandOrControl+Shift+O",
+          click: () => mainWindow?.webContents.send("luma:open-workspace"),
+        },
+        { type: "separator" as const },
         ...(isMac
           ? []
           : [
@@ -534,6 +551,12 @@ function createApplicationMenu() {
     {
       label: "View",
       submenu: [
+        {
+          label: "Toggle Sidebar",
+          accelerator: "CommandOrControl+B",
+          click: () => mainWindow?.webContents.send("luma:toggle-sidebar"),
+        },
+        { type: "separator" },
         { role: "reload" },
         { role: "toggleDevTools" },
         { type: "separator" },
@@ -579,6 +602,7 @@ app.whenReady().then(async () => {
   } catch {
     workspaceRoot = await fs.realpath(process.cwd());
   }
+  defaultWorkspaceRoot = workspaceRoot;
   startLuma();
   createApplicationMenu();
 
@@ -609,7 +633,43 @@ app.whenReady().then(async () => {
     return { ok: true };
   });
 
+  ipcMain.handle("luma:quit", () => {
+    app.quit();
+    return { ok: true };
+  });
+
   ipcMain.handle("luma:get-workspace", () => ({ path: workspaceRoot }));
+  ipcMain.handle("luma:get-default-workspace", () => ({ path: defaultWorkspaceRoot }));
+  ipcMain.handle("luma:choose-project-workspace", async () => {
+    const options: OpenDialogOptions = {
+      title: "Choose Project folder",
+      defaultPath: workspaceRoot,
+      properties: ["openDirectory", "createDirectory"],
+    };
+    const result = mainWindow
+      ? await dialog.showOpenDialog(mainWindow, options)
+      : await dialog.showOpenDialog(options);
+    if (result.canceled || !result.filePaths[0]) return { path: null, canceled: true };
+    const selectedPath = await fs.realpath(result.filePaths[0]);
+    const stat = await fs.stat(selectedPath);
+    if (!stat.isDirectory()) throw new Error("A Project workspace must be a folder.");
+    return { path: selectedPath, canceled: false };
+  });
+  ipcMain.handle("luma:set-workspace", async (_event, requestedPath: string) => {
+    if (typeof requestedPath !== "string" || !requestedPath.trim()) {
+      throw new Error("A workspace folder is required.");
+    }
+    const selectedPath = await fs.realpath(requestedPath);
+    const stat = await fs.stat(selectedPath);
+    if (!stat.isDirectory()) throw new Error("The workspace must be a folder.");
+    if (selectedPath === workspaceRoot) return { path: workspaceRoot };
+    workspaceRoot = selectedPath;
+    stopLuma();
+    startLuma();
+    await lumaReadyPromise;
+    mainWindow?.webContents.send("luma:workspace-changed", { path: workspaceRoot });
+    return { path: workspaceRoot };
+  });
   ipcMain.handle("luma:choose-workspace", async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
       title: "Choose workspace folder",
@@ -617,10 +677,13 @@ app.whenReady().then(async () => {
     });
     if (result.canceled || !result.filePaths[0]) return { path: workspaceRoot, canceled: true };
     workspaceRoot = await fs.realpath(result.filePaths[0]);
+    defaultWorkspaceRoot = workspaceRoot;
     await fs.mkdir(app.getPath("userData"), { recursive: true });
     await fs.writeFile(path.join(app.getPath("userData"), "workspace.json"), JSON.stringify({ path: workspaceRoot }), "utf8");
     stopLuma();
     startLuma();
+    await lumaReadyPromise;
+    mainWindow?.webContents.send("luma:workspace-changed", { path: workspaceRoot });
     return { path: workspaceRoot, canceled: false };
   });
   ipcMain.handle("luma:list-workspace-files", async () => readWorkspaceTree(workspaceRoot));
@@ -858,6 +921,27 @@ app.whenReady().then(async () => {
     return {
       ok: true,
     };
+  });
+
+  ipcMain.handle("luma:set-session-model", async (_event, model: unknown) => {
+    if (typeof model !== "object" || model === null
+      || !("provider" in model) || typeof model.provider !== "string"
+      || !("endpoint" in model) || typeof model.endpoint !== "string"
+      || !("name" in model) || typeof model.name !== "string"
+      || !("api_key" in model) || !(model.api_key === null || typeof model.api_key === "string")) {
+      throw new Error("Invalid session model configuration.");
+    }
+    const sessionModel: ModelConfig = {
+      provider: model.provider as string,
+      endpoint: model.endpoint as string,
+      name: model.name as string,
+      api_key: model.api_key as string | null,
+    };
+    const changed = await requestLuma("model_changed", (request_id) => ({
+      type: "set_session_model", data: { request_id, model: sessionModel },
+    }));
+    if (changed.type !== "model_changed") throw new Error("Unexpected response to set_session_model.");
+    return { ok: true };
   });
 
   ipcMain.handle(

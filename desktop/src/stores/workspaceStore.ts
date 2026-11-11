@@ -17,6 +17,7 @@ export type Project = {
   id: string;
   name: string;
   createdAt: number;
+  workspacePath: string | null;
 };
 
 type WorkspaceSnapshot = {
@@ -25,10 +26,12 @@ type WorkspaceSnapshot = {
   activeChatId: string | null;
   activeProjectId: string | null;
   draft: Chat | null;
+  isPendingNewChat: boolean; // Add this
   historyLoaded?: boolean;
 };
 
 type WorkspaceState = WorkspaceSnapshot & {
+  startNewChat: (projectId?: string | null) => void; // New method
   createChat: (projectId?: string | null) => Chat;
   selectChat: (chatId: string) => void;
   renameChat: (chatId: string, title: string) => void;
@@ -41,6 +44,8 @@ type WorkspaceState = WorkspaceSnapshot & {
   selectProject: (projectId: string | null) => void;
   renameProject: (projectId: string, name: string) => void;
   deleteProject: (projectId: string) => void;
+  setProjectWorkspace: (projectId: string, workspacePath: string) => void;
+  clearHistory: () => void; // New method
 };
 
 const STORAGE_KEY = "luma.workspace";
@@ -74,6 +79,7 @@ function createDefaultSnapshot(): WorkspaceSnapshot {
     activeChatId: null,
     activeProjectId: null,
     draft: null,
+    isPendingNewChat: false,
     historyLoaded: false,
   };
 }
@@ -98,7 +104,7 @@ function parseMessages(value: unknown): AgentMessage[] {
       continue;
     }
 
-    if (item.role !== "user" && item.role !== "assistant") {
+    if (item.role !== "user" && item.role !== "assistant" && item.role !== "error") {
       continue;
     }
 
@@ -174,6 +180,7 @@ function parseProjects(value: unknown): Project[] {
       id: item.id,
       name: item.name,
       createdAt: item.createdAt,
+      workspacePath: typeof item.workspacePath === "string" ? item.workspacePath : null,
     });
   }
 
@@ -226,6 +233,9 @@ function loadSnapshot(): WorkspaceSnapshot {
       activeChatId,
       activeProjectId,
       draft: null,
+      // An unsent draft exists only in memory. Never resurrect it as a chat
+      // after a restart, and never turn it into a saved archive implicitly.
+      isPendingNewChat: false,
       historyLoaded: false,
     };
   } catch {
@@ -244,6 +254,7 @@ function persist(state: WorkspaceSnapshot) {
     activeChatId: state.activeChatId,
     activeProjectId: state.activeProjectId,
     draft: null,
+    isPendingNewChat: state.isPendingNewChat,
   };
 
   window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
@@ -268,6 +279,25 @@ function titleFromMessages(messages: AgentMessage[], fallback: string): string {
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   ...loadSnapshot(),
 
+  startNewChat: (projectId) => {
+    const state = get();
+    const resolvedProjectId =
+      projectId === undefined ? state.activeProjectId : projectId;
+    const draft = createEmptyChat(resolvedProjectId);
+
+    const next: WorkspaceSnapshot = {
+      ...state,
+      activeChatId: draft.id,
+      activeProjectId: resolvedProjectId,
+      draft,
+      isPendingNewChat: true,
+    };
+
+    // Keep this draft in memory only. The core archive and local chat history
+    // are created by setChatMessages after the first user message arrives.
+    set(next);
+  },
+
   createChat: (projectId) => {
     const state = get();
     const resolvedProjectId =
@@ -280,6 +310,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeChatId: chat.id,
       activeProjectId: resolvedProjectId,
       draft: chat,
+      isPendingNewChat: false,
     };
 
     persist(next);
@@ -302,6 +333,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeChatId: chat.id,
       activeProjectId: chat.projectId,
       draft: null,
+      isPendingNewChat: false,
     };
 
     persist(next);
@@ -364,6 +396,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       activeChatId: state.activeChatId === chatId ? null : state.activeChatId,
       activeProjectId: state.activeProjectId,
       draft: state.draft?.id === chatId ? null : state.draft,
+      isPendingNewChat: state.isPendingNewChat,
     };
 
     persist(next);
@@ -375,7 +408,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const current = state.chats.find((chat) => chat.id === chatId);
 
     if (!current) {
-      if (messages.length === 0) {
+      // A slash command can return a system message without starting a chat.
+      // Only a real user message commits a pending draft to local history.
+      if (!messages.some((message) => message.role === "user")) {
         return;
       }
 
@@ -401,6 +436,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         activeChatId: chatId,
         activeProjectId: draft.projectId,
         draft: null,
+        isPendingNewChat: false,
       };
 
       persist(next);
@@ -476,16 +512,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       id: createId(),
       name: trimmed || "Untitled project",
       createdAt: Date.now(),
+      workspacePath: null,
     };
 
     const state = get();
+    const draft = createEmptyChat(project.id);
 
     const next: WorkspaceSnapshot = {
       chats: state.chats,
       projects: [...state.projects, project],
-      activeChatId: state.activeChatId,
+      activeChatId: draft.id,
       activeProjectId: project.id,
-      draft: state.draft,
+      draft,
+      isPendingNewChat: true,
     };
 
     persist(next);
@@ -501,12 +540,19 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       return;
     }
 
+    if (projectId === state.activeProjectId) return;
+
+    const latestChat = state.chats
+      .filter((chat) => chat.projectId === projectId)
+      .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+    const draft = latestChat ? null : createEmptyChat(projectId);
     const next: WorkspaceSnapshot = {
       chats: state.chats,
       projects: state.projects,
-      activeChatId: state.activeChatId,
+      activeChatId: latestChat?.id ?? draft?.id ?? null,
       activeProjectId: projectId,
-      draft: state.draft,
+      draft,
+      isPendingNewChat: draft !== null,
     };
 
     persist(next);
@@ -538,6 +584,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     set(next);
   },
 
+  setProjectWorkspace: (projectId, workspacePath) => {
+    const state = get();
+    const next: WorkspaceSnapshot = {
+      ...state,
+      projects: state.projects.map((project) =>
+        project.id === projectId ? { ...project, workspacePath } : project,
+      ),
+    };
+    persist(next);
+    set(next);
+  },
+
   deleteProject: (projectId) => {
     const state = get();
 
@@ -560,6 +618,23 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
               projectId: null,
             }
           : state.draft,
+      isPendingNewChat: state.isPendingNewChat,
+    };
+
+    persist(next);
+    set(next);
+  },
+
+  clearHistory: () => {
+    const state = get();
+
+    const next: WorkspaceSnapshot = {
+      chats: [],
+      projects: state.projects,
+      activeChatId: null,
+      activeProjectId: state.activeProjectId,
+      draft: null,
+      isPendingNewChat: false,
     };
 
     persist(next);

@@ -10,7 +10,11 @@ import type { ChatAttachment } from "../../shared/attachments";
 declare global {
   interface Window {
     luma: {
+      platform: NodeJS.Platform;
       getWorkspace(): Promise<{ path: string }>;
+      getDefaultWorkspace(): Promise<{ path: string }>;
+      chooseProjectWorkspace(): Promise<{ path: string | null; canceled?: boolean }>;
+      setWorkspace(path: string): Promise<{ path: string }>;
       chooseWorkspace(): Promise<{ path: string; canceled?: boolean }>;
       listWorkspaceFiles(): Promise<import("./App").WorkspaceNode[]>;
       getGitChanges(): Promise<{ branch: string; files: import("./App").GitChange[] }>;
@@ -51,6 +55,7 @@ declare global {
       saveSetupConfig(config: SetupConfig): Promise<{
         ok: boolean;
       }>;
+      setSessionModel(model: SetupConfig["model"]): Promise<{ ok: boolean }>;
 
       prompt(text: string): Promise<{
         ok: boolean;
@@ -72,8 +77,13 @@ declare global {
       getHistory(): Promise<ChatSummary[]>;
       restoreChat(id: string): Promise<{ ok: boolean }>;
       clearSession(): Promise<{ ok: boolean }>;
+      quit(): Promise<{ ok: boolean }>;
 
       onOpenSettings(callback: () => void): () => void;
+      onNewChat(callback: () => void): () => void;
+      onOpenWorkspace(callback: () => void): () => void;
+      onToggleSidebar(callback: () => void): () => void;
+      onWorkspaceChanged(callback: (path: string) => void): () => void;
 
       onEvent(callback: (event: LumaAgentEvent) => void): () => void;
     };

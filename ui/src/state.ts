@@ -41,6 +41,7 @@ export interface UiState {
   activeTool: string | null;
   confirmation: { name: string; input: string } | null;
   modelPicker: {
+    scope: "global" | "session";
     stage: "providers" | "models";
     providers: import("./protocol").SupportedProvider[];
     models: import("./protocol").SupportedModel[];

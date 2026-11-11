@@ -6,8 +6,9 @@ import { announce } from "../../utils/accessibility";
 
 export type AgentMessage = {
   id: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "error" | "tools";
   content: string;
+  tools?: AgentTool[];
 };
 
 export type AgentTool = {
@@ -16,6 +17,7 @@ export type AgentTool = {
   input: string;
   durationMs?: number;
   finished: boolean;
+  failed?: boolean;
   diff?: string;
 };
 
@@ -30,8 +32,6 @@ export function useLuma() {
 
   const [messages, setMessages] = useState<AgentMessage[]>([]);
 
-  const [tools, setTools] = useState<AgentTool[]>([]);
-
   const [thinking, setThinking] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +42,7 @@ export function useLuma() {
 
   const activeToolIds = useRef<string[]>([]);
   const pendingToolDiff = useRef<string | undefined>(undefined);
+  const toolGroupOpen = useRef(false);
   const mountedRef = useRef(false);
 
   const requestSession = useCallback(async () => {
@@ -88,22 +89,27 @@ export function useLuma() {
       case "session": {
         const snapshot = event.data.session;
         setSessionId(snapshot.chat_id);
-        setMessages(snapshot.messages
-          .filter((message) => message.role !== "tool")
-          .map((message, index) => ({
+        setMessages(snapshot.messages.reduce<AgentMessage[]>((items, message, index) => {
+          if (message.role === "tool") {
+            const tool: AgentTool = {
+              id: `session-tool-${index}`,
+              name: message.tool ?? "Tool",
+              input: message.content,
+              finished: !message.running,
+              durationMs: message.elapsed_ms ?? undefined,
+            };
+            const last = items[items.length - 1];
+            if (last?.role === "tools") last.tools = [...(last.tools ?? []), tool];
+            else items.push({ id: `session-tools-${index}`, role: "tools", content: "", tools: [tool] });
+            return items;
+          }
+          items.push({
             id: `session-${index}-${message.role}`,
-            role: message.role === "user" ? "user" : "assistant",
+            role: message.role === "user" ? "user" : message.role === "error" ? "error" : "assistant",
             content: message.content,
-          })));
-        setTools(snapshot.messages
-          .filter((message) => message.role === "tool")
-          .map((message, index) => ({
-            id: `session-tool-${index}`,
-            name: message.tool ?? "Tool",
-            input: message.content,
-            finished: !message.running,
-            durationMs: message.elapsed_ms ?? undefined,
-          })));
+          });
+          return items;
+        }, []));
         setThinking(snapshot.busy);
         setConfirmation(snapshot.confirmation);
         setError(null);
@@ -119,6 +125,7 @@ export function useLuma() {
       // ----------------------------------------------------
 
       case "Thinking": {
+        toolGroupOpen.current = false;
         setThinking(true);
         announce("Luma is thinking...");
         break;
@@ -132,6 +139,7 @@ export function useLuma() {
         if (typeof data !== "string" || !data) {
           return;
         }
+        toolGroupOpen.current = false;
 
         setMessages((current) => {
           const last = current[current.length - 1];
@@ -167,6 +175,7 @@ export function useLuma() {
         if (typeof data !== "string" || !data) {
           return;
         }
+        toolGroupOpen.current = false;
 
         setMessages((current) => [
           ...current,
@@ -203,16 +212,21 @@ export function useLuma() {
 
         activeToolIds.current.push(id);
 
-        setTools((current) => [
-          ...current,
-          {
-            id,
-            name: tool.name,
-            input: tool.input,
-            finished: false,
-            diff: tool.name === "patch_file" ? pendingToolDiff.current : undefined,
-          },
-        ]);
+        const nextTool: AgentTool = {
+          id,
+          name: tool.name,
+          input: tool.input,
+          finished: false,
+          diff: tool.name === "patch_file" ? pendingToolDiff.current : undefined,
+        };
+        setMessages((current) => {
+          const last = current[current.length - 1];
+          if (toolGroupOpen.current && last?.role === "tools") {
+            return [...current.slice(0, -1), { ...last, tools: [...(last.tools ?? []), nextTool] }];
+          }
+          return [...current, { id: crypto.randomUUID(), role: "tools", content: "", tools: [nextTool] }];
+        });
+        toolGroupOpen.current = true;
         pendingToolDiff.current = undefined;
 
         announce(`Running tool: ${tool.name}`);
@@ -233,35 +247,25 @@ export function useLuma() {
 
         announce(`Tool ${tool.name} completed in ${tool.duration_ms}ms`);
 
-        setTools((current) => {
-          // Prefer the most recent unfinished
-          // invocation of this tool.
-          const index = [...current]
-            .reverse()
-            .findIndex((item) => item.name === tool.name && !item.finished);
-
-          if (index === -1) {
-            return current;
+        setMessages((current) => {
+          for (let messageIndex = current.length - 1; messageIndex >= 0; messageIndex -= 1) {
+            const message = current[messageIndex];
+            if (message.role !== "tools" || !message.tools) continue;
+            const toolIndex = [...message.tools].reverse().findIndex((item) => item.name === tool.name && !item.finished);
+            if (toolIndex < 0) continue;
+            const realIndex = message.tools.length - 1 - toolIndex;
+            const previous = message.tools[realIndex];
+            const nextTools = message.tools.map((item, index) => index === realIndex ? {
+              ...item,
+              finished: true,
+              failed: tool.failed,
+              durationMs: tool.duration_ms,
+              diff: typeof tool.diff === "string" ? tool.diff : item.diff,
+            } : item);
+            activeToolIds.current = activeToolIds.current.filter((id) => id !== previous.id);
+            return current.map((item, index) => index === messageIndex ? { ...message, tools: nextTools } : item);
           }
-
-          const realIndex = current.length - 1 - index;
-
-          const item = current[realIndex];
-
-          activeToolIds.current = activeToolIds.current.filter(
-            (id) => id !== item.id,
-          );
-
-          return current.map((currentItem, currentIndex) =>
-            currentIndex === realIndex
-              ? {
-                  ...currentItem,
-                  finished: true,
-                  durationMs: tool.duration_ms,
-                  diff: typeof tool.diff === "string" ? tool.diff : currentItem.diff,
-                }
-              : currentItem,
-          );
+          return current;
         });
 
         break;
@@ -320,7 +324,9 @@ export function useLuma() {
         setThinking(false);
         setConfirmation(null);
         activeToolIds.current = [];
-        setTools((current) => current.map((tool) => ({ ...tool, finished: true })));
+        setMessages((current) => current.map((message) => message.role === "tools"
+          ? { ...message, tools: message.tools?.map((tool) => ({ ...tool, finished: true })) }
+          : message));
         setMessages((current) => [...current, {
           id: crypto.randomUUID(),
           role: "assistant",
@@ -339,10 +345,15 @@ export function useLuma() {
 
       case "Error": {
         const message = typeof data === "string" ? data : "The agent encountered an error.";
-        setError(message);
+        setError(null);
+        setMessages((current) => [...current, {
+          id: crypto.randomUUID(),
+          role: "error",
+          content: message,
+        }]);
         setThinking(false);
         setConfirmation(null);
-        announce(`Error: ${message}`, "assertive");
+        announce("Failed to run tool. Press Command+O to inspect the error details.", "assertive");
         break;
       }
 
@@ -393,7 +404,6 @@ export function useLuma() {
   const resetSession = useCallback((nextMessages: AgentMessage[] = []) => {
     activeToolIds.current = [];
     setMessages(nextMessages);
-    setTools([]);
     setThinking(false);
     setError(null);
     setConfirmation(null);
@@ -407,7 +417,6 @@ export function useLuma() {
     }
 
     setError(null);
-    setTools([]);
     activeToolIds.current = [];
     pendingToolDiff.current = undefined;
 
@@ -426,6 +435,21 @@ export function useLuma() {
       setError(
         error instanceof Error ? error.message : "Failed to send prompt.",
       );
+    }
+  }, []);
+
+  // Local slash commands are handled by the core session and return their
+  // result as a SystemMessage. Do not optimistically add the command itself
+  // as a user chat message: commands such as /status must not create archives.
+  const runCommand = useCallback(async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    setError(null);
+    try {
+      await window.luma.prompt(trimmed);
+      await window.luma.getSession();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Failed to run command.");
     }
   }, []);
 
@@ -457,6 +481,8 @@ export function useLuma() {
     }
   }, []);
 
+  const tools = messages.flatMap((message) => message.role === "tools" ? message.tools ?? [] : []);
+
   return {
     connected,
     sessionId,
@@ -466,6 +492,7 @@ export function useLuma() {
     error,
     confirmation,
     sendPrompt,
+    runCommand,
     respondToConfirmation,
     cancel,
     resetSession,
@@ -492,6 +519,7 @@ function isToolStartedData(data: unknown): data is {
 function isToolFinishedData(data: unknown): data is {
   name: string;
   duration_ms: number;
+  failed?: boolean;
   diff?: string | null;
 } {
   if (typeof data !== "object" || data === null) {
@@ -502,6 +530,7 @@ function isToolFinishedData(data: unknown): data is {
 
   return (
     typeof value.name === "string" && typeof value.duration_ms === "number"
+    && (value.failed === undefined || typeof value.failed === "boolean")
   );
 }
 
