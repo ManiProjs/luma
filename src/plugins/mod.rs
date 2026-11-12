@@ -5,7 +5,7 @@ mod manager;
 pub(crate) mod manifest;
 mod tool;
 
-pub use manager::PluginManager;
+pub use manager::{InstalledPlugin, PluginManager};
 pub use manifest::{PluginManifest, PluginToolManifest};
 pub use tool::PluginTool;
 

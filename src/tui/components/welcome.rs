@@ -65,7 +65,7 @@ impl<'a> WelcomeScreen<'a> {
         let lines = vec![
             Line::from(vec![Span::styled("LUMA", title)]),
             Line::from(vec![
-                Span::styled("Local-first AI coding agent", muted),
+                Span::styled("Provider-flexible AI coding agent", muted),
                 Span::styled("                         ", muted),
                 Span::styled("● ", accent),
                 Span::styled("Ready", accent),

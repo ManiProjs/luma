@@ -187,6 +187,56 @@ pub enum ClientMessage {
         request_id: String,
         id: String,
     },
+    TaskRename {
+        request_id: String,
+        id: String,
+        title: String,
+    },
+    TaskDelete {
+        request_id: String,
+        id: String,
+    },
+    PluginsList {
+        request_id: String,
+    },
+    PluginInstall {
+        request_id: String,
+        path: String,
+    },
+    PluginSetEnabled {
+        request_id: String,
+        id: String,
+        enabled: bool,
+    },
+    PluginUninstall {
+        request_id: String,
+        id: String,
+    },
+    McpList {
+        request_id: String,
+    },
+    McpAddStdio {
+        request_id: String,
+        id: String,
+        command: String,
+        args: Vec<String>,
+        env: std::collections::BTreeMap<String, String>,
+    },
+    McpAddHttp {
+        request_id: String,
+        id: String,
+        url: String,
+        headers: std::collections::BTreeMap<String, String>,
+    },
+    McpSetEnabled {
+        request_id: String,
+        id: String,
+        enabled: bool,
+    },
+    McpRemove {
+        request_id: String,
+        id: String,
+    },
     ApprovalsList {
         request_id: String,
     },
@@ -276,6 +326,17 @@ impl ClientMessage {
             | Self::TaskCreate { request_id, .. }
             | Self::TaskCancel { request_id, .. }
             | Self::TaskRetry { request_id, .. }
+            | Self::TaskRename { request_id, .. }
+            | Self::TaskDelete { request_id, .. }
+            | Self::PluginsList { request_id }
+            | Self::PluginInstall { request_id, .. }
+            | Self::PluginSetEnabled { request_id, .. }
+            | Self::PluginUninstall { request_id, .. }
+            | Self::McpList { request_id }
+            | Self::McpAddStdio { request_id, .. }
+            | Self::McpAddHttp { request_id, .. }
+            | Self::McpSetEnabled { request_id, .. }
+            | Self::McpRemove { request_id, .. }
             | Self::ApprovalsList { request_id }
             | Self::ApprovalResolve { request_id, .. }
             | Self::MemoryList { request_id, .. }
@@ -350,6 +411,17 @@ impl ClientMessage {
             | Self::TaskCreate { .. }
             | Self::TaskCancel { .. }
             | Self::TaskRetry { .. }
+            | Self::TaskRename { .. }
+            | Self::TaskDelete { .. }
+            | Self::PluginsList { .. }
+            | Self::PluginInstall { .. }
+            | Self::PluginSetEnabled { .. }
+            | Self::PluginUninstall { .. }
+            | Self::McpList { .. }
+            | Self::McpAddStdio { .. }
+            | Self::McpAddHttp { .. }
+            | Self::McpSetEnabled { .. }
+            | Self::McpRemove { .. }
             | Self::ApprovalsList { .. }
             | Self::ApprovalResolve { .. }
             | Self::MemoryList { .. }
@@ -474,6 +546,40 @@ pub enum ServerEvent {
     TaskSaved {
         request_id: String,
         task: crate::runtime::TaskRecord,
+    },
+    TaskDeleted {
+        request_id: String,
+        id: String,
+        deleted: bool,
+    },
+    Plugins {
+        request_id: String,
+        plugins: Vec<(
+            crate::plugins::InstalledPlugin,
+            crate::plugins::PluginManifest,
+        )>,
+    },
+    PluginSaved {
+        request_id: String,
+        plugin: crate::plugins::InstalledPlugin,
+    },
+    PluginDeleted {
+        request_id: String,
+        id: String,
+        deleted: bool,
+    },
+    McpServers {
+        request_id: String,
+        servers: Vec<crate::mcp::McpServerConfig>,
+    },
+    McpSaved {
+        request_id: String,
+        server: crate::mcp::McpServerConfig,
+    },
+    McpDeleted {
+        request_id: String,
+        id: String,
+        deleted: bool,
     },
     Approvals {
         request_id: String,
@@ -683,6 +789,67 @@ mod tests {
         let decoded = decode(encode(&message).unwrap().trim_end()).unwrap();
         assert_eq!(decoded.request_id(), Some("delete-agent-1"));
         assert!(matches!(decoded, ClientMessage::AgentDelete { id, .. } if id == "agent_123"));
+    }
+
+    #[test]
+    fn task_and_extension_management_requests_keep_their_request_ids() {
+        let requests = [
+            ClientMessage::TaskRename {
+                request_id: "task-rename".into(),
+                id: "task-1".into(),
+                title: "A title".into(),
+            },
+            ClientMessage::TaskDelete {
+                request_id: "task-delete".into(),
+                id: "task-1".into(),
+            },
+            ClientMessage::PluginsList {
+                request_id: "plugins-list".into(),
+            },
+            ClientMessage::PluginInstall {
+                request_id: "plugin-install".into(),
+                path: "/tmp/plugin".into(),
+            },
+            ClientMessage::PluginSetEnabled {
+                request_id: "plugin-toggle".into(),
+                id: "sample".into(),
+                enabled: true,
+            },
+            ClientMessage::PluginUninstall {
+                request_id: "plugin-remove".into(),
+                id: "sample".into(),
+            },
+            ClientMessage::McpList {
+                request_id: "mcp-list".into(),
+            },
+            ClientMessage::McpAddStdio {
+                request_id: "mcp-stdio".into(),
+                id: "filesystem".into(),
+                command: "npx".into(),
+                args: vec!["-y".into()],
+                env: Default::default(),
+            },
+            ClientMessage::McpAddHttp {
+                request_id: "mcp-http".into(),
+                id: "hosted".into(),
+                url: "https://example.com/mcp".into(),
+                headers: Default::default(),
+            },
+            ClientMessage::McpSetEnabled {
+                request_id: "mcp-toggle".into(),
+                id: "hosted".into(),
+                enabled: true,
+            },
+            ClientMessage::McpRemove {
+                request_id: "mcp-remove".into(),
+                id: "hosted".into(),
+            },
+        ];
+        for request in requests {
+            let expected = request.request_id().unwrap().to_owned();
+            let decoded = decode(encode(&request).unwrap().trim_end()).unwrap();
+            assert_eq!(decoded.request_id(), Some(expected.as_str()));
+        }
     }
 
     #[test]

@@ -27,6 +27,7 @@ args = ["main.py"]
 [[tools]]
 name = "summarize_text"
 description = "Summarize text supplied in the input object"
+model_guide = "Use this for short text summaries. Pass the complete source text in the text field; do not use it to read files."
 read_only = true # Informational only; Luma still asks before external actions.
 requires_network = false
 input_schema = { type = "object", properties = { text = { type = "string" } }, required = ["text"] }
@@ -75,6 +76,10 @@ require approval by default. Both `read_only` and
 `requires_network` are descriptive only: Luma does not trust a child process
 to certify its own safety or lack of network access. Every native plugin tool
 therefore requires the agent's network permission as well as tool approval.
+Each tool can provide a separate `model_guide` alongside its internal `name`
+and user-facing `description`. Luma builds the model's available-tool prompt
+from these registered values automatically; if `model_guide` is omitted, the
+description is used as the model guidance.
 Code grants the network capability when an enabled external integration exposes
 a tool. Teammates follow their per-agent Internet access setting.
 

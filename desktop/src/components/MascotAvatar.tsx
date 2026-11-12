@@ -1,17 +1,18 @@
 import { getMascotAppearance } from "../../../shared/mascot";
 
-export function MascotAvatar({ seed, mascot, label, size = 38, active = false }: {
+export function MascotAvatar({ seed, mascot, label, size = 38, active = false, activity = "idle" }: {
   seed: string;
   mascot?: string;
   label?: string;
   size?: number;
   active?: boolean;
+  activity?: "idle" | "sending" | "thinking" | "writing";
 }) {
   const appearance = getMascotAppearance(mascot ?? "auto", seed);
+  if (activity === "sending") return <span className="luma-mascot-dots" style={{ width: size, height: size }} aria-label="Sending message"><i /><i /><i /></span>;
   return (
-    <svg className={active ? "luma-mascot luma-mascot--active" : "luma-mascot"} width={size} height={size} viewBox="0 0 48 48"
+    <svg className={`luma-mascot luma-mascot--${activity}${active ? " luma-mascot--active" : ""}`} width={size} height={size} viewBox="0 0 48 48"
       role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : true} focusable="false">
-      <circle cx="24" cy="24" r="22" fill="none" stroke={appearance.color} strokeOpacity=".48" strokeWidth="1.5" />
       <path d={appearance.accessory} fill="none" stroke={appearance.color} strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
       <path d={appearance.body} fill={appearance.color} stroke="#171923" strokeOpacity=".22" strokeWidth="1.2" />
       <ellipse cx="16" cy="31" rx="3" ry="1.5" fill="#fff" opacity=".16" />

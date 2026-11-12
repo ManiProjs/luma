@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, type OpenDialogOptions } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell, type OpenDialogOptions } from "electron";
 
 import path from "node:path";
 import { existsSync } from "node:fs";
@@ -27,13 +27,16 @@ import {
   type TaskRecord,
   type RuntimeEvent,
   type ModelConfig,
+  type PluginEntry,
+  type McpServerConfig,
 } from "../../shared/protocol";
 import type { ChatAttachment } from "../../shared/attachments";
 
 type PendingRequest = {
   expectedType: "setup_config" | "setup_saved" | "providers" | "models" | "provider_tested" | "model_changed"
-    | "agents" | "agent_saved" | "agent_deleted" | "tasks" | "task_saved" | "approvals" | "approval_resolved"
+    | "agents" | "agent_saved" | "agent_deleted" | "tasks" | "task_saved" | "task_deleted" | "approvals" | "approval_resolved"
     | "memory" | "memory_saved" | "memory_deleted" | "schedules" | "schedule_saved" | "schedule_deleted" | "runtime_events"
+    | "plugins" | "plugin_saved" | "plugin_deleted" | "mcp_servers" | "mcp_saved" | "mcp_deleted"
     | "history_list";
   resolve: (value: ServerEvent) => void;
   reject: (reason?: unknown) => void;
@@ -818,6 +821,100 @@ app.whenReady().then(async () => {
     const response = await requestLuma("task_saved", (request_id) => ({ type: "task_retry", data: { request_id, id } }));
     if (response.type !== "task_saved") throw new Error("Unexpected response to task_retry.");
     return response.data.task;
+  });
+
+  ipcMain.handle("luma:rename-task", async (_event, id: string, title: string) => {
+    const response = await requestLuma("task_saved", (request_id) => ({ type: "task_rename", data: { request_id, id, title } }));
+    if (response.type !== "task_saved") throw new Error("Unexpected response to task_rename.");
+    return response.data.task;
+  });
+
+  ipcMain.handle("luma:delete-task", async (_event, id: string) => {
+    const response = await requestLuma("task_deleted", (request_id) => ({ type: "task_delete", data: { request_id, id } }));
+    if (response.type !== "task_deleted") throw new Error("Unexpected response to task_delete.");
+    return response.data.deleted;
+  });
+
+  ipcMain.handle("luma:get-skills", async () => {
+    const root = path.join(app.getPath("appData"), "luma", "skills");
+    await fs.mkdir(root, { recursive: true });
+    const entries = await fs.readdir(root, { withFileTypes: true });
+    return Promise.all(entries.filter((entry) => entry.isDirectory()).map(async (entry) => {
+      const skillPath = path.join(root, entry.name, "SKILL.md");
+      try { return { name: entry.name, content: await fs.readFile(skillPath, "utf8") }; }
+      catch { return { name: entry.name, content: "" }; }
+    }));
+  });
+
+  ipcMain.handle("luma:create-skill", async (_event, name: string, description: string, instructions: string) => {
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) throw new Error("Skill names must use lowercase letters, numbers, and hyphens.");
+    if (!description.trim() || !instructions.trim()) throw new Error("A description and instructions are required.");
+    const root = path.join(app.getPath("appData"), "luma", "skills");
+    const directory = path.join(root, name);
+    await fs.mkdir(root, { recursive: true });
+    await fs.mkdir(directory);
+    const content = `---\nname: ${name}\ndescription: ${JSON.stringify(description.trim().replace(/[\r\n]+/g, " "))}\n---\n\n${instructions.trim()}\n`;
+    if (new TextEncoder().encode(content).byteLength > 256 * 1024) throw new Error("A skill must be 256 KiB or smaller.");
+    await fs.writeFile(path.join(directory, "SKILL.md"), content, { encoding: "utf8", flag: "wx" });
+    return { name, content };
+  });
+
+  ipcMain.handle("luma:open-extension-folder", async (_event, kind: "skills" | "plugins" | "mcp") => {
+    const folder = path.join(app.getPath("appData"), "luma", kind === "mcp" ? "mcp" : kind);
+    await fs.mkdir(folder, { recursive: true });
+    const error = await shell.openPath(folder);
+    if (error) throw new Error(error);
+    return { ok: true };
+  });
+
+  ipcMain.handle("luma:choose-plugin-package", async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, { properties: ["openDirectory"] });
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  });
+  ipcMain.handle("luma:get-plugins", async (): Promise<PluginEntry[]> => {
+    const response = await requestLuma("plugins", (request_id) => ({ type: "plugins_list", data: { request_id } }));
+    if (response.type !== "plugins") throw new Error("Unexpected response to plugins_list.");
+    return response.data.plugins;
+  });
+  ipcMain.handle("luma:install-plugin", async (_event, pluginPath: string) => {
+    const response = await requestLuma("plugin_saved", (request_id) => ({ type: "plugin_install", data: { request_id, path: pluginPath } }));
+    if (response.type !== "plugin_saved") throw new Error("Unexpected response to plugin_install.");
+    return response.data.plugin;
+  });
+  ipcMain.handle("luma:set-plugin-enabled", async (_event, id: string, enabled: boolean) => {
+    const response = await requestLuma("plugin_saved", (request_id) => ({ type: "plugin_set_enabled", data: { request_id, id, enabled } }));
+    if (response.type !== "plugin_saved") throw new Error("Unexpected response to plugin_set_enabled.");
+    return response.data.plugin;
+  });
+  ipcMain.handle("luma:uninstall-plugin", async (_event, id: string) => {
+    const response = await requestLuma("plugin_deleted", (request_id) => ({ type: "plugin_uninstall", data: { request_id, id } }));
+    if (response.type !== "plugin_deleted") throw new Error("Unexpected response to plugin_uninstall.");
+    return response.data.deleted;
+  });
+  ipcMain.handle("luma:get-mcp-servers", async (): Promise<McpServerConfig[]> => {
+    const response = await requestLuma("mcp_servers", (request_id) => ({ type: "mcp_list", data: { request_id } }));
+    if (response.type !== "mcp_servers") throw new Error("Unexpected response to mcp_list.");
+    return response.data.servers;
+  });
+  ipcMain.handle("luma:add-mcp-stdio", async (_event, input: { id: string; command: string; args: string[]; env: Record<string, string> }) => {
+    const response = await requestLuma("mcp_saved", (request_id) => ({ type: "mcp_add_stdio", data: { request_id, ...input } }));
+    if (response.type !== "mcp_saved") throw new Error("Unexpected response to mcp_add_stdio.");
+    return response.data.server;
+  });
+  ipcMain.handle("luma:add-mcp-http", async (_event, input: { id: string; url: string; headers: Record<string, string> }) => {
+    const response = await requestLuma("mcp_saved", (request_id) => ({ type: "mcp_add_http", data: { request_id, ...input } }));
+    if (response.type !== "mcp_saved") throw new Error("Unexpected response to mcp_add_http.");
+    return response.data.server;
+  });
+  ipcMain.handle("luma:set-mcp-enabled", async (_event, id: string, enabled: boolean) => {
+    const response = await requestLuma("mcp_saved", (request_id) => ({ type: "mcp_set_enabled", data: { request_id, id, enabled } }));
+    if (response.type !== "mcp_saved") throw new Error("Unexpected response to mcp_set_enabled.");
+    return response.data.server;
+  });
+  ipcMain.handle("luma:remove-mcp", async (_event, id: string) => {
+    const response = await requestLuma("mcp_deleted", (request_id) => ({ type: "mcp_remove", data: { request_id, id } }));
+    if (response.type !== "mcp_deleted") throw new Error("Unexpected response to mcp_remove.");
+    return response.data.deleted;
   });
 
   ipcMain.handle("luma:get-approvals", async (): Promise<ApprovalRecord[]> => {

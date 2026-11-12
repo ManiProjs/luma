@@ -5,6 +5,7 @@
 //! subprocess trees without changing the server's global current directory.
 
 use anyhow::{Context, Result, anyhow, bail};
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -15,9 +16,10 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     agent::{Agent, Confirmation},
     config::{self, ModelConfig},
+    context::{Message, MessageRole},
     event::AgentEvent,
     history::{History, HistoryMessage},
-    model::DynamicModel,
+    model::{CompletionRequest, DynamicModel, Model},
     react::ReAct,
     runtime::{AgentStatus, MemoryScope, RuntimeStore, TaskStatus},
     session::RequestCancellation,
@@ -111,6 +113,7 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
         registry.retain(enabled_tools);
     }
     let model = DynamicModel::new(&model_config);
+    let title_model = model.clone();
     let react = ReAct::new(model.clone(), &registry);
     let galaxy_path = std::env::current_dir()?.join("GALAXY.md");
     let galaxy = std::fs::read_to_string(&galaxy_path).unwrap_or_default();
@@ -220,6 +223,7 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
             )
             .await
     });
+    let task_for_title = task.clone();
     input_tx.send(task.request).await?;
     drop(input_tx);
 
@@ -237,10 +241,14 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     .await?;
 
     let mut finished = false;
+    let mut final_response = String::new();
     while !finished {
         tokio::select! {
             event = event_rx.recv() => match event {
                 Some(event) => {
+                    if let AgentEvent::TextDelta(chunk) = &event {
+                        final_response.push_str(chunk);
+                    }
                     finished = matches!(event, AgentEvent::Finished);
                     write_worker_output(&mut stdout, WorkerOutput::Event(event)).await?;
                 }
@@ -262,7 +270,7 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
         }
     }
     shutdown.cancel();
-    match worker.await {
+    let result = match worker.await {
         Ok(Ok(())) => Ok(()),
         Ok(Err(error)) => {
             write_worker_output(
@@ -275,7 +283,77 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
             Err(error)
         }
         Err(error) => Err(error.into()),
+    };
+    if result.is_ok() && finished {
+        if let Err(error) =
+            generate_task_title(&store, &title_model, &task_for_title, &final_response).await
+        {
+            tracing::warn!(task_id = %task_for_title.id, %error, "could not generate teammate chat title");
+        }
     }
+    result
+}
+
+async fn generate_task_title(
+    store: &RuntimeStore,
+    model: &DynamicModel,
+    original_task: &crate::runtime::TaskRecord,
+    response: &str,
+) -> Result<()> {
+    let Some(current) = store.get_task(&original_task.id)? else {
+        return Ok(());
+    };
+    let fallback_title: String = original_task
+        .request
+        .lines()
+        .next()
+        .unwrap_or("New chat")
+        .chars()
+        .take(100)
+        .collect();
+    if current.title != fallback_title || current.status != TaskStatus::Running {
+        return Ok(());
+    }
+    if response.trim().is_empty() {
+        return Ok(());
+    }
+    let request = CompletionRequest { messages: vec![
+        Message { role: MessageRole::System, content: "Create a concise chat title from the user's request and assistant response. Return only the title, without quotes or punctuation at the end. Use at most 7 words.".into() },
+        Message { role: MessageRole::User, content: format!("User request:\n{}\n\nAssistant response:\n{}", original_task.request, response.chars().take(2400).collect::<String>()) },
+    ] };
+    let mut stream = model.stream(request).await?;
+    let mut title = String::new();
+    while let Some(chunk) = stream.next().await {
+        title.push_str(&chunk?);
+        if title.len() > 512 {
+            break;
+        }
+    }
+    let title = title
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_matches(['"', '\'', '`'])
+        .trim();
+    let mut title_bytes = 0;
+    let title: String = title
+        .chars()
+        .take_while(|character| {
+            title_bytes += character.len_utf8();
+            title_bytes <= 120
+        })
+        .collect();
+    if !title.is_empty() {
+        let Some(latest) = store.get_task(&original_task.id)? else {
+            return Ok(());
+        };
+        if latest.title != fallback_title || latest.status != TaskStatus::Running {
+            return Ok(());
+        }
+        store.rename_task(&original_task.id, &title)?;
+    }
+    Ok(())
 }
 
 async fn write_worker_output<W: AsyncWriteExt + Unpin>(

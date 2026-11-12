@@ -11,6 +11,7 @@ pub struct PluginTool {
     tool: PluginToolManifest,
     name: String,
     description: String,
+    model_guide: String,
 }
 
 impl PluginTool {
@@ -33,12 +34,18 @@ impl PluginTool {
                 ""
             }
         );
+        let model_guide = tool
+            .model_guide
+            .clone()
+            .filter(|guide| !guide.trim().is_empty())
+            .unwrap_or_else(|| description.clone());
         Self {
             root,
             manifest,
             tool,
             name,
             description,
+            model_guide,
         }
     }
 }
@@ -49,6 +56,9 @@ impl Tool for PluginTool {
     }
     fn description(&self) -> &str {
         &self.description
+    }
+    fn model_guide(&self) -> &str {
+        &self.model_guide
     }
     // Manifest hints are descriptive, not authority. External plugin actions
     // remain approval-gated even if the plugin labels them read-only.
@@ -224,11 +234,13 @@ mod tests {
         let definition = PluginToolManifest {
             name: "hello".into(),
             description: "Return a test response".into(),
+            model_guide: None,
             read_only: true,
             requires_network: false,
             input_schema: None,
         };
         let tool = PluginTool::new(directory.path().to_owned(), manifest, definition);
         assert_eq!(tool.execute("{}").unwrap(), "native-plugin-ok");
+        assert_eq!(tool.model_guide(), tool.description());
     }
 }

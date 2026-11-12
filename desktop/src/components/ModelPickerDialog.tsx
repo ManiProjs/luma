@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import type { SetupConfig, SetupModel, SetupProvider } from "../stores/setupStore";
+import type { AgentRecord } from "../../../shared/protocol";
 
 type Props = {
-  scope: "global" | "session";
+  scope: "global" | "session" | "agent";
+  agent?: AgentRecord;
   onClose: () => void;
   onChanged: (config: SetupConfig) => void;
 };
 
-export default function ModelPickerDialog({ scope, onClose, onChanged }: Props) {
+export default function ModelPickerDialog({ scope, agent, onClose, onChanged }: Props) {
   const [config, setConfig] = useState<SetupConfig | null>(null);
   const [providers, setProviders] = useState<SetupProvider[]>([]);
   const [provider, setProvider] = useState<SetupProvider | null>(null);
@@ -24,9 +26,10 @@ export default function ModelPickerDialog({ scope, onClose, onChanged }: Props) 
     Promise.all([window.luma.getSetupConfig(), window.luma.getProviders()]).then(([saved, available]) => {
       if (!active) return;
       if (!saved) throw new Error("No model configuration is available.");
-      setConfig(saved);
+      const initial = agent ? { ...saved, model: { ...saved.model, provider: agent.configuration.provider ?? saved.model.provider, name: agent.configuration.model ?? saved.model.name, endpoint: agent.configuration.endpoint ?? saved.model.endpoint } } : saved;
+      setConfig(initial);
       setProviders(available);
-      const current = available.find((item) => item.id === saved.model.provider) ?? available[0] ?? null;
+      const current = available.find((item) => item.id === initial.model.provider) ?? available[0] ?? null;
       setProvider(current);
       setLoading(false);
     }).catch((reason) => {
@@ -70,7 +73,9 @@ export default function ModelPickerDialog({ scope, onClose, onChanged }: Props) 
     };
     try {
       if (scope === "global") await window.luma.saveSetupConfig(next);
-      else await window.luma.setSessionModel(next.model);
+      else if (scope === "session") await window.luma.setSessionModel(next.model);
+      else if (agent) await window.luma.updateAgent({ id: agent.id, configuration: { ...agent.configuration, provider: provider.id, model: name.trim(), endpoint } });
+      else throw new Error("Select a teammate before changing its model.");
       onChanged(next);
       onClose();
     } catch (reason) {
@@ -80,7 +85,7 @@ export default function ModelPickerDialog({ scope, onClose, onChanged }: Props) 
 
   return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-5" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section role="dialog" aria-modal="true" aria-labelledby="model-picker-title" className="flex max-h-[calc(100vh-40px)] w-full max-w-[560px] flex-col overflow-hidden rounded-xl border border-[var(--luma-border-strong)] bg-[var(--luma-surface)] shadow-2xl">
-      <header className="flex items-center justify-between border-b border-[var(--luma-border)] px-4 py-3"><div><h2 id="model-picker-title" className="text-[14px] font-semibold">Change {scope === "session" ? "session" : "default"} model</h2><p className="mt-0.5 text-[11px] text-[var(--luma-text-muted)]">{scope === "session" ? "Only this conversation changes. Your default stays untouched." : "Choose the model used by new sessions."}</p></div><button type="button" onClick={onClose} className="rounded px-2 py-1 text-[var(--luma-text-muted)] hover:bg-[var(--luma-surface-hover)]" aria-label="Close">×</button></header>
+      <header className="flex items-center justify-between border-b border-[var(--luma-border)] px-4 py-3"><div><h2 id="model-picker-title" className="text-[14px] font-semibold">Change {scope === "session" ? "session" : scope === "agent" ? `${agent?.name ?? "teammate"} model` : "default"} model</h2><p className="mt-0.5 text-[11px] text-[var(--luma-text-muted)]">{scope === "session" ? "Only this conversation changes." : scope === "agent" ? "This model will be used for this teammate's tasks." : "Choose the model used by new sessions."}</p></div><button type="button" onClick={onClose} className="rounded px-2 py-1 text-[var(--luma-text-muted)] hover:bg-[var(--luma-surface-hover)]" aria-label="Close">×</button></header>
       <div className="grid h-[420px] min-h-0 max-h-[calc(100vh-180px)] grid-cols-[180px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)]">
         <nav className="min-h-0 overflow-y-auto overscroll-contain border-r border-[var(--luma-border)] p-2" aria-label="Providers">{providers.map((item) => <button key={item.id} type="button" onClick={() => setProvider(item)} className={`mb-1 block w-full rounded-md px-2.5 py-2 text-left text-[11px] ${provider?.id === item.id ? "bg-[var(--luma-accent-soft)] text-[var(--luma-text)]" : "text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)]"}`}>{item.name}</button>)}</nav>
         <div className="flex min-h-0 min-w-0 flex-col p-3">

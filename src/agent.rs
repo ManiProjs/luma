@@ -779,7 +779,7 @@ where
 
     fn answer_system_prompt(&self) -> String {
         "\
-You are Luma, a local-first coding agent.
+You are Luma, an AI coding agent.
 
 Be concise, technical, and practical.
 

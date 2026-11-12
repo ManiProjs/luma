@@ -42,7 +42,7 @@ pub trait ReActTrait: Send + Sync {
 pub struct ReAct<M> {
     model: M,
     tools: Vec<String>,
-    descriptions: Vec<String>,
+    tool_metadata: Vec<crate::tools::ToolMetadata>,
 }
 
 #[async_trait::async_trait]
@@ -67,15 +67,24 @@ where
         Self {
             model,
             tools: tools.names(),
-            descriptions: tools.descriptions(),
+            tool_metadata: tools.metadata(),
         }
     }
 
     fn system_prompt(&self) -> String {
-        let tools = if self.descriptions.is_empty() {
+        let tools = if self.tool_metadata.is_empty() {
             "No tools are currently available.".to_owned()
         } else {
-            self.descriptions.join("\n")
+            self.tool_metadata
+                .iter()
+                .map(|tool| {
+                    format!(
+                        "- {}\n  Description: {}\n  Model guide: {}",
+                        tool.name, tool.description, tool.guide
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
         };
 
         format!(
@@ -470,6 +479,15 @@ mod tests {
         };
         let error = react.validate_response(&response).unwrap_err();
         assert!(error.to_string().contains("unknown tool"));
+    }
+
+    #[test]
+    fn system_prompt_includes_name_description_and_model_guide() {
+        let react = react_with_tools(&["read_file"]);
+        let prompt = react.system_prompt();
+        assert!(prompt.contains("- read_file"));
+        assert!(prompt.contains("Description:"));
+        assert!(prompt.contains("Model guide:"));
     }
 
     #[test]

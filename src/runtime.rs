@@ -781,6 +781,58 @@ impl RuntimeStore {
         db.query_row("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at FROM tasks WHERE id=?1", [id], task_from_row).optional().map_err(Into::into)
     }
 
+    pub fn rename_task(&self, id: &str, title: &str) -> Result<TaskRecord> {
+        let title = title.trim();
+        if title.is_empty() || title.len() > 120 {
+            bail!("chat title must contain between 1 and 120 characters");
+        }
+        let task = self
+            .get_task(id)?
+            .ok_or_else(|| anyhow!("task not found: {id}"))?;
+        let updated_at = now();
+        let db = self.db()?;
+        db.execute(
+            "UPDATE tasks SET title=?2, updated_at=?3 WHERE id=?1",
+            params![id, title, updated_at],
+        )?;
+        drop(db);
+        self.get_task(&task.id)?
+            .ok_or_else(|| anyhow!("task disappeared after rename: {id}"))
+    }
+
+    pub fn delete_task(&self, id: &str) -> Result<bool> {
+        let task = self
+            .get_task(id)?
+            .ok_or_else(|| anyhow!("task not found: {id}"))?;
+        if matches!(
+            task.status,
+            TaskStatus::Queued
+                | TaskStatus::Running
+                | TaskStatus::WaitingForApproval
+                | TaskStatus::Paused
+        ) {
+            bail!("cannot delete an active chat; cancel its task first");
+        }
+        let mut db = self.db()?;
+        let transaction = db.transaction()?;
+        transaction.execute(
+            "DELETE FROM memory_entries WHERE scope='task' AND scope_id=?1",
+            [id],
+        )?;
+        let deleted = transaction.execute("DELETE FROM tasks WHERE id=?1", [id])? > 0;
+        transaction.commit()?;
+        drop(db);
+        if deleted {
+            self.append_event(
+                Some(&task.agent_id),
+                None,
+                "task.deleted",
+                serde_json::json!({"id": id}),
+            )?;
+        }
+        Ok(deleted)
+    }
+
     pub fn list_tasks(&self, agent_id: Option<&str>, limit: usize) -> Result<Vec<TaskRecord>> {
         let db = self.db()?;
         let limit = limit.clamp(1, 500) as i64;
@@ -1532,6 +1584,52 @@ mod tests {
             store.get_task(&task.id).unwrap().unwrap().status,
             TaskStatus::Running
         );
+    }
+
+    #[test]
+    fn teammate_chat_can_be_renamed_and_deleted_after_completion() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = RuntimeStore::open(directory.path().join("runtime.sqlite3")).unwrap();
+        let agent = store
+            .create_agent(
+                "Research",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let task = store
+            .create_task(&agent.id, "Review the project", None, None, false, None)
+            .unwrap();
+        store
+            .transition_task(&task.id, TaskStatus::Running, None, None)
+            .unwrap();
+        store
+            .transition_task(&task.id, TaskStatus::Completed, None, None)
+            .unwrap();
+        let renamed = store.rename_task(&task.id, "Project review").unwrap();
+        assert_eq!(renamed.title, "Project review");
+        assert!(store.delete_task(&task.id).unwrap());
+        assert!(store.get_task(&task.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn active_teammate_chat_cannot_be_deleted_or_renamed_to_an_empty_title() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = RuntimeStore::open(directory.path().join("runtime.sqlite3")).unwrap();
+        let agent = store
+            .create_agent(
+                "Research",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let task = store
+            .create_task(&agent.id, "Review the project", None, None, false, None)
+            .unwrap();
+        assert!(store.delete_task(&task.id).is_err());
+        assert!(store.rename_task(&task.id, "  ").is_err());
     }
 
     #[test]

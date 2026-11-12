@@ -13,13 +13,13 @@ import { useLuma, type AgentTool } from "./renderer/hooks/useLuma";
 
 import SetupWizard from "./setup/SetupWizard";
 import ModelPickerDialog from "./components/ModelPickerDialog";
+import ExtensionsPanel from "./components/ExtensionsPanel";
 
 import type { SetupConfig } from "./stores/setupStore";
 
 import { useWorkspaceStore, type Chat } from "./stores/workspaceStore";
 import { MascotAvatar } from "./components/MascotAvatar";
-import type { AgentConfiguration, AgentRecord, ApprovalRecord, MemoryEntry, MemoryScope, ScheduleRecord, TaskRecord } from "../../shared/protocol";
-import type { RuntimeEvent } from "../../shared/protocol";
+import type { AgentConfiguration, AgentRecord, ApprovalRecord, MemoryEntry, MemoryScope, ScheduleRecord, TaskRecord, RuntimeEvent } from "../../shared/protocol";
 import { formatChatPrompt, type ChatAttachment } from "../../shared/attachments";
 import { MascotCustomizer } from "./components/MascotCustomizer";
 
@@ -167,6 +167,25 @@ function PlusIcon() {
       <path d="M12 5v14M5 12h14" />
     </svg>
   );
+}
+
+function PencilIcon() {
+  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 5 3 3M4 20l4.5-1 11-11a2.1 2.1 0 0 0-3-3l-11 11L4 20Z" /></svg>;
+}
+
+function TrashIcon() {
+  return <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m4 4v6m6-6v6" /></svg>;
+}
+
+function toolActivityLabel(tools: { name: string }[]) {
+  const displayNames: Record<string, string> = {
+    read_file: "Read", list_directory: "List", search_files: "Grep", write_file: "Write",
+    patch_file: "Edit", run_command: "Terminal", web_search: "Search", fetch_url: "Fetch",
+    http_request: "HTTP",
+  };
+  const labels = [...new Set(tools.map((tool) => displayNames[tool.name] ?? tool.name.split(/[_-]/g).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ")))];
+  const names = labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}` : labels[0] ?? "tools";
+  return `Used ${tools.length} ${names}`;
 }
 
 function PinIcon({ filled }: { filled?: boolean }) {
@@ -425,7 +444,7 @@ function SettingsPanel({
   const { theme, setTheme, definition } = useTheme();
   const trapRef = useFocusTrap(open);
 
-  const [section, setSection] = useState<"appearance" | "general" | "behavior">(
+  const [section, setSection] = useState<"appearance" | "general" | "behavior" | "extensions">(
     "appearance",
   );
 
@@ -480,6 +499,7 @@ function SettingsPanel({
           shadow-lg ring-1 ring-[var(--luma-border)]
         "
       >
+        <button type="button" onClick={onClose} aria-label="Close settings" title="Close settings" className="luma-settings-close luma-settings-close--corner">×</button>
         <div
           className="
             w-[140px] shrink-0
@@ -488,9 +508,7 @@ function SettingsPanel({
             p-2
           "
         >
-          <div id="settings-title" className="luma-kicker mb-1 px-2 py-1">
-            Settings
-          </div>
+          <div className="mb-1 flex items-center justify-between px-2 py-1"><div id="settings-title" className="luma-kicker">Settings</div></div>
           <div id="settings-description" className="sr-only">
             Configure Luma's appearance, connection, and model settings
           </div>
@@ -514,9 +532,10 @@ function SettingsPanel({
           >
             Behavior
           </SettingsNavButton>
+          <SettingsNavButton active={section === "extensions"} onClick={() => setSection("extensions")}>Extensions</SettingsNavButton>
         </div>
 
-        <div className="min-w-0 flex-1 p-4">
+        <div className="min-w-0 flex-1 overflow-y-auto p-4">
           {section === "appearance" && (
             <>
           <div className="mb-4">
@@ -674,6 +693,7 @@ function SettingsPanel({
               />
             </>
           )}
+          {section === "extensions" && <ExtensionsPanel />}
         </div>
       </div>
     </>
@@ -1705,7 +1725,7 @@ function ToolActivity({
     <section className="luma-tool-group my-2 rounded-md border border-[var(--luma-border)] px-2 py-1">
       <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex w-full items-center gap-2 py-1 text-left text-[12px] text-[var(--luma-text-secondary)] hover:text-[var(--luma-text)]">
         <span aria-hidden="true">{expanded ? "⌄" : "›"}</span>
-        <span>{tools.length} tool{tools.length === 1 ? "" : "s"} ran{errorCount > 0 ? ` · ${errorCount} failed` : ""}</span>
+        <span>{toolActivityLabel(tools)}{errorCount > 0 ? ` · ${errorCount} failed` : ""}</span>
         <span className="ml-auto text-[var(--luma-text-muted)]">⌘O</span>
       </button>
       {expanded && <div role="list" aria-label="Code tool activity" className="space-y-2 pb-1">
@@ -2778,6 +2798,8 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
   const [memoryRevision, setMemoryRevision] = useState(0);
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [showTeammateList, setShowTeammateList] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [agentName, setAgentName] = useState("");
@@ -2853,7 +2875,7 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
   const agentTasks = tasks.filter((task) => task.agent_id === selectedAgentId && !task.schedule_id);
   const visibleAgentTasks = selectedTaskId
-    ? agentTasks.filter((task) => task.id === selectedTaskId)
+    ? selectedTaskId === "__new__" ? [] : agentTasks.filter((task) => task.id === selectedTaskId)
     : agentTasks;
   const taskTimeline = (taskId: string): TeammateTimelineSegment[] => {
     const segments: TeammateTimelineSegment[] = [];
@@ -2902,14 +2924,15 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
           </div>
           <div className="mb-2 flex items-center justify-between px-1">
             <span className="luma-kicker">History</span>
-            <span className="text-[10px] tabular-nums text-[var(--luma-text-muted)]">{agentTasks.length}</span>
+            <div className="flex items-center gap-2"><span className="text-[10px] tabular-nums text-[var(--luma-text-muted)]">{agentTasks.length}</span><button type="button" title="New chat" aria-label={`New chat with ${selectedAgent.name}`} onClick={() => setSelectedTaskId("__new__")} className="luma-btn-ghost inline-flex h-6 w-6 items-center justify-center" disabled={busy}><PlusIcon /></button></div>
           </div>
           {agentTasks.length === 0 ? <p className="px-1 py-3 text-[11px] text-[var(--luma-text-muted)]">Conversations with this teammate will appear here.</p> : <div className="space-y-0.5">
             {agentTasks.slice().sort((left, right) => right.created_at - left.created_at).map((task) => (
-              <button key={task.id} type="button" onClick={() => setSelectedTaskId(task.id)} aria-current={selectedTaskId === task.id ? "page" : undefined} className={`luma-teammate-history-item w-full rounded-md px-2 py-2 text-left transition-colors ${selectedTaskId === task.id ? "is-selected" : ""}`}>
-                <span className="block truncate text-[11px] font-medium">{task.title || task.request}</span>
-                <span className="mt-0.5 block text-[10px] capitalize text-[var(--luma-text-muted)]">{task.status.replace(/_/g, " ")} · {new Date(task.created_at * 1000).toLocaleDateString()}</span>
-              </button>
+              <div key={task.id} className={`luma-teammate-history-item group flex items-center gap-1 rounded-md px-2 py-1.5 ${selectedTaskId === task.id ? "is-selected" : ""}`}>
+                <button type="button" onClick={() => setSelectedTaskId(task.id)} aria-current={selectedTaskId === task.id ? "page" : undefined} className="min-w-0 flex-1 text-left"><span className="block truncate text-[11px] font-medium">{task.title || task.request}</span><span className="block truncate text-[9px] capitalize text-[var(--luma-text-muted)]">{task.status.replace(/_/g, " ")} · {new Date(task.created_at * 1000).toLocaleDateString()}</span></button>
+                <button type="button" title="Rename chat" aria-label={`Rename ${task.title}`} onClick={() => { const title = window.prompt("Rename chat", task.title); if (title?.trim()) void perform(() => window.luma.renameTask(task.id, title.trim())); }} className="luma-history-action" disabled={busy}><PencilIcon /></button>
+                <button type="button" title="Delete chat" aria-label={`Delete ${task.title}`} onClick={() => { if (window.confirm(`Delete “${task.title}”?`)) void perform(async () => { await window.luma.deleteTask(task.id); if (selectedTaskId === task.id) setSelectedTaskId("__new__"); }); }} className="luma-history-action is-danger" disabled={busy || ["queued", "running", "waiting_for_approval", "paused"].includes(task.status)}><TrashIcon /></button>
+              </div>
             ))}
           </div>}
         </> : <>
@@ -2987,20 +3010,22 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
 
         <div className="flex min-h-0 flex-1">
           <div className="luma-teammates-content flex min-h-0 flex-1 flex-col">
-            {selectedAgent && <div className="luma-teammate-header flex shrink-0 items-center gap-2 border-b border-[var(--luma-border)] px-4 py-2"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={26} active={selectedAgent.status === "active"} /><div><div className="text-[12px] font-semibold">{selectedAgent.name}</div><div className="text-[10px] capitalize text-[var(--luma-text-muted)]">{selectedAgent.status} · {agentTasks.length} conversations</div></div><div className="ml-auto flex items-center gap-1 rounded-md border border-[var(--luma-border)] p-0.5"><button type="button" onClick={() => setActiveTab("chat")} aria-pressed={activeTab === "chat"} className={`h-7 rounded px-2.5 text-[11px] transition-colors ${activeTab === "chat" ? "bg-[var(--luma-surface-raised)] text-[var(--luma-text)]" : "text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]"}`}>Chat</button><button type="button" onClick={() => setActiveTab("settings")} aria-pressed={activeTab === "settings"} className={`h-7 rounded px-2.5 text-[11px] transition-colors ${activeTab === "settings" ? "bg-[var(--luma-surface-raised)] text-[var(--luma-text)]" : "text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]"}`}>Settings</button></div></div>}
+            {selectedAgent && <div className="luma-teammate-header flex shrink-0 items-center gap-2 px-4 py-2"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={38} active={selectedAgent.status === "active"} activity={sendingMessage ? "sending" : "idle"} /><div><div className="text-[12px] font-semibold">{selectedAgent.name}</div><div className="text-[10px] capitalize text-[var(--luma-text-muted)]">{selectedAgent.status} · {agentTasks.length} conversations</div></div><div className="ml-auto flex items-center gap-1 rounded-md p-0.5"><button type="button" onClick={() => setActiveTab("chat")} aria-pressed={activeTab === "chat"} className={`h-7 rounded px-2.5 text-[11px] transition-colors ${activeTab === "chat" ? "bg-[var(--luma-surface-raised)] text-[var(--luma-text)]" : "text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]"}`}>Chat</button><button type="button" onClick={() => setActiveTab("settings")} aria-pressed={activeTab === "settings"} className={`h-7 rounded px-2.5 text-[11px] transition-colors ${activeTab === "settings" ? "bg-[var(--luma-surface-raised)] text-[var(--luma-text)]" : "text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]"}`}>Settings</button></div></div>}
           <div className="min-h-0 flex-1 overflow-auto p-4">
             {!selectedAgent ? <div className="flex h-full items-center justify-center text-[12px] text-[var(--luma-text-muted)]">Select a teammate to start chatting.</div> : activeTab === "chat" ? (
               <div className="mx-auto flex h-full w-full max-w-[850px] flex-col">
                 <div key={selectedAgent.id} className="luma-teammate-history-transition min-h-0 flex-1 space-y-5 overflow-auto pb-5">
-                  {agentTasks.length === 0 ? <div className="flex h-full flex-col items-center justify-center text-center"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={76} active /><h3 className="mt-4 text-[16px] font-semibold">Chat with {selectedAgent.name}</h3><p className="mt-1 max-w-sm text-[12px] leading-6 text-[var(--luma-text-muted)]">Start a conversation. Messages and task context are kept separately for this teammate.</p></div> : visibleAgentTasks.slice().reverse().map((task) => {
+                  {visibleAgentTasks.length === 0 ? <div className="flex h-full flex-col items-center justify-center text-center"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={96} active /><h3 className="mt-4 text-[16px] font-semibold">{selectedTaskId === "__new__" ? `New chat with ${selectedAgent.name}` : `Chat with ${selectedAgent.name}`}</h3><p className="mt-1 max-w-sm text-[12px] leading-6 text-[var(--luma-text-muted)]">Start a conversation. This chat has its own history.</p></div> : visibleAgentTasks.slice().reverse().map((task) => {
                     const timeline = taskTimeline(task.id);
                     const hasAnswer = timeline.some((segment) => segment.kind === "text");
+                    const lastSegment = timeline[timeline.length - 1];
+                    const activity = task.status === "queued" ? "sending" : task.status === "running" ? lastSegment?.kind === "tools" && lastSegment.tools.some((tool) => tool.durationMs === undefined) ? "writing" : "thinking" : "idle";
                     return <article key={task.id} className="space-y-3">
                       <div className="flex justify-end"><div className="luma-teammate-user-message max-w-[88%] px-3 py-2"><div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">You</div><p className="whitespace-pre-wrap break-words text-[12px] leading-6">{task.request}</p></div></div>
-                      <div className="luma-teammate-assistant-message flex items-start gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={30} active={task.status === "running"} /><div className="min-w-0 flex-1 pt-0.5"><div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">{selectedAgent.name}<span className="font-normal normal-case tracking-normal">{task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : task.status === "waiting_for_approval" ? "· needs approval" : ""}</span></div><div className="luma-teammate-assistant-bubble space-y-2">
+                      <div className="luma-teammate-assistant-message flex items-start gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={42} active={task.status === "running"} activity={activity} /><div className="min-w-0 flex-1 pt-0.5"><div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">{selectedAgent.name}<span className="font-normal normal-case tracking-normal">{task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : task.status === "waiting_for_approval" ? "· needs approval" : ""}</span></div><div className="luma-teammate-assistant-bubble space-y-2">
                         {timeline.map((segment) => segment.kind === "tools" ? (
                           <details key={segment.id} className="luma-task-tool-group rounded-md border border-[var(--luma-border)] px-2 py-1.5">
-                            <summary className="cursor-pointer select-none text-[10px] text-[var(--luma-text-muted)]">{segment.tools.length} tool{segment.tools.length === 1 ? "" : "s"} ran</summary>
+                            <summary className="cursor-pointer select-none text-[10px] text-[var(--luma-text-muted)]">{toolActivityLabel(segment.tools)}</summary>
                             <div className="mt-2 space-y-2">{segment.tools.map((tool) => <div key={tool.id} className="border-l-2 border-[var(--luma-border-strong)] pl-2"><div className="text-[10px] font-medium text-[var(--luma-text-secondary)]">{tool.name}<span className="ml-2 font-normal text-[var(--luma-text-muted)]">{tool.durationMs === undefined ? "running" : `${tool.durationMs} ms${tool.failed ? " · failed" : ""}`}</span></div>{tool.input && <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-muted)]">{tool.input}</pre>}{tool.diff && <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-muted)]">{tool.diff}</pre>}</div>)}</div>
                           </details>
                         ) : <div key={segment.id} className="prose prose-sm max-w-none text-[12px] leading-6"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ pre({ children }) { return <pre className="my-2 overflow-x-auto rounded-md border border-[var(--luma-border)] bg-[var(--luma-bg)] p-3">{children}</pre>; }, p({ children }) { return <p className="mb-2 last:mb-0">{children}</p>; }, ul({ children }) { return <ul className="mb-2 ml-4 list-disc">{children}</ul>; }, ol({ children }) { return <ol className="mb-2 ml-4 list-decimal">{children}</ol>; }, li({ children }) { return <li className="mb-1">{children}</li>; }, h1({ children }) { return <h1 className="mb-2 mt-3 text-[14px] font-semibold">{children}</h1>; }, h2({ children }) { return <h2 className="mb-2 mt-3 text-[13px] font-semibold">{children}</h2>; }, h3({ children }) { return <h3 className="mb-2 mt-3 text-[12px] font-semibold">{children}</h3>; } }}>{segment.content}</ReactMarkdown></div>)}
@@ -3014,18 +3039,20 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
                   event.preventDefault();
                   const text = chatPrompt.trim() || (chatAttachments.length ? "Please inspect the attached files." : "");
                   if (!text || busy || selectedAgent.status === "stopped" || selectedAgent.status === "paused") return;
+                  setSendingMessage(true);
                   void perform(async () => {
-                      await window.luma.createTask({ agentId: selectedAgent.id, request: formatChatPrompt(text, chatAttachments), workspace: workspacePath || selectedAgent.configuration.workspace || undefined });
+                      const created = await window.luma.createTask({ agentId: selectedAgent.id, request: formatChatPrompt(text, chatAttachments), workspace: workspacePath || selectedAgent.configuration.workspace || undefined });
+                    setSelectedTaskId(created.id);
                     setChatPrompt("");
                     setChatAttachments([]);
-                  });
+                  }).finally(() => setSendingMessage(false));
                 }}>
                   {chatAttachments.length > 0 && <div className="mb-2 flex flex-wrap gap-1.5">{chatAttachments.map((attachment, index) => <span key={`${attachment.name}-${index}`} className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-[var(--luma-border)] px-2 py-1 text-[10px] text-[var(--luma-text-secondary)]"><span className="max-w-56 truncate">{attachment.name}</span><button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setChatAttachments((items) => items.filter((_, itemIndex) => itemIndex !== index))} className="text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]">×</button></span>)}</div>}
                   <div className="flex items-center gap-2">
                     <button type="button" aria-label="Attach files" title="Attach text files" disabled={busy || selectedAgent.status === "stopped" || selectedAgent.status === "paused"} onClick={() => void attachChatFiles()} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)] hover:text-[var(--luma-text)] disabled:opacity-40"><PlusIcon /></button>
-                    <textarea value={chatPrompt} onChange={(event) => setChatPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && sendWithEnter) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message ${selectedAgent.name}…`} rows={2} className="luma-input min-h-[36px] min-w-0 flex-1 self-center resize-none border-0 bg-transparent py-2 text-[12px] leading-5 focus:ring-0" />
+                    <textarea value={chatPrompt} onChange={(event) => setChatPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && sendWithEnter) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message ${selectedAgent.name}…`} rows={1} className="luma-input min-h-[32px] min-w-0 flex-1 self-center resize-none border-0 bg-transparent py-1.5 text-[12px] leading-5 focus:ring-0" />
                   </div>
-                  <div className="flex items-center justify-between px-1 pt-1"><span className="text-[10px] text-[var(--luma-text-muted)]">{sendWithEnter ? "Enter to send · Shift + Enter for a new line" : "Enter for a new line · Use Send to submit"}</span><button type="submit" disabled={busy || (!chatPrompt.trim() && chatAttachments.length === 0) || selectedAgent.status === "stopped" || selectedAgent.status === "paused"} className="luma-btn-primary h-8 px-3 text-[11px]">{busy ? "Sending…" : "Send"}</button></div>
+                  <div className="flex items-center justify-between px-1 pt-1"><span className="text-[10px] text-[var(--luma-text-muted)]">{sendWithEnter ? "Enter to send · Shift + Enter for a new line" : "Enter for a new line · Use Send to submit"}</span><div className="flex items-center gap-2"><button type="button" onClick={() => setModelPickerOpen(true)} className="luma-model-inline" title={`Change model for ${selectedAgent.name}`}>{selectedAgent.configuration.model ?? "Model"}<span aria-hidden="true">⌄</span></button><button type="submit" disabled={busy || (!chatPrompt.trim() && chatAttachments.length === 0) || selectedAgent.status === "stopped" || selectedAgent.status === "paused"} className="luma-btn-primary h-8 px-3 text-[11px]">{busy ? "Sending…" : "Send"}</button></div></div>
                 </form>
               </div>
             ) : (
@@ -3085,6 +3112,7 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
           </div>
         </div>
         </div>
+        {modelPickerOpen && selectedAgent && <ModelPickerDialog scope="agent" agent={selectedAgent} onClose={() => setModelPickerOpen(false)} onChanged={() => void refresh()} />}
         {createOpen && <div className="luma-create-overlay fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-5" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setCreateOpen(false); }}>
           <form className="luma-create-dialog flex max-h-[min(820px,92vh)] w-full max-w-[820px] flex-col overflow-hidden rounded-xl border border-[var(--luma-border-strong)] bg-[var(--luma-surface)] shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="create-teammate-title" onSubmit={(event) => { event.preventDefault(); void perform(async () => {
             const configuration: AgentConfiguration = {

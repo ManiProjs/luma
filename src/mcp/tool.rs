@@ -9,6 +9,7 @@ pub struct McpTool {
     definition: McpToolDefinition,
     name: String,
     description: String,
+    model_guide: String,
 }
 
 impl McpTool {
@@ -24,11 +25,17 @@ impl McpTool {
             server.name,
             definition.input_schema,
         );
+        let model_guide = definition
+            .model_guide
+            .clone()
+            .filter(|guide| !guide.trim().is_empty())
+            .unwrap_or_else(|| description.clone());
         Self {
             server,
             definition,
             name,
             description,
+            model_guide,
         }
     }
 }
@@ -39,6 +46,9 @@ impl Tool for McpTool {
     }
     fn description(&self) -> &str {
         &self.description
+    }
+    fn model_guide(&self) -> &str {
+        &self.model_guide
     }
     fn requires_network(&self) -> bool {
         // MCP servers are arbitrary child processes. Their metadata cannot

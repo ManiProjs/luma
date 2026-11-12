@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { parseServerEvent, type ServerEvent, type AgentConfiguration, type AgentKind, type AgentRecord, type ApprovalRecord, type ChatSummary, type MemoryEntry, type MemoryScope, type ScheduleRecord, type TaskRecord, type RuntimeEvent } from "../../shared/protocol";
+import { parseServerEvent, type ServerEvent, type AgentConfiguration, type AgentKind, type AgentRecord, type ApprovalRecord, type ChatSummary, type MemoryEntry, type MemoryScope, type ScheduleRecord, type TaskRecord, type RuntimeEvent, type PluginEntry, type InstalledPlugin, type McpServerConfig } from "../../shared/protocol";
 import type { ChatAttachment } from "../../shared/attachments";
 
 export type LumaAgentEvent = ServerEvent;
@@ -27,6 +27,21 @@ contextBridge.exposeInMainWorld("luma", {
   createTask: (input: { agentId: string; request: string; workspace?: string }): Promise<TaskRecord> => ipcRenderer.invoke("luma:create-task", input),
   cancelTask: (id: string): Promise<TaskRecord> => ipcRenderer.invoke("luma:cancel-task", id),
   retryTask: (id: string): Promise<TaskRecord> => ipcRenderer.invoke("luma:retry-task", id),
+  renameTask: (id: string, title: string): Promise<TaskRecord> => ipcRenderer.invoke("luma:rename-task", id, title),
+  deleteTask: (id: string): Promise<boolean> => ipcRenderer.invoke("luma:delete-task", id),
+  getSkills: (): Promise<{ name: string; content: string }[]> => ipcRenderer.invoke("luma:get-skills"),
+  createSkill: (name: string, description: string, instructions: string): Promise<{ name: string; content: string }> => ipcRenderer.invoke("luma:create-skill", name, description, instructions),
+  openExtensionFolder: (kind: "skills" | "plugins" | "mcp"): Promise<{ ok: boolean }> => ipcRenderer.invoke("luma:open-extension-folder", kind),
+  choosePluginPackage: (): Promise<string | null> => ipcRenderer.invoke("luma:choose-plugin-package"),
+  getPlugins: (): Promise<PluginEntry[]> => ipcRenderer.invoke("luma:get-plugins"),
+  installPlugin: (path: string): Promise<InstalledPlugin> => ipcRenderer.invoke("luma:install-plugin", path),
+  setPluginEnabled: (id: string, enabled: boolean): Promise<InstalledPlugin> => ipcRenderer.invoke("luma:set-plugin-enabled", id, enabled),
+  uninstallPlugin: (id: string): Promise<boolean> => ipcRenderer.invoke("luma:uninstall-plugin", id),
+  getMcpServers: (): Promise<McpServerConfig[]> => ipcRenderer.invoke("luma:get-mcp-servers"),
+  addMcpStdio: (input: { id: string; command: string; args: string[]; env: Record<string, string> }): Promise<McpServerConfig> => ipcRenderer.invoke("luma:add-mcp-stdio", input),
+  addMcpHttp: (input: { id: string; url: string; headers: Record<string, string> }): Promise<McpServerConfig> => ipcRenderer.invoke("luma:add-mcp-http", input),
+  setMcpEnabled: (id: string, enabled: boolean): Promise<McpServerConfig> => ipcRenderer.invoke("luma:set-mcp-enabled", id, enabled),
+  removeMcp: (id: string): Promise<boolean> => ipcRenderer.invoke("luma:remove-mcp", id),
   getApprovals: (): Promise<ApprovalRecord[]> => ipcRenderer.invoke("luma:get-approvals"),
   resolveApproval: (id: string, allowed: boolean): Promise<ApprovalRecord> => ipcRenderer.invoke("luma:resolve-approval", id, allowed),
   getMemory: (scope: MemoryScope, scopeId: string): Promise<MemoryEntry[]> => ipcRenderer.invoke("luma:get-memory", scope, scopeId),

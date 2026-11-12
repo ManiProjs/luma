@@ -82,6 +82,12 @@ pub trait Tool: Send + Sync {
 
     fn description(&self) -> &str;
 
+    /// Guidance for the model when deciding how and when to use this tool.
+    /// Existing tools inherit a useful default from their user-facing description.
+    fn model_guide(&self) -> &str {
+        self.description()
+    }
+
     fn execute(&self, input: &str) -> Result<String>;
 
     /// Tools are treated as mutating unless they explicitly declare that
@@ -95,6 +101,14 @@ pub trait Tool: Send + Sync {
     fn requires_network(&self) -> bool {
         false
     }
+}
+
+/// The three pieces of metadata exposed to the model for every registered tool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolMetadata {
+    pub name: String,
+    pub description: String,
+    pub guide: String,
 }
 
 pub struct ToolRegistry {
@@ -170,11 +184,18 @@ impl ToolRegistry {
         names
     }
 
-    pub fn descriptions(&self) -> Vec<String> {
-        self.tools
+    pub fn metadata(&self) -> Vec<ToolMetadata> {
+        let mut metadata: Vec<_> = self
+            .tools
             .values()
-            .map(|tool| format!("{}: {}", tool.name(), tool.description()))
-            .collect()
+            .map(|tool| ToolMetadata {
+                name: tool.name().to_owned(),
+                description: tool.description().to_owned(),
+                guide: tool.model_guide().to_owned(),
+            })
+            .collect();
+        metadata.sort_by(|left, right| left.name.cmp(&right.name));
+        metadata
     }
 }
 
@@ -228,5 +249,19 @@ mod tests {
         for name in ["write_file", "patch_file", "run_command"] {
             assert!(!tools.is_read_only(name), "{name} must remain mutating");
         }
+    }
+
+    #[test]
+    fn registry_exposes_sorted_complete_model_metadata() {
+        let tools = default_registry();
+        let metadata = tools.metadata();
+        assert!(!metadata.is_empty());
+        assert!(metadata.windows(2).all(|pair| pair[0].name <= pair[1].name));
+        let read_file = metadata
+            .iter()
+            .find(|tool| tool.name == "read_file")
+            .unwrap();
+        assert!(read_file.description.contains("Read"));
+        assert_eq!(read_file.guide, read_file.description);
     }
 }

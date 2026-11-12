@@ -168,6 +168,12 @@ export type TaskRecord = {
   updated_at: number;
 };
 
+export type InstalledPlugin = { id: string; enabled: boolean; installed_at: number };
+export type PluginToolManifest = { name: string; description: string; model_guide?: string | null; read_only: boolean; requires_network: boolean; input_schema?: unknown };
+export type PluginManifest = { schema_version: number; id: string; name: string; version: string; description: string; command: string; args: string[]; tools: PluginToolManifest[] };
+export type PluginEntry = [InstalledPlugin, PluginManifest];
+export type McpServerConfig = { id: string; name: string; transport: "stdio" | "http"; url: string | null; headers: Record<string, string>; command: string; args: string[]; env: Record<string, string>; enabled: boolean };
+
 export type MemoryEntry = {
   id: string;
   scope: MemoryScope;
@@ -259,6 +265,17 @@ export type ClientMessage =
   | { type: "task_create"; data: { request_id: string; agent_id: string; request: string; title: string | null; workspace: string | null; recover_on_restart: boolean } }
   | { type: "task_cancel"; data: { request_id: string; id: string } }
   | { type: "task_retry"; data: { request_id: string; id: string } }
+  | { type: "task_rename"; data: { request_id: string; id: string; title: string } }
+  | { type: "task_delete"; data: { request_id: string; id: string } }
+  | { type: "plugins_list"; data: { request_id: string } }
+  | { type: "plugin_install"; data: { request_id: string; path: string } }
+  | { type: "plugin_set_enabled"; data: { request_id: string; id: string; enabled: boolean } }
+  | { type: "plugin_uninstall"; data: { request_id: string; id: string } }
+  | { type: "mcp_list"; data: { request_id: string } }
+  | { type: "mcp_add_stdio"; data: { request_id: string; id: string; command: string; args: string[]; env: Record<string, string> } }
+  | { type: "mcp_add_http"; data: { request_id: string; id: string; url: string; headers: Record<string, string> } }
+  | { type: "mcp_set_enabled"; data: { request_id: string; id: string; enabled: boolean } }
+  | { type: "mcp_remove"; data: { request_id: string; id: string } }
   | { type: "approvals_list"; data: { request_id: string } }
   | { type: "approval_resolve"; data: { request_id: string; id: string; allowed: boolean } }
   | { type: "memory_list"; data: { request_id: string; scope: MemoryScope; scope_id: string; query: string | null; limit: number | null } }
@@ -311,6 +328,13 @@ export type ServerEvent =
   | { type: "agent_deleted"; data: { request_id: string; id: string; deleted: boolean } }
   | { type: "tasks"; data: { request_id: string; tasks: TaskRecord[] } }
   | { type: "task_saved"; data: { request_id: string; task: TaskRecord } }
+  | { type: "task_deleted"; data: { request_id: string; id: string; deleted: boolean } }
+  | { type: "plugins"; data: { request_id: string; plugins: PluginEntry[] } }
+  | { type: "plugin_saved"; data: { request_id: string; plugin: InstalledPlugin } }
+  | { type: "plugin_deleted"; data: { request_id: string; id: string; deleted: boolean } }
+  | { type: "mcp_servers"; data: { request_id: string; servers: McpServerConfig[] } }
+  | { type: "mcp_saved"; data: { request_id: string; server: McpServerConfig } }
+  | { type: "mcp_deleted"; data: { request_id: string; id: string; deleted: boolean } }
   | { type: "approvals"; data: { request_id: string; approvals: ApprovalRecord[] } }
   | { type: "approval_resolved"; data: { request_id: string; approval: ApprovalRecord } }
   | { type: "memory"; data: { request_id: string; entries: MemoryEntry[] } }
@@ -585,6 +609,13 @@ export function parseServerEvent(line: string): ServerEvent {
     case "agent_deleted": valid = isString(data.request_id) && isString(data.id) && typeof data.deleted === "boolean"; break;
     case "tasks": valid = isString(data.request_id) && Array.isArray(data.tasks) && data.tasks.every(isTaskRecord); break;
     case "task_saved": valid = isString(data.request_id) && isTaskRecord(data.task); break;
+    case "task_deleted": valid = isString(data.request_id) && isString(data.id) && typeof data.deleted === "boolean"; break;
+    case "plugins": valid = isString(data.request_id) && Array.isArray(data.plugins); break;
+    case "plugin_saved": valid = isString(data.request_id) && isRecord(data.plugin); break;
+    case "plugin_deleted": valid = isString(data.request_id) && isString(data.id) && typeof data.deleted === "boolean"; break;
+    case "mcp_servers": valid = isString(data.request_id) && Array.isArray(data.servers); break;
+    case "mcp_saved": valid = isString(data.request_id) && isRecord(data.server); break;
+    case "mcp_deleted": valid = isString(data.request_id) && isString(data.id) && typeof data.deleted === "boolean"; break;
     case "approvals": valid = isString(data.request_id) && Array.isArray(data.approvals) && data.approvals.every(isApprovalRecord); break;
     case "approval_resolved": valid = isString(data.request_id) && isApprovalRecord(data.approval); break;
     case "memory": valid = isString(data.request_id) && Array.isArray(data.entries) && data.entries.every(isMemoryEntry); break;

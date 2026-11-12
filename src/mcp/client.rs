@@ -15,6 +15,9 @@ pub struct McpToolDefinition {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// Optional server-provided guidance for the model; falls back to description.
+    #[serde(default, rename = "modelGuide")]
+    pub model_guide: Option<String>,
     #[serde(rename = "inputSchema", default)]
     pub input_schema: Value,
 }

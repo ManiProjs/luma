@@ -1,8 +1,8 @@
 # ✨ Luma
 
-**A lightweight AI coding agent built in Rust for local LLMs, tool use, and low-memory environments.**
+**A lightweight AI coding agent built in Rust for multi-provider models, tool use, and low-memory environments.**
 
-Luma is an autonomous coding assistant that runs inside your developer workspace. It helps you understand codebases, inspect files, modify code, debug problems, and automate development tasks using local language models.
+Luma is an autonomous coding assistant that runs inside your developer workspace. It helps you understand codebases, inspect files, modify code, debug problems, and automate development tasks using local or hosted language models.
 
 Built to be small, fast, and practical — without requiring a massive model.
 
@@ -26,6 +26,8 @@ Built to be small, fast, and practical — without requiring a massive model.
 - 🔄 ReAct agent loop with iterative tool use and observations
 - ⚡ Streaming responses
 - 🖥️ Interactive terminal UI
+- 🪟 Desktop workspace for Code and persistent Teammates
+- 🧰 Desktop management for Agent Skills, native plugins, and MCP servers
 - 🛑 Interruptible generation
 - 🧩 Project memory through `GALAXY.md`
 
@@ -173,9 +175,9 @@ systems expose enabled tools to Code and to Teammates that inherit the Global
 teammate's connectors. External tool calls require approval.
 
 - [Native Luma Plugins](docs/plugins.md): install, inspect, enable, disable,
-  and uninstall local plugin packages with `luma plugins`.
+  and uninstall local plugin packages in Settings → Extensions or with `luma plugins`.
 - [MCP servers](docs/mcp.md): register stdio or HTTP servers and inspect their
-  tools with `luma mcp`.
+  tools in Settings → Extensions or with `luma mcp`.
 
 ### `patch_file`
 
@@ -484,7 +486,7 @@ Agent
 
 Luma focuses on:
 
-- **Local-first AI**
+- **Provider-flexible AI**
 - **Small and efficient models**
 - **Low memory usage**
 - **Grounded tool use**

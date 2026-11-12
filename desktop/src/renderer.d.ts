@@ -4,7 +4,7 @@ import type {
   SetupProvider,
 } from "./stores/setupStore";
 import type { LumaAgentEvent } from "./preload";
-import type { AgentConfiguration, AgentKind, AgentRecord, ApprovalRecord, ChatSummary, MemoryEntry, MemoryScope, ScheduleRecord, TaskRecord, RuntimeEvent } from "../../shared/protocol";
+import type { AgentConfiguration, AgentKind, AgentRecord, ApprovalRecord, ChatSummary, MemoryEntry, MemoryScope, ScheduleRecord, TaskRecord, RuntimeEvent, PluginEntry, InstalledPlugin, McpServerConfig } from "../../shared/protocol";
 import type { ChatAttachment } from "../../shared/attachments";
 
 declare global {
@@ -32,6 +32,21 @@ declare global {
       createTask(input: { agentId: string; request: string; workspace?: string }): Promise<TaskRecord>;
       cancelTask(id: string): Promise<TaskRecord>;
       retryTask(id: string): Promise<TaskRecord>;
+      renameTask(id: string, title: string): Promise<TaskRecord>;
+      deleteTask(id: string): Promise<boolean>;
+      getSkills(): Promise<{ name: string; content: string }[]>;
+      createSkill(name: string, description: string, instructions: string): Promise<{ name: string; content: string }>;
+      openExtensionFolder(kind: "skills" | "plugins" | "mcp"): Promise<{ ok: boolean }>;
+      choosePluginPackage(): Promise<string | null>;
+      getPlugins(): Promise<PluginEntry[]>;
+      installPlugin(path: string): Promise<InstalledPlugin>;
+      setPluginEnabled(id: string, enabled: boolean): Promise<InstalledPlugin>;
+      uninstallPlugin(id: string): Promise<boolean>;
+      getMcpServers(): Promise<McpServerConfig[]>;
+      addMcpStdio(input: { id: string; command: string; args: string[]; env: Record<string, string> }): Promise<McpServerConfig>;
+      addMcpHttp(input: { id: string; url: string; headers: Record<string, string> }): Promise<McpServerConfig>;
+      setMcpEnabled(id: string, enabled: boolean): Promise<McpServerConfig>;
+      removeMcp(id: string): Promise<boolean>;
       getApprovals(): Promise<ApprovalRecord[]>;
       resolveApproval(id: string, allowed: boolean): Promise<ApprovalRecord>;
       getMemory(scope: MemoryScope, scopeId: string): Promise<MemoryEntry[]>;

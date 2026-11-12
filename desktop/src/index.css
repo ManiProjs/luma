@@ -1,7 +1,15 @@
 @import "tailwindcss";
 
-.luma-mascot { display: block; flex: none; overflow: visible; }
-.luma-mascot--active { filter: none; }
+.luma-mascot { display: block; flex: none; overflow: visible; transform-origin: 50% 55%; }
+.luma-mascot--thinking { animation: luma-mascot-think 1.8s ease-in-out infinite; }
+.luma-mascot--writing { animation: luma-mascot-write .42s ease-in-out infinite alternate; }
+.luma-mascot-dots { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 3px; }
+.luma-mascot-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--luma-text-muted); animation: luma-mascot-dot .8s ease-in-out infinite; }
+.luma-mascot-dots i:nth-child(2) { animation-delay: .12s; }
+.luma-mascot-dots i:nth-child(3) { animation-delay: .24s; }
+@keyframes luma-mascot-think { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-2px) rotate(-5deg); } }
+@keyframes luma-mascot-write { from { transform: translateY(0) rotate(-3deg); } to { transform: translateY(-2px) rotate(3deg); } }
+@keyframes luma-mascot-dot { 0%, 60%, 100% { opacity: .35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-4px); } }
 
 :root {
   color-scheme: dark;
@@ -1311,6 +1319,19 @@ html[data-platform="linux"] .luma-btn-ghost {
   border-radius: 6px;
   background: var(--luma-surface);
 }
+.luma-teammate-composer { padding: 6px 8px; }
+.luma-teammate-header { border-bottom: 0; }
+.luma-teammate-history-item { border: 0; }
+.luma-history-action { display: inline-flex; width: 22px; height: 22px; flex: none; align-items: center; justify-content: center; border-radius: 4px; color: var(--luma-text-muted); opacity: 0; transition: opacity .12s, background .12s, color .12s; }
+.luma-teammate-history-item:hover .luma-history-action, .luma-teammate-history-item:focus-within .luma-history-action { opacity: 1; }
+.luma-history-action:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-history-action.is-danger:hover { color: var(--luma-danger); }
+.luma-history-action:disabled { opacity: .2; cursor: not-allowed; }
+.luma-settings-close { display: inline-flex; width: 22px; height: 22px; align-items: center; justify-content: center; border-radius: 4px; color: var(--luma-text-muted); font-size: 18px; line-height: 1; }
+.luma-settings-close:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-settings-close--corner { position: absolute; top: 10px; right: 10px; z-index: 2; }
+.luma-model-inline { display: inline-flex; align-items: center; gap: 5px; max-width: 180px; overflow: hidden; border-radius: 4px; padding: 4px 6px; color: var(--luma-text-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.luma-model-inline:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
 .luma-teammate-composer .chat-attach-button {
   border: 1px solid var(--luma-border);
   background: transparent;

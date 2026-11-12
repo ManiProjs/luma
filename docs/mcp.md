@@ -48,6 +48,10 @@ network permission; server metadata cannot prove that a process is offline.
 Code grants this capability when an enabled external integration exposes a
 tool, while Teammates follow their per-agent Internet access setting. Each
 MCP tool invocation still requires approval.
+MCP tool descriptions are shown as their user-facing descriptions and are
+also used as model guidance by default. Servers may include Luma's optional
+`modelGuide` tool metadata field to provide separate usage guidance for the
+model; the runtime registers it automatically with the discovered tool.
 
 ## Security and limitations
 

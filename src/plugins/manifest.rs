@@ -22,6 +22,9 @@ pub struct PluginManifest {
 pub struct PluginToolManifest {
     pub name: String,
     pub description: String,
+    /// Optional model-facing usage guidance. Defaults to the description.
+    #[serde(default)]
+    pub model_guide: Option<String>,
     #[serde(default)]
     pub read_only: bool,
     #[serde(default = "default_requires_network")]
