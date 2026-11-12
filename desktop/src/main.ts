@@ -859,6 +859,24 @@ app.whenReady().then(async () => {
     return { name, content };
   });
 
+  ipcMain.handle("luma:save-skill", async (_event, name: string, content: string) => {
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) throw new Error("Invalid skill name.");
+    if (typeof content !== "string" || !content.trim()) throw new Error("Skill content cannot be empty.");
+    if (new TextEncoder().encode(content).byteLength > 256 * 1024) throw new Error("A skill must be 256 KiB or smaller.");
+    const directory = path.join(app.getPath("appData"), "luma", "skills", name);
+    const target = path.join(directory, "SKILL.md");
+    await fs.access(directory);
+    await fs.writeFile(target, content.endsWith("\n") ? content : `${content}\n`, "utf8");
+    return { name, content };
+  });
+
+  ipcMain.handle("luma:delete-skill", async (_event, name: string) => {
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) throw new Error("Invalid skill name.");
+    const directory = path.join(app.getPath("appData"), "luma", "skills", name);
+    await fs.rm(directory, { recursive: true, force: false });
+    return { deleted: true };
+  });
+
   ipcMain.handle("luma:open-extension-folder", async (_event, kind: "skills" | "plugins" | "mcp") => {
     const folder = path.join(app.getPath("appData"), "luma", kind === "mcp" ? "mcp" : kind);
     await fs.mkdir(folder, { recursive: true });
@@ -909,6 +927,11 @@ app.whenReady().then(async () => {
   ipcMain.handle("luma:set-mcp-enabled", async (_event, id: string, enabled: boolean) => {
     const response = await requestLuma("mcp_saved", (request_id) => ({ type: "mcp_set_enabled", data: { request_id, id, enabled } }));
     if (response.type !== "mcp_saved") throw new Error("Unexpected response to mcp_set_enabled.");
+    return response.data.server;
+  });
+  ipcMain.handle("luma:update-mcp", async (_event, server: McpServerConfig) => {
+    const response = await requestLuma("mcp_saved", (request_id) => ({ type: "mcp_update", data: { request_id, server } }));
+    if (response.type !== "mcp_saved") throw new Error("Unexpected response to mcp_update.");
     return response.data.server;
   });
   ipcMain.handle("luma:remove-mcp", async (_event, id: string) => {
@@ -965,6 +988,12 @@ app.whenReady().then(async () => {
     const response = await requestLuma("schedule_deleted", (request_id) => ({ type: "schedule_delete", data: { request_id, id } }));
     if (response.type !== "schedule_deleted") throw new Error("Unexpected response to schedule_delete.");
     return response.data.deleted;
+  });
+
+  ipcMain.handle("luma:set-schedule-enabled", async (_event, id: string, enabled: boolean) => {
+    const response = await requestLuma("schedule_saved", (request_id) => ({ type: "schedule_set_enabled", data: { request_id, id, enabled } }));
+    if (response.type !== "schedule_saved") throw new Error("Unexpected response to schedule_set_enabled.");
+    return response.data.schedule;
   });
 
   ipcMain.handle("luma:get-providers", async () => {

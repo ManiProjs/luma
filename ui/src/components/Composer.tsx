@@ -29,11 +29,14 @@ type Props = {
   question: { question_id: string; prompt: string; choices: string[] } | null;
   onAnswer: (questionId: string, answer: string) => void;
   onCancelQuestion: () => void;
+  onCancelRequest: () => void;
   disabled?: boolean;
 };
 
 const COMMANDS = [
   ["/help", "Show available commands"],
+  ["/cancel", "Cancel the current request"],
+  ["/fullscreen", "Toggle the full-screen terminal view"],
   ["/clear", "Clear the current conversation"],
   ["/new", "Start a fresh conversation"],
   ["/quit", "Exit Luma"],
@@ -86,6 +89,7 @@ export function Composer({
   question,
   onAnswer,
   onCancelQuestion,
+  onCancelRequest,
   disabled = false,
 }: Props) {
   const [cursor, setCursor] = useState(value.length);
@@ -125,6 +129,11 @@ export function Composer({
         return;
       }
     }
+    if (!confirmation && !question && (status === "thinking" || status === "working" || status === "streaming" || status === "waiting")
+      && (key.escape || ((key.ctrl || key.meta) && input.toLowerCase() === "c"))) {
+      onCancelRequest();
+      return;
+    }
     if ((key.ctrl || key.meta) && input.toLowerCase() === "x" && attachments.length > 0) {
       onRemoveAttachment(attachments.length - 1);
       return;
@@ -132,6 +141,7 @@ export function Composer({
     if (confirmation) {
       if (input.toLowerCase() === "y" || key.return) onConfirm(true);
       else if (input.toLowerCase() === "n" || key.escape) onConfirm(false);
+      else if ((key.ctrl || key.meta) && input.toLowerCase() === "c") onCancelRequest();
       return;
     }
     if (key.ctrl && input.toLowerCase() === "g") {
@@ -251,7 +261,7 @@ export function Composer({
           {afterCursor}
         </Text>
       </Box>
-      <Text color={theme.chrome}>{question ? "Enter answer  ·  Esc/Ctrl+C cancel request" : attachmentMode ? "Enter attach  ·  Esc cancel  ·  path relative to workspace" : "Enter send  ·  + attach file  ·  Ctrl+X remove last file  ·  Ctrl+G model"}</Text>
+      <Text color={theme.chrome}>{question ? "Enter answer  ·  Esc/Ctrl+C cancel request" : attachmentMode ? "Enter attach  ·  Esc cancel  ·  path relative to workspace" : status === "cancelling" ? "Waiting for cancellation…" : status === "thinking" || status === "working" || status === "streaming" || status === "waiting" ? "Esc/Ctrl+C cancel request  ·  /cancel" : "Enter send  ·  + attach file  ·  Ctrl+X remove last file  ·  Ctrl+G model  ·  Ctrl+F full screen"}</Text>
     </Box>
   );
 }

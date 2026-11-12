@@ -233,6 +233,10 @@ pub enum ClientMessage {
         id: String,
         enabled: bool,
     },
+    McpUpdate {
+        request_id: String,
+        server: crate::mcp::McpServerConfig,
+    },
     McpRemove {
         request_id: String,
         id: String,
@@ -278,6 +282,11 @@ pub enum ClientMessage {
     ScheduleDelete {
         request_id: String,
         id: String,
+    },
+    ScheduleSetEnabled {
+        request_id: String,
+        id: String,
+        enabled: bool,
     },
     EventsSince {
         request_id: String,
@@ -336,6 +345,7 @@ impl ClientMessage {
             | Self::McpAddStdio { request_id, .. }
             | Self::McpAddHttp { request_id, .. }
             | Self::McpSetEnabled { request_id, .. }
+            | Self::McpUpdate { request_id, .. }
             | Self::McpRemove { request_id, .. }
             | Self::ApprovalsList { request_id }
             | Self::ApprovalResolve { request_id, .. }
@@ -345,6 +355,7 @@ impl ClientMessage {
             | Self::SchedulesList { request_id, .. }
             | Self::ScheduleCreate { request_id, .. }
             | Self::ScheduleDelete { request_id, .. }
+            | Self::ScheduleSetEnabled { request_id, .. }
             | Self::EventsSince { request_id, .. }
             | Self::RuntimeCapabilities { request_id } => Some(request_id),
         }
@@ -421,6 +432,7 @@ impl ClientMessage {
             | Self::McpAddStdio { .. }
             | Self::McpAddHttp { .. }
             | Self::McpSetEnabled { .. }
+            | Self::McpUpdate { .. }
             | Self::McpRemove { .. }
             | Self::ApprovalsList { .. }
             | Self::ApprovalResolve { .. }
@@ -430,6 +442,7 @@ impl ClientMessage {
             | Self::SchedulesList { .. }
             | Self::ScheduleCreate { .. }
             | Self::ScheduleDelete { .. }
+            | Self::ScheduleSetEnabled { .. }
             | Self::EventsSince { .. }
             | Self::RuntimeCapabilities { .. } => None,
         }
@@ -840,9 +853,28 @@ mod tests {
                 id: "hosted".into(),
                 enabled: true,
             },
+            ClientMessage::McpUpdate {
+                request_id: "mcp-update".into(),
+                server: crate::mcp::McpServerConfig {
+                    id: "hosted".into(),
+                    name: "Hosted MCP".into(),
+                    transport: crate::mcp::McpTransport::Http,
+                    url: Some("https://example.com/mcp".into()),
+                    headers: Default::default(),
+                    command: String::new(),
+                    args: Vec::new(),
+                    env: Default::default(),
+                    enabled: true,
+                },
+            },
             ClientMessage::McpRemove {
                 request_id: "mcp-remove".into(),
                 id: "hosted".into(),
+            },
+            ClientMessage::ScheduleSetEnabled {
+                request_id: "schedule-toggle".into(),
+                id: "schedule-1".into(),
+                enabled: false,
             },
         ];
         for request in requests {

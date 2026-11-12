@@ -23,11 +23,12 @@ function launchInteractive(initialSetup = false) {
     <React.StrictMode>
       <App initialSetup={initialSetup} />
     </React.StrictMode>,
+    { exitOnCtrlC: false },
   );
 }
 
 function launchTeammates() {
-  render(<React.StrictMode><TeammatesManager /></React.StrictMode>);
+  render(<React.StrictMode><TeammatesManager /></React.StrictMode>, { exitOnCtrlC: false });
 }
 
 async function withClient<T>(run: (client: LumaClient) => Promise<T>): Promise<T> {

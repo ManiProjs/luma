@@ -481,6 +481,10 @@ impl DesktopServer {
                     request_id,
                     server: crate::mcp::McpManager::default().set_enabled(&id, enabled)?,
                 },
+                ClientMessage::McpUpdate { request_id, server } => ServerEvent::McpSaved {
+                    request_id,
+                    server: crate::mcp::McpManager::default().update(server)?,
+                },
                 ClientMessage::McpRemove { request_id, id } => ServerEvent::McpDeleted {
                     request_id,
                     deleted: crate::mcp::McpManager::default().remove(&id)?,
@@ -548,6 +552,14 @@ impl DesktopServer {
                 ClientMessage::ScheduleDelete { request_id, id } => ServerEvent::ScheduleDeleted {
                     request_id,
                     deleted: self.runtime.delete_schedule(&id)?,
+                },
+                ClientMessage::ScheduleSetEnabled {
+                    request_id,
+                    id,
+                    enabled,
+                } => ServerEvent::ScheduleSaved {
+                    request_id,
+                    schedule: self.runtime.set_schedule_enabled(&id, enabled)?,
                 },
                 ClientMessage::EventsSince {
                     request_id,

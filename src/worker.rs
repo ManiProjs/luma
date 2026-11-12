@@ -241,6 +241,7 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     .await?;
 
     let mut finished = false;
+    let mut cancelled = false;
     let mut final_response = String::new();
     while !finished {
         tokio::select! {
@@ -248,6 +249,9 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
                 Some(event) => {
                     if let AgentEvent::TextDelta(chunk) = &event {
                         final_response.push_str(chunk);
+                    }
+                    if matches!(event, AgentEvent::Cancelled) {
+                        cancelled = true;
                     }
                     finished = matches!(event, AgentEvent::Finished);
                     write_worker_output(&mut stdout, WorkerOutput::Event(event)).await?;
@@ -262,7 +266,10 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
                             let confirmation = if allowed { Confirmation::Allow } else { Confirmation::Deny };
                             let _ = confirmation_tx.send(confirmation).await;
                         }
-                        WorkerCommand::Cancel => request_cancel.cancel(),
+                        WorkerCommand::Cancel => {
+                            cancelled = true;
+                            request_cancel.cancel();
+                        }
                     }
                 }
                 line.clear();
@@ -284,11 +291,40 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
         }
         Err(error) => Err(error.into()),
     };
-    if result.is_ok() && finished {
-        if let Err(error) =
-            generate_task_title(&store, &title_model, &task_for_title, &final_response).await
-        {
-            tracing::warn!(task_id = %task_for_title.id, %error, "could not generate teammate chat title");
+    if result.is_ok() && finished && !cancelled {
+        let title_cancel = CancellationToken::new();
+        let title_generation = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            generate_task_title(
+                &store,
+                &title_model,
+                &task_for_title,
+                &final_response,
+                &title_cancel,
+            ),
+        );
+        tokio::pin!(title_generation);
+        loop {
+            tokio::select! {
+                result = &mut title_generation => {
+                    match result {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => tracing::warn!(task_id = %task_for_title.id, %error, "could not generate teammate chat title"),
+                        Err(_) => tracing::warn!(task_id = %task_for_title.id, "chat title generation timed out; keeping the original title"),
+                    }
+                    break;
+                }
+                read = stdin.read_line(&mut line) => {
+                    if read? == 0 {
+                        break;
+                    }
+                    if matches!(serde_json::from_str::<WorkerCommand>(line.trim()), Ok(WorkerCommand::Cancel)) {
+                        title_cancel.cancel();
+                        break;
+                    }
+                    line.clear();
+                }
+            }
         }
     }
     result
@@ -299,6 +335,7 @@ async fn generate_task_title(
     model: &DynamicModel,
     original_task: &crate::runtime::TaskRecord,
     response: &str,
+    cancel: &CancellationToken,
 ) -> Result<()> {
     let Some(current) = store.get_task(&original_task.id)? else {
         return Ok(());
@@ -321,12 +358,19 @@ async fn generate_task_title(
         Message { role: MessageRole::System, content: "Create a concise chat title from the user's request and assistant response. Return only the title, without quotes or punctuation at the end. Use at most 7 words.".into() },
         Message { role: MessageRole::User, content: format!("User request:\n{}\n\nAssistant response:\n{}", original_task.request, response.chars().take(2400).collect::<String>()) },
     ] };
-    let mut stream = model.stream(request).await?;
+    let mut stream = tokio::select! {
+        _ = cancel.cancelled() => return Ok(()),
+        result = model.stream(request) => result?,
+    };
     let mut title = String::new();
-    while let Some(chunk) = stream.next().await {
-        title.push_str(&chunk?);
-        if title.len() > 512 {
-            break;
+    loop {
+        tokio::select! {
+            _ = cancel.cancelled() => return Ok(()),
+            chunk = stream.next() => {
+                let Some(chunk) = chunk else { break; };
+                title.push_str(&chunk?);
+                if title.len() > 512 { break; }
+            }
         }
     }
     let title = title
@@ -581,7 +625,7 @@ impl RuntimeSupervisor {
         if !status.success() && failure.is_none() && !cancelled {
             failure = Some(format!("task worker exited with {status}"));
         }
-        if cancelled {
+        if cancelled && terminal_status != TaskStatus::Completed {
             terminal_status = if shutdown.is_cancelled() {
                 TaskStatus::Interrupted
             } else {

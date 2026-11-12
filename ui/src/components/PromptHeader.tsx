@@ -19,6 +19,7 @@ const statusWords: Record<Status, string> = {
   working: "Working",
   streaming: "Responding",
   waiting: "Approval needed",
+  cancelling: "Cancelling",
   done: "Completed",
   error: "Needs attention",
 };
@@ -28,7 +29,7 @@ export function PromptHeader({ status, activeTool, toolCalls, turns }: Props) {
   const [startedAt, setStartedAt] = useState<number | null>(null);
 
   useEffect(() => {
-    const active = status === "thinking" || status === "working" || status === "streaming" || status === "waiting";
+    const active = status === "thinking" || status === "working" || status === "streaming" || status === "waiting" || status === "cancelling";
     if (active && startedAt === null) setStartedAt(Date.now());
     if (status === "idle" || status === "done" || status === "error") {
       setStartedAt(null);
@@ -43,10 +44,10 @@ export function PromptHeader({ status, activeTool, toolCalls, turns }: Props) {
     return () => clearInterval(interval);
   }, [status, startedAt]);
 
-  const active = status === "thinking" || status === "working" || status === "streaming";
+  const active = status === "thinking" || status === "working" || status === "streaming" || status === "cancelling";
   const spinner = useSpinner(active && !activeTool);
   const motionFrame = useMotionFrame(active);
-  const statusColor = status === "waiting" ? theme.warning : status === "error" ? theme.error : status === "done" ? theme.success : theme.accent;
+  const statusColor = status === "waiting" || status === "cancelling" ? theme.warning : status === "error" ? theme.error : status === "done" ? theme.success : theme.accent;
   const progressPosition = (motionFrame % 15) - 3;
 
   return (

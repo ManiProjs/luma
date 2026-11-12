@@ -50,6 +50,8 @@ export function TeammatesManager() {
   const [editing, setEditing] = useState<SettingField | null>(null);
   const [editValue, setEditValue] = useState("");
   const [chatInput, setChatInput] = useState("");
+  const [fullScreen, setFullScreen] = useState(false);
+  const [, refreshFullScreen] = useState(0);
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
@@ -58,6 +60,13 @@ export function TeammatesManager() {
   const motionFrame = useMotionFrame(Boolean(activeTaskId));
   const activitySpinner = ["◐", "◓", "◑", "◒"][motionFrame % 4];
   const activeBrand = usePulseColor(Boolean(activeTaskId), theme.brand, "#B4D3FF");
+
+  useEffect(() => {
+    if (!fullScreen || !stdout.isTTY) return;
+    stdout.write("\u001B[?1049h\u001B[2J\u001B[H");
+    refreshFullScreen((value) => value + 1);
+    return () => { stdout.write("\u001B[?1049l"); };
+  }, [fullScreen, stdout]);
 
   const selectedAgent = agents[selected];
 
@@ -164,6 +173,23 @@ export function TeammatesManager() {
       setActiveTaskId(response.data.task.id);
     } catch (reason) {
       setChatLines((lines) => [...lines.filter((line) => line.content !== "Thinking…"), { id: randomUUID(), role: "assistant", content: `Could not send message: ${reason instanceof Error ? reason.message : String(reason)}` }]);
+    } finally { setBusy(false); }
+  }
+
+  async function cancelActiveTask() {
+    const taskId = activeTaskId;
+    if (!taskId || busy) return;
+    setBusy(true); setError("");
+    try {
+      const requestId = randomUUID();
+      const response = await request(client, {
+        type: "task_cancel",
+        data: { request_id: requestId, id: taskId },
+      }, "task_saved", requestId);
+      if (response.data.task.status === "cancelled") setActiveTaskId(null);
+      setChatLines((lines) => [...lines.filter((line) => line.content !== "Thinking…"), { id: randomUUID(), role: "status", content: response.data.task.status === "cancelled" ? "Task cancelled." : "Cancellation requested…" }]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
     } finally { setBusy(false); }
   }
 
@@ -322,6 +348,15 @@ export function TeammatesManager() {
 
   useInput((input, key) => {
     if (busy) return;
+    if ((key.ctrl || key.meta) && input.toLowerCase() === "f") {
+      setFullScreen((current) => !current);
+      return;
+    }
+    if ((key.ctrl || key.meta) && input.toLowerCase() === "c") {
+      if (activeTaskId) void cancelActiveTask();
+      else exit();
+      return;
+    }
     if (confirmDelete) {
       if (input.toLowerCase() === "y") void deleteSelected();
       else if (input.toLowerCase() === "n" || key.escape) setConfirmDelete(false);
@@ -335,6 +370,7 @@ export function TeammatesManager() {
       return;
     }
     if (view === "chat") {
+      if ((key.ctrl || key.meta) && input.toLowerCase() === "c" && activeTaskId) { void cancelActiveTask(); return; }
       if (key.escape) { setView("list"); return; }
       if (key.return) { void sendChat(); return; }
       if (key.backspace || key.delete) setChatInput((value) => value.slice(0, -1));
@@ -384,7 +420,7 @@ export function TeammatesManager() {
       </Box>
       {selectedAgent && <Box marginTop={1} flexDirection="column"><Text color={theme.chrome}>{rule}</Text><Box flexDirection="row" alignItems="center" gap={2}><Mascot seed={selectedAgent.name} /><Box flexDirection="column"><Text bold>{selectedAgent.name}</Text><Text color={theme.muted}>{selectedAgent.status} · {selectedAgent.kind}</Text></Box></Box><Text color={theme.muted}>{selectedAgent.description || "No description"}</Text><Text color={theme.muted}>Skills  {selectedAgent.configuration.skills.length ? selectedAgent.configuration.skills.join(", ") : "none attached"}</Text><Text color={theme.muted}>Workspace  {selectedAgent.configuration.workspace || "default"}</Text></Box>}
       {confirmDelete && selectedAgent ? <Box marginTop={1}><Text color={theme.warning}>Delete {selectedAgent.name} and its dependent data? (y/N)</Text></Box> : null}
-      <Box marginTop={1}><Text color={theme.chrome}>{rule}</Text><Text color={theme.muted}>↑/↓ select  ·  C chat  ·  E settings  ·  D delete  ·  R refresh  ·  Q quit</Text></Box>
+      <Box marginTop={1}><Text color={theme.chrome}>{rule}</Text><Text color={theme.muted}>↑/↓ select  ·  C chat  ·  E settings  ·  D delete  ·  R refresh  ·  Ctrl+F full screen  ·  Q quit</Text></Box>
     </> : null}
 
     {view === "settings" && selectedAgent ? <Box marginTop={1} flexDirection="column" gap={1}>
@@ -415,12 +451,12 @@ export function TeammatesManager() {
           <Box marginLeft={2}>{line.role === "tool" ? <Text color={theme.tool}>{line.content}</Text> : <Markdown content={line.content} />}</Box>
         </Box>)}
       </Box>
-      {activeTaskId ? <Text color={theme.brand}>{activitySpinner} Task running · {activeTaskId.slice(0, 8)} · wait for the reply before sending another message.</Text> : null}
+      {activeTaskId ? <Text color={theme.brand}>{activitySpinner} Task running · {activeTaskId.slice(0, 8)} · Ctrl+C cancels this task.</Text> : null}
       <Box marginTop={1} borderStyle="round" borderColor={theme.brand} paddingX={1} flexDirection="column" width="100%">
         <Text color={theme.brand} bold>MESSAGE</Text>
         <Text color="white">{chatInput}▌</Text>
       </Box>
-      <Text color={theme.muted}>Enter send  ·  Esc back</Text>
+      <Text color={theme.muted}>Enter send  ·  Ctrl+C cancel task  ·  Ctrl+F full screen  ·  Esc back</Text>
     </Box> : null}
 
     {error ? <Box marginTop={1}><Text color={theme.error}>{error}</Text></Box> : null}

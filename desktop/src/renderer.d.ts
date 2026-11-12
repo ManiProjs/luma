@@ -36,6 +36,8 @@ declare global {
       deleteTask(id: string): Promise<boolean>;
       getSkills(): Promise<{ name: string; content: string }[]>;
       createSkill(name: string, description: string, instructions: string): Promise<{ name: string; content: string }>;
+      saveSkill(name: string, content: string): Promise<{ name: string; content: string }>;
+      deleteSkill(name: string): Promise<{ deleted: boolean }>;
       openExtensionFolder(kind: "skills" | "plugins" | "mcp"): Promise<{ ok: boolean }>;
       choosePluginPackage(): Promise<string | null>;
       getPlugins(): Promise<PluginEntry[]>;
@@ -46,6 +48,7 @@ declare global {
       addMcpStdio(input: { id: string; command: string; args: string[]; env: Record<string, string> }): Promise<McpServerConfig>;
       addMcpHttp(input: { id: string; url: string; headers: Record<string, string> }): Promise<McpServerConfig>;
       setMcpEnabled(id: string, enabled: boolean): Promise<McpServerConfig>;
+      updateMcp(server: McpServerConfig): Promise<McpServerConfig>;
       removeMcp(id: string): Promise<boolean>;
       getApprovals(): Promise<ApprovalRecord[]>;
       resolveApproval(id: string, allowed: boolean): Promise<ApprovalRecord>;
@@ -55,6 +58,7 @@ declare global {
       getSchedules(agentId?: string): Promise<ScheduleRecord[]>;
       createSchedule(input: { agentId: string; title: string; prompt: string; everySeconds: number }): Promise<ScheduleRecord>;
       deleteSchedule(id: string): Promise<boolean>;
+      setScheduleEnabled(id: string, enabled: boolean): Promise<ScheduleRecord>;
       getProviders(): Promise<SetupProvider[]>;
 
       getModels(

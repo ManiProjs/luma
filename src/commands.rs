@@ -10,6 +10,7 @@ pub enum Command {
 #[cfg(feature = "tui")]
 const COMMANDS: &[&str] = &[
     "/help",
+    "/cancel",
     "/clear",
     "/new",
     "/quit",
@@ -121,5 +122,10 @@ mod tests {
     #[test]
     fn new_is_an_alias_for_clear() {
         assert!(matches!(Command::parse("/new"), Some(Command::Clear)));
+    }
+
+    #[test]
+    fn cancel_is_a_suggested_command() {
+        assert_eq!(suggestions("/can"), vec!["/cancel"]);
     }
 }

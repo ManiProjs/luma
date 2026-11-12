@@ -32,7 +32,7 @@ export interface Message {
   timestamp: number;
 }
 
-export type Status = "idle" | "thinking" | "working" | "streaming" | "waiting" | "done" | "error";
+export type Status = "idle" | "thinking" | "working" | "streaming" | "waiting" | "cancelling" | "done" | "error";
 
 export interface UiState {
   messages: Message[];

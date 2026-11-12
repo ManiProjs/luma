@@ -275,6 +275,7 @@ export type ClientMessage =
   | { type: "mcp_add_stdio"; data: { request_id: string; id: string; command: string; args: string[]; env: Record<string, string> } }
   | { type: "mcp_add_http"; data: { request_id: string; id: string; url: string; headers: Record<string, string> } }
   | { type: "mcp_set_enabled"; data: { request_id: string; id: string; enabled: boolean } }
+  | { type: "mcp_update"; data: { request_id: string; server: McpServerConfig } }
   | { type: "mcp_remove"; data: { request_id: string; id: string } }
   | { type: "approvals_list"; data: { request_id: string } }
   | { type: "approval_resolve"; data: { request_id: string; id: string; allowed: boolean } }
@@ -284,6 +285,7 @@ export type ClientMessage =
   | { type: "schedules_list"; data: { request_id: string; agent_id: string | null } }
   | { type: "schedule_create"; data: { request_id: string; agent_id: string; title: string; prompt: string; run_at: number | null; every_seconds: number | null } }
   | { type: "schedule_delete"; data: { request_id: string; id: string } }
+  | { type: "schedule_set_enabled"; data: { request_id: string; id: string; enabled: boolean } }
   | { type: "events_since"; data: { request_id: string; sequence: number; limit: number | null; agent_id?: string | null } }
   | { type: "runtime_capabilities"; data: { request_id: string } };
 

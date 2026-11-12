@@ -329,6 +329,16 @@ export function useSession(initialSetup = false) {
         return;
       }
 
+      if (text.trim().toLowerCase() === "/cancel") {
+        if (["thinking", "working", "streaming", "waiting"].includes(state.status)) {
+          client.send({ type: "cancel" });
+          setState((current) => ({ ...current, status: "cancelling" }));
+        } else {
+          addMessage("system", "There is no active request to cancel.");
+        }
+        return;
+      }
+
       addMessage("user", text);
 
       const modelCommand = text.match(/^\/model(?:\s+(.+))?$/);
@@ -377,6 +387,7 @@ export function useSession(initialSetup = false) {
     },
     cancel() {
       client.send({ type: "cancel" });
+      setState((current) => ({ ...current, status: "cancelling" }));
     },
     selectProvider(provider: SupportedProvider, apiKey?: string) {
       setState((current) => current.modelPicker ? ({

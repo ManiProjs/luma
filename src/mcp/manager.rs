@@ -166,6 +166,36 @@ impl McpManager {
         Ok(updated)
     }
 
+    pub fn update(&self, server: McpServerConfig) -> Result<McpServerConfig> {
+        validate_server_id(&server.id)?;
+        if server.name.trim().is_empty() {
+            bail!("MCP server name must not be empty");
+        }
+        match server.transport {
+            McpTransport::Stdio if server.command.trim().is_empty() => {
+                bail!("MCP server command must not be empty");
+            }
+            McpTransport::Http => {
+                validate_http_url(server.url.as_deref().unwrap_or_default())?;
+                validate_headers(&server.headers)?;
+            }
+            McpTransport::Stdio => {}
+        }
+        for (key, value) in &server.env {
+            if key.is_empty() || key.contains('=') || key.contains('\0') || value.contains('\0') {
+                bail!("invalid MCP environment variable '{key}'");
+            }
+        }
+        let mut servers = self.read()?;
+        let current = servers
+            .iter_mut()
+            .find(|item| item.id == server.id)
+            .ok_or_else(|| anyhow!("MCP server '{}' is not registered", server.id))?;
+        *current = server.clone();
+        self.write(&servers)?;
+        Ok(server)
+    }
+
     pub fn remove(&self, id: &str) -> Result<bool> {
         validate_server_id(id)?;
         let mut servers = self.read()?;

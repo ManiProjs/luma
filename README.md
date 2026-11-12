@@ -393,7 +393,9 @@ workspace rather than assuming that an in-progress operation completed.
 The terminal UI is built with **Ink**. Slash commands autocomplete as you type; press
 `Tab` to complete a command. Open the model picker with `/model` (press Enter)
 or the `Ctrl+G` shortcut. Use `↑`/`↓` to choose a provider or model and `Esc`
-to close the picker.
+to close the picker. Toggle the terminal's full-screen alternate screen with
+`Ctrl+F` or the `/fullscreen` command. The previous terminal screen is restored
+when full-screen mode is disabled or the UI exits.
 
 ---
 

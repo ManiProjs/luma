@@ -443,6 +443,31 @@ function SettingsPanel({
 }) {
   const { theme, setTheme, definition } = useTheme();
   const trapRef = useFocusTrap(open);
+  const [accentColor, setAccentColor] = useState(() => {
+    try { return window.localStorage.getItem("luma.accent") ?? ""; }
+    catch { return ""; }
+  });
+  const [customProvidersDraft, setCustomProvidersDraft] = useState(() =>
+    JSON.stringify(setupConfig?.providers ?? [], null, 2),
+  );
+  const [providerSaveError, setProviderSaveError] = useState("");
+
+  useEffect(() => {
+    setCustomProvidersDraft(JSON.stringify(setupConfig?.providers ?? [], null, 2));
+  }, [setupConfig]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (/^#[0-9a-f]{6}$/i.test(accentColor)) {
+      root.style.setProperty("--luma-accent", accentColor);
+      root.style.setProperty("--luma-accent-soft", `color-mix(in srgb, ${accentColor} 12%, transparent)`);
+      try { window.localStorage.setItem("luma.accent", accentColor); } catch { /* Keep the current session preference. */ }
+    } else {
+      root.style.removeProperty("--luma-accent");
+      root.style.removeProperty("--luma-accent-soft");
+      try { window.localStorage.removeItem("luma.accent"); } catch { /* Keep the current session preference. */ }
+    }
+  }, [accentColor]);
 
   const [section, setSection] = useState<"appearance" | "general" | "behavior" | "extensions">(
     "appearance",
@@ -556,6 +581,11 @@ function SettingsPanel({
                 ))}
               </div>
 
+              <div className="mt-4 flex items-center justify-between border-b border-[var(--luma-border)] py-3">
+                <div><div className="text-[13px] font-medium">Accent color</div><div className="mt-0.5 text-[12px] text-[var(--luma-text-muted)]">Customize highlights and controls without changing surface colors.</div></div>
+                <div className="flex items-center gap-2"><input aria-label="Custom accent color" type="color" value={accentColor || definition.accent} onChange={(event) => setAccentColor(event.target.value)} className="h-7 w-9 cursor-pointer rounded border-0 bg-transparent p-0" /><button type="button" onClick={() => setAccentColor("")} className="text-[11px] text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]">Reset</button></div>
+              </div>
+
       {window.luma.platform !== "linux" && <SettingsRow
         title="Sidebar blur"
         description="Use the native translucent surface"
@@ -633,6 +663,31 @@ function SettingsPanel({
                 actionLabel="Change"
                 onAction={onChangeModel}
               />
+
+              <details className="mt-3 rounded-md border border-[var(--luma-border)] p-3">
+                <summary className="cursor-pointer text-[12px] font-semibold">Custom provider registry</summary>
+                <p className="mt-2 text-[10px] leading-5 text-[var(--luma-text-muted)]">Add, edit, or remove custom model providers. Use the provider protocol supported by the endpoint. API credentials remain in the separate credential store.</p>
+                <textarea spellCheck={false} aria-label="Custom provider definitions" value={customProvidersDraft} onChange={(event) => { setCustomProvidersDraft(event.target.value); setProviderSaveError(""); }} rows={10} className="luma-input mt-2 w-full resize-y font-mono text-[10px] leading-5" placeholder={'[\n  {\n    "id": "custom-my-server",\n    "name": "My server",\n    "description": "My model endpoint",\n    "category": "Custom",\n    "protocol": "OpenAiCompatible",\n    "endpoint": "http://localhost:1234/v1",\n    "requires_api_key": false,\n    "supports_model_discovery": true,\n    "api_key_env": null\n  }\n]'} />
+                {providerSaveError && <p role="alert" className="mt-2 text-[10px] text-[var(--luma-danger)]">{providerSaveError}</p>}
+                <div className="mt-2 flex justify-end"><button type="button" disabled={!setupConfig} onClick={() => {
+                  try {
+                    if (!setupConfig) throw new Error("Load the current model configuration before editing providers.");
+                    const providers = JSON.parse(customProvidersDraft) as unknown;
+                    if (!Array.isArray(providers) || providers.some((item) => !item || typeof item !== "object" || (item as { category?: unknown }).category !== "Custom")) {
+                      throw new Error("Enter an array containing only custom provider definitions.");
+                    }
+                    const ids = providers.map((item) => (item as { id?: unknown }).id);
+                    if (ids.some((id) => typeof id !== "string" || !/^custom-[a-z0-9][a-z0-9_-]{0,62}$/.test(id)) || new Set(ids).size !== ids.length) {
+                      throw new Error("Each provider needs a unique ID beginning with custom-.");
+                    }
+                    void window.luma.saveSetupConfig({ ...setupConfig, providers: providers as NonNullable<SetupConfig["providers"]> })
+                      .then(() => setProviderSaveError(""))
+                      .catch((reason: unknown) => setProviderSaveError(reason instanceof Error ? reason.message : String(reason)));
+                  } catch (reason) {
+                    setProviderSaveError(reason instanceof Error ? reason.message : String(reason));
+                  }
+                }} className="luma-btn-primary h-7 px-3 text-[10px]">Save provider registry</button></div>
+              </details>
 
               <SettingsRow
                 title="Confirmations"
@@ -2799,6 +2854,7 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [cancellingTasks, setCancellingTasks] = useState<string[]>([]);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [showTeammateList, setShowTeammateList] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
@@ -2812,11 +2868,16 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
   const [personalityDraft, setPersonalityDraft] = useState("");
   const [skillsDraft, setSkillsDraft] = useState("");
   const [mascotDraft, setMascotDraft] = useState("auto");
+  const [agentNameDraft, setAgentNameDraft] = useState("");
+  const [agentDescriptionDraft, setAgentDescriptionDraft] = useState("");
+  const [configurationDraft, setConfigurationDraft] = useState("");
   const [chatPrompt, setChatPrompt] = useState("");
   const [chatAttachments, setChatAttachments] = useState<ChatAttachment[]>([]);
   const [activeTab, setActiveTab] = useState<"chat" | "settings">("chat");
   const [memoryContent, setMemoryContent] = useState("");
   const [schedulePrompt, setSchedulePrompt] = useState("");
+  const [scheduleTitle, setScheduleTitle] = useState("Recurring task");
+  const [scheduleIntervalHours, setScheduleIntervalHours] = useState("24");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const refreshing = useRef(false);
@@ -2833,6 +2894,7 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
       const nextTasks = await window.luma.getTasks(nextSelectedAgentId || undefined);
       setAgents(nextAgents);
       setTasks(nextTasks);
+      setCancellingTasks((current) => current.filter((id) => nextTasks.some((task) => task.id === id && ["queued", "running", "waiting_for_approval", "paused"].includes(task.status))));
       setApprovals(nextApprovals);
       setSchedules(nextSchedules);
       setSelectedAgentId(nextSelectedAgentId);
@@ -2963,9 +3025,12 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
 
   useEffect(() => {
     if (!selectedAgent) return;
+    setAgentNameDraft(selectedAgent.name);
+    setAgentDescriptionDraft(selectedAgent.description ?? "");
     setPersonalityDraft(selectedAgent.configuration.system_prompt);
     setSkillsDraft(selectedAgent.configuration.skills.join(", "));
     setMascotDraft(selectedAgent.configuration.mascot || "auto");
+    setConfigurationDraft(JSON.stringify(selectedAgent.configuration, null, 2));
   }, [selectedAgentId]);
 
   useEffect(() => {
@@ -3022,7 +3087,7 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
                     const activity = task.status === "queued" ? "sending" : task.status === "running" ? lastSegment?.kind === "tools" && lastSegment.tools.some((tool) => tool.durationMs === undefined) ? "writing" : "thinking" : "idle";
                     return <article key={task.id} className="space-y-3">
                       <div className="flex justify-end"><div className="luma-teammate-user-message max-w-[88%] px-3 py-2"><div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">You</div><p className="whitespace-pre-wrap break-words text-[12px] leading-6">{task.request}</p></div></div>
-                      <div className="luma-teammate-assistant-message flex items-start gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={42} active={task.status === "running"} activity={activity} /><div className="min-w-0 flex-1 pt-0.5"><div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">{selectedAgent.name}<span className="font-normal normal-case tracking-normal">{task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : task.status === "waiting_for_approval" ? "· needs approval" : ""}</span></div><div className="luma-teammate-assistant-bubble space-y-2">
+                      <div className="luma-teammate-assistant-message flex items-start gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={42} active={task.status === "running"} activity={activity} /><div className="min-w-0 flex-1 pt-0.5"><div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">{selectedAgent.name}<span className="font-normal normal-case tracking-normal">{task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : task.status === "waiting_for_approval" ? "· needs approval" : ""}</span>{["queued", "running", "waiting_for_approval", "paused"].includes(task.status) && <button type="button" disabled={busy || cancellingTasks.includes(task.id)} onClick={() => void perform(async () => { await window.luma.cancelTask(task.id); setCancellingTasks((current) => current.includes(task.id) ? current : [...current, task.id]); })} className="ml-auto rounded px-2 py-0.5 text-[10px] font-medium text-[var(--luma-danger)] hover:bg-[var(--luma-danger)]/10 disabled:opacity-50">{cancellingTasks.includes(task.id) ? "Cancelling…" : "Cancel"}</button>}</div><div className="luma-teammate-assistant-bubble space-y-2">
                         {timeline.map((segment) => segment.kind === "tools" ? (
                           <details key={segment.id} className="luma-task-tool-group rounded-md border border-[var(--luma-border)] px-2 py-1.5">
                             <summary className="cursor-pointer select-none text-[10px] text-[var(--luma-text-muted)]">{toolActivityLabel(segment.tools)}</summary>
@@ -3073,6 +3138,11 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
 
                 <section className="rounded-lg border border-[var(--luma-border)] p-3">
                   <div className="mb-2 luma-kicker">Identity & personality</div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="text-[10px] text-[var(--luma-text-muted)]">Name<input value={agentNameDraft} onChange={(event) => setAgentNameDraft(event.target.value)} maxLength={120} className="luma-input mt-1 h-8 w-full text-[11px]" /></label>
+                    <label className="text-[10px] text-[var(--luma-text-muted)]">Description<input value={agentDescriptionDraft} onChange={(event) => setAgentDescriptionDraft(event.target.value)} className="luma-input mt-1 h-8 w-full text-[11px]" /></label>
+                  </div>
+                  <button type="button" disabled={busy || !agentNameDraft.trim()} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, name: agentNameDraft.trim(), description: agentDescriptionDraft.trim() || null }); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save identity</button>
                   <MascotCustomizer value={mascotDraft} seed={selectedAgent.name} onChange={setMascotDraft} />
                   <textarea value={personalityDraft} onChange={(event) => setPersonalityDraft(event.target.value)} rows={4} className="luma-input w-full resize-y text-[11px]" placeholder="How should this teammate behave?" />
                   {selectedAgent.id !== "agent_global" && <label className="mt-3 flex items-start gap-2 text-[11px] text-[var(--luma-text-secondary)]"><input type="checkbox" checked={selectedAgent.configuration.use_global_context} onChange={(event) => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, use_global_context: event.target.checked, ...(event.target.checked ? { skills: [] } : {}) } }); })} className="mt-0.5 accent-[var(--luma-accent)]" /><span>Use the global skills, memory, connectors, etc.</span></label>}
@@ -3080,6 +3150,13 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
                   {!selectedAgent.configuration.use_global_context && <input value={skillsDraft} onChange={(event) => setSkillsDraft(event.target.value)} className="luma-input mt-2 h-8 w-full text-[11px]" placeholder="Skills: research, code-review" />}
                   <button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, mascot: mascotDraft, system_prompt: personalityDraft, skills: selectedAgent.configuration.use_global_context ? [] : [...new Set(skillsDraft.split(",").map((skill) => skill.trim()).filter(Boolean))] } }); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save changes</button>
                 </section>
+
+                <details className="rounded-lg border border-[var(--luma-border)] p-3">
+                  <summary className="cursor-pointer text-[12px] font-semibold">Advanced agent configuration</summary>
+                  <p className="mt-2 text-[10px] leading-5 text-[var(--luma-text-muted)]">Edit the complete AgentConfiguration object, including provider overrides, endpoint, allowed workspaces, enabled tools, permissions, network policy, and recovery behavior. Keep max_concurrent_tasks at 1 while the runtime uses a shared workspace worker.</p>
+                  <textarea spellCheck={false} value={configurationDraft} onChange={(event) => setConfigurationDraft(event.target.value)} rows={18} className="luma-input mt-2 w-full resize-y font-mono text-[10px] leading-5" />
+                  <div className="mt-2 flex justify-end"><button type="button" disabled={busy || !configurationDraft.trim()} onClick={() => void perform(async () => { let configuration: AgentConfiguration; try { configuration = JSON.parse(configurationDraft) as AgentConfiguration; } catch (reason) { throw new Error(`Invalid JSON: ${reason instanceof Error ? reason.message : String(reason)}`); } if (!configuration || typeof configuration !== "object" || !configuration.permissions || !Array.isArray(configuration.skills) || !Array.isArray(configuration.allowed_workspaces) || !Array.isArray(configuration.enabled_tools)) throw new Error("Configuration must include permissions, skills, allowed_workspaces, and enabled_tools."); await window.luma.updateAgent({ id: selectedAgent.id, configuration }); setConfigurationDraft(JSON.stringify(configuration, null, 2)); })} className="luma-btn-primary h-7 px-3 text-[10px]">Save full configuration</button></div>
+                </details>
 
                 {approvals.filter((approval) => approval.agent_id === selectedAgent.id).length > 0 && <section>
                   <h4 className="mb-2 luma-kicker">Needs your approval</h4>
@@ -3101,10 +3178,12 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
                   </div>
                   <div className="rounded-lg border border-[var(--luma-border)] p-3">
                     <h4 className="mb-2 luma-kicker">Recurring work</h4>
+                    <input value={scheduleTitle} onChange={(event) => setScheduleTitle(event.target.value)} maxLength={120} placeholder="Schedule name" className="luma-input mb-2 h-8 w-full text-[11px]" />
                     <textarea value={schedulePrompt} onChange={(event) => setSchedulePrompt(event.target.value)} rows={2} placeholder="What should this teammate repeat?" className="luma-input w-full resize-y text-[11px]" />
-                    <button type="button" disabled={busy || !schedulePrompt.trim()} onClick={() => void perform(async () => { await window.luma.createSchedule({ agentId: selectedAgent.id, title: "Recurring task", prompt: schedulePrompt.trim(), everySeconds: 86400 }); setSchedulePrompt(""); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Schedule daily</button>
+                    <label className="mt-2 block text-[10px] text-[var(--luma-text-muted)]">Repeat every (hours)<input type="number" min={1} max={8760} step={1} value={scheduleIntervalHours} onChange={(event) => setScheduleIntervalHours(event.target.value)} className="luma-input mt-1 h-8 w-full text-[11px]" /></label>
+                    <button type="button" disabled={busy || !schedulePrompt.trim() || !scheduleTitle.trim() || !Number.isInteger(Number(scheduleIntervalHours)) || Number(scheduleIntervalHours) < 1 || Number(scheduleIntervalHours) > 8760} onClick={() => void perform(async () => { await window.luma.createSchedule({ agentId: selectedAgent.id, title: scheduleTitle.trim(), prompt: schedulePrompt.trim(), everySeconds: Number(scheduleIntervalHours) * 3600 }); setSchedulePrompt(""); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Create recurring schedule</button>
                     <p className="mt-1 text-[10px] text-[var(--luma-text-muted)]">{schedules.filter((schedule) => schedule.agent_id === selectedAgent.id && schedule.enabled).length} enabled schedules</p>
-                    <div className="mt-2 space-y-1">{schedules.filter((schedule) => schedule.agent_id === selectedAgent.id).map((schedule) => <div key={schedule.id} className="flex items-center gap-2 border-t border-[var(--luma-border)] pt-1.5"><span className="min-w-0 flex-1 truncate text-[10px] text-[var(--luma-text-secondary)]">{schedule.title} · {schedule.enabled ? new Date(schedule.next_run_at * 1000).toLocaleString() : "Disabled"}</span><button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.deleteSchedule(schedule.id); })} className="text-[10px] text-[var(--luma-danger)] hover:underline">Remove</button></div>)}</div>
+                    <div className="mt-2 space-y-1">{schedules.filter((schedule) => schedule.agent_id === selectedAgent.id).map((schedule) => <div key={schedule.id} className="flex items-center gap-2 border-t border-[var(--luma-border)] pt-1.5"><span className="min-w-0 flex-1 truncate text-[10px] text-[var(--luma-text-secondary)]">{schedule.title} · {schedule.every_seconds ? `every ${Math.round(schedule.every_seconds / 3600 * 10) / 10}h` : "one-time"} · {schedule.enabled ? `next ${new Date(schedule.next_run_at * 1000).toLocaleString()}` : "Disabled"}</span><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.setScheduleEnabled(schedule.id, !schedule.enabled))} className="text-[10px] text-[var(--luma-accent)] hover:underline">{schedule.enabled ? "Pause" : "Resume"}</button><button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.deleteSchedule(schedule.id); })} className="text-[10px] text-[var(--luma-danger)] hover:underline">Remove</button></div>)}</div>
                   </div>
                 </section>
               </div>

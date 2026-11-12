@@ -511,6 +511,15 @@ impl Session {
             return Ok(None);
         }
 
+        if text.eq_ignore_ascii_case("/cancel") {
+            if self.state.busy {
+                self.cancel();
+            } else {
+                self.push_system("There is no active request to cancel.");
+            }
+            return Ok(None);
+        }
+
         if text == "/history" || text == "/history list" {
             let output = crate::chats::list()?
                 .into_iter()
@@ -1366,6 +1375,7 @@ impl Session {
         [
             "Commands:",
             "  /help    show this message",
+            "  /cancel  cancel the active request",
             "  /clear   clear the transcript",
             "  /new     start a fresh conversation",
             "  /history [list] list recent saved chats",
@@ -1804,6 +1814,18 @@ mod tests {
         session.handle_event(AgentEvent::Cancelled);
         assert!(!session.state().busy);
         assert_eq!(session.state().status, "Cancelled");
+    }
+
+    #[test]
+    fn slash_cancel_cancels_the_active_request_without_submitting_a_prompt() {
+        let (mut session, _rx) = session();
+        session.submit("work on this".into()).unwrap();
+        let request = session.request_cancellation().current();
+
+        assert_eq!(session.submit("/cancel".into()).unwrap(), None);
+        assert!(request.is_cancelled());
+        assert_eq!(session.state().status, "Cancelling");
+        assert_eq!(session.state().messages.len(), 1);
     }
 
     #[test]

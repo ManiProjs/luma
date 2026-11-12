@@ -1445,6 +1445,22 @@ impl RuntimeStore {
         let db = self.db()?;
         Ok(db.execute("DELETE FROM schedules WHERE id=?1", [id])? > 0)
     }
+
+    pub fn set_schedule_enabled(&self, id: &str, enabled: bool) -> Result<ScheduleRecord> {
+        let db = self.db()?;
+        let changed = db.execute(
+            "UPDATE schedules SET enabled=?2 WHERE id=?1",
+            params![id, enabled as i64],
+        )?;
+        if changed == 0 {
+            bail!("schedule not found: {id}");
+        }
+        drop(db);
+        self.list_schedules(None)?
+            .into_iter()
+            .find(|schedule| schedule.id == id)
+            .ok_or_else(|| anyhow!("schedule disappeared after updating: {id}"))
+    }
 }
 
 fn enable_teammate_network_tools(configuration: &mut AgentConfiguration) {
@@ -2069,6 +2085,30 @@ mod tests {
             .mark_gateway_command_processed(&commands[0].id)
             .unwrap();
         assert!(store.pending_gateway_commands(&task_id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn schedules_can_be_paused_and_resumed() {
+        let store = RuntimeStore::in_memory();
+        let agent = store
+            .create_agent(
+                "Scheduled teammate",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let schedule = store
+            .create_schedule(&agent.id, "Hourly", "Check the workspace", None, Some(3600))
+            .unwrap();
+
+        let paused = store.set_schedule_enabled(&schedule.id, false).unwrap();
+        assert!(!paused.enabled);
+        assert!(store.due_schedules(i64::MAX).unwrap().is_empty());
+
+        let resumed = store.set_schedule_enabled(&schedule.id, true).unwrap();
+        assert!(resumed.enabled);
+        assert_eq!(resumed.id, schedule.id);
     }
 
     #[test]

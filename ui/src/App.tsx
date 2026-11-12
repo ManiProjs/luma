@@ -1,4 +1,4 @@
-import { Box, Text, measureElement, useInput, useStdin, useStdout } from "ink";
+import { Box, Text, measureElement, useApp, useInput, useStdin, useStdout } from "ink";
 import type { DOMElement } from "ink";
 import { useEffect, useRef, useState } from "react";
 import { readFile, realpath, stat } from "node:fs/promises";
@@ -15,6 +15,7 @@ import { theme } from "./theme";
 import { formatChatPrompt, type ChatAttachment } from "../../shared/attachments";
 
 export function App({ initialSetup = false }: { initialSetup?: boolean }) {
+  const { exit } = useApp();
   const { state, send, openModelPicker, selectProvider, chooseModel, closeModelPicker, confirm, answerQuestion, cancel } = useSession(initialSetup);
 
   const [input, setInput] = useState("");
@@ -22,6 +23,8 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentMode, setAttachmentMode] = useState(false);
   const [attachmentError, setAttachmentError] = useState("");
+  const [fullScreen, setFullScreen] = useState(false);
+  const [, refreshFullScreen] = useState(0);
   const rootElement = useRef<DOMElement>(null);
   const toolActivityTriggers = useRef<Array<{ id: string; element: DOMElement }>>([]);
   toolActivityTriggers.current = [];
@@ -39,6 +42,19 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
   }, [state.question]);
 
   useInput((input, key) => {
+    if ((key.ctrl || key.meta) && input.toLowerCase() === "c") {
+      if (!state.modelPicker && !state.question && !state.confirmation
+        && state.status !== "thinking" && state.status !== "working" && state.status !== "streaming" && state.status !== "waiting" && state.status !== "cancelling") {
+        exit();
+      }
+      return;
+    }
+    if ((key.ctrl || key.meta) && input.toLowerCase() === "f") {
+      if (!state.modelPicker && !state.question && !state.confirmation && !attachmentMode) {
+        setFullScreen((current) => !current);
+      }
+      return;
+    }
     if ((key.meta || key.ctrl) && input.toLowerCase() === "o") {
       if (state.modelPicker) return;
       const latestGroup = [...recentMessages].reverse().find((message) => message.role === "tool");
@@ -93,6 +109,15 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
       stdout.write("\u001B[?1000l\u001B[?1006l");
     };
   }, [isRawModeSupported, stdout]);
+
+  useEffect(() => {
+    if (!fullScreen || !stdout.isTTY) return;
+    stdout.write("\u001B[?1049h\u001B[2J\u001B[H");
+    refreshFullScreen((value) => value + 1);
+    return () => {
+      stdout.write("\u001B[?1049l");
+    };
+  }, [fullScreen, stdout]);
 
   async function attachFile(pathInput: string) {
     try {
@@ -182,6 +207,7 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
         question={state.question}
         onAnswer={answerQuestion}
         onCancelQuestion={cancel}
+        onCancelRequest={cancel}
         toolCalls={state.messages.filter((message) => message.role === "tool").length}
         turns={state.messages.filter((message) => message.role === "user").length}
         value={input}
@@ -196,6 +222,11 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
         onSubmit={() => {
           if (attachmentMode) {
             void attachFile(input.trim());
+            return;
+          }
+          if (input.trim().toLowerCase() === "/fullscreen") {
+            setFullScreen((current) => !current);
+            setInput("");
             return;
           }
           if (!input.trim() && attachments.length === 0) return;

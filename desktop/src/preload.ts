@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld("luma", {
   deleteTask: (id: string): Promise<boolean> => ipcRenderer.invoke("luma:delete-task", id),
   getSkills: (): Promise<{ name: string; content: string }[]> => ipcRenderer.invoke("luma:get-skills"),
   createSkill: (name: string, description: string, instructions: string): Promise<{ name: string; content: string }> => ipcRenderer.invoke("luma:create-skill", name, description, instructions),
+  saveSkill: (name: string, content: string): Promise<{ name: string; content: string }> => ipcRenderer.invoke("luma:save-skill", name, content),
+  deleteSkill: (name: string): Promise<{ deleted: boolean }> => ipcRenderer.invoke("luma:delete-skill", name),
   openExtensionFolder: (kind: "skills" | "plugins" | "mcp"): Promise<{ ok: boolean }> => ipcRenderer.invoke("luma:open-extension-folder", kind),
   choosePluginPackage: (): Promise<string | null> => ipcRenderer.invoke("luma:choose-plugin-package"),
   getPlugins: (): Promise<PluginEntry[]> => ipcRenderer.invoke("luma:get-plugins"),
@@ -41,6 +43,7 @@ contextBridge.exposeInMainWorld("luma", {
   addMcpStdio: (input: { id: string; command: string; args: string[]; env: Record<string, string> }): Promise<McpServerConfig> => ipcRenderer.invoke("luma:add-mcp-stdio", input),
   addMcpHttp: (input: { id: string; url: string; headers: Record<string, string> }): Promise<McpServerConfig> => ipcRenderer.invoke("luma:add-mcp-http", input),
   setMcpEnabled: (id: string, enabled: boolean): Promise<McpServerConfig> => ipcRenderer.invoke("luma:set-mcp-enabled", id, enabled),
+  updateMcp: (server: McpServerConfig): Promise<McpServerConfig> => ipcRenderer.invoke("luma:update-mcp", server),
   removeMcp: (id: string): Promise<boolean> => ipcRenderer.invoke("luma:remove-mcp", id),
   getApprovals: (): Promise<ApprovalRecord[]> => ipcRenderer.invoke("luma:get-approvals"),
   resolveApproval: (id: string, allowed: boolean): Promise<ApprovalRecord> => ipcRenderer.invoke("luma:resolve-approval", id, allowed),
@@ -50,6 +53,7 @@ contextBridge.exposeInMainWorld("luma", {
   getSchedules: (agentId?: string): Promise<ScheduleRecord[]> => ipcRenderer.invoke("luma:get-schedules", agentId),
   createSchedule: (input: { agentId: string; title: string; prompt: string; everySeconds: number }): Promise<ScheduleRecord> => ipcRenderer.invoke("luma:create-schedule", input),
   deleteSchedule: (id: string): Promise<boolean> => ipcRenderer.invoke("luma:delete-schedule", id),
+  setScheduleEnabled: (id: string, enabled: boolean): Promise<ScheduleRecord> => ipcRenderer.invoke("luma:set-schedule-enabled", id, enabled),
   getProviders: () => ipcRenderer.invoke("luma:get-providers"),
 
   getModels: (
