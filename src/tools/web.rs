@@ -44,6 +44,14 @@ impl Tool for WebSearch {
         }
         run_async(async move { search_web(&query).await })
     }
+
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
+    fn requires_network(&self) -> bool {
+        true
+    }
 }
 
 impl Tool for FetchUrl {
@@ -70,6 +78,14 @@ impl Tool for FetchUrl {
         }
         run_async(async move { fetch_url(&url).await })
     }
+
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
+    fn requires_network(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Deserialize)]
@@ -94,6 +110,10 @@ impl Tool for HttpRequest {
         let request: HttpRequestInput = serde_json::from_str(input)
             .context("http_request expects a JSON object with method and url")?;
         run_async(async move { send_http_request(request).await })
+    }
+
+    fn requires_network(&self) -> bool {
+        true
     }
 }
 

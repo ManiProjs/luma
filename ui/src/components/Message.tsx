@@ -87,7 +87,7 @@ export function Message({ message, running = false, detailsExpanded = false }: P
     const detailText = details.length > 0 ? details.join("\n") : message.content;
     return (
       <Box marginTop={1} flexDirection="column">
-        <Text color={theme.error}>{glyphs.error} Failed to run tool · Cmd+O for details</Text>
+        <Text color={theme.error}>{glyphs.error} Failed to run tool · Cmd/Ctrl+O for details</Text>
         {detailsExpanded && detailText ? <Box marginLeft={2}>
           <Text color={theme.muted}>{detailText}</Text>
         </Box> : null}

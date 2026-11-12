@@ -391,6 +391,12 @@ function SettingsPanel({
   onCompactHistoryChange,
   reducedMotion,
   onReducedMotionChange,
+  sendWithEnter,
+  onSendWithEnterChange,
+  autoScrollToLatest,
+  onAutoScrollToLatestChange,
+  showToolActivity,
+  onShowToolActivityChange,
   onChangeModel,
   onOpenTour,
 }: {
@@ -405,6 +411,12 @@ function SettingsPanel({
   onCompactHistoryChange: (enabled: boolean) => void;
   reducedMotion: boolean;
   onReducedMotionChange: (enabled: boolean) => void;
+  sendWithEnter: boolean;
+  onSendWithEnterChange: (enabled: boolean) => void;
+  autoScrollToLatest: boolean;
+  onAutoScrollToLatestChange: (enabled: boolean) => void;
+  showToolActivity: boolean;
+  onShowToolActivityChange: (enabled: boolean) => void;
   onChangeModel: () => void;
   onOpenTour: () => void;
 }) {
@@ -636,6 +648,27 @@ function SettingsPanel({
                 value={reducedMotion ? "Enabled" : "Disabled"}
                 actionLabel={reducedMotion ? "Disable" : "Enable"}
                 onAction={() => onReducedMotionChange(!reducedMotion)}
+              />
+              <SettingsRow
+                title="Send with Enter"
+                description="Send messages with Enter; use Shift+Enter for a new line"
+                value={sendWithEnter ? "Enabled" : "Disabled"}
+                actionLabel={sendWithEnter ? "Disable" : "Enable"}
+                onAction={() => onSendWithEnterChange(!sendWithEnter)}
+              />
+              <SettingsRow
+                title="Auto-scroll to latest message"
+                description="Keep the Code conversation pinned to its newest activity"
+                value={autoScrollToLatest ? "Enabled" : "Disabled"}
+                actionLabel={autoScrollToLatest ? "Disable" : "Enable"}
+                onAction={() => onAutoScrollToLatestChange(!autoScrollToLatest)}
+              />
+              <SettingsRow
+                title="Show tool activity"
+                description="Show tool runs and results in the Code conversation"
+                value={showToolActivity ? "Shown" : "Hidden"}
+                actionLabel={showToolActivity ? "Hide" : "Show"}
+                onAction={() => onShowToolActivityChange(!showToolActivity)}
               />
             </>
           )}
@@ -1837,6 +1870,7 @@ function Composer({
   value,
   onChange,
   onChangeModel,
+  sendWithEnter,
 }: {
   thinking: boolean;
   preparing: boolean;
@@ -1848,6 +1882,7 @@ function Composer({
   value: string;
   onChange: (value: string) => void;
   onChangeModel: (scope: "global" | "session") => void;
+  sendWithEnter: boolean;
 }) {
   const [selectedCommand, setSelectedCommand] = useState(0);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
@@ -1947,7 +1982,7 @@ function Composer({
               chooseCommand(matches[selectedCommand].command);
               return;
             }
-            if (event.key === "Enter" && !event.shiftKey) {
+            if (event.key === "Enter" && !event.shiftKey && sendWithEnter) {
               event.preventDefault();
               if (matches.length > 0) {
                 const selected = matches[selectedCommand].command;
@@ -2032,17 +2067,18 @@ function Composer({
       )}
 
       <div className="mx-auto mt-2 flex max-w-[860px] items-center justify-between px-1 text-[11px] text-[var(--luma-text-muted)]">
-        <span>Enter to send · Shift+Enter for a new line</span>
+        <span>{sendWithEnter ? "Enter to send · Shift+Enter for a new line" : "Enter for a new line · Use Send to submit"}</span>
         <span className="hidden sm:inline">Luma can make mistakes. Review important changes.</span>
       </div>
     </div>
   );
 }
 
-function AgentView({ onChangeModel }: { onChangeModel: (scope: "global" | "session") => void }) {
+function AgentView({ onChangeModel, sendWithEnter, autoScrollToLatest, showToolActivity }: { onChangeModel: (scope: "global" | "session") => void; sendWithEnter: boolean; autoScrollToLatest: boolean; showToolActivity: boolean }) {
   const [draft, setDraft] = useState("");
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [toolGroupExpansion, setToolGroupExpansion] = useState<Record<string, boolean>>({});
+  const transcriptScrollRef = useRef<HTMLDivElement>(null);
   const {
     sessionId,
     messages,
@@ -2055,6 +2091,12 @@ function AgentView({ onChangeModel }: { onChangeModel: (scope: "global" | "sessi
     respondToConfirmation,
     cancel,
   } = useLuma();
+
+  useEffect(() => {
+    if (!autoScrollToLatest) return;
+    const container = transcriptScrollRef.current;
+    if (container) container.scrollTop = container.scrollHeight;
+  }, [autoScrollToLatest, messages, tools, thinking, error, confirmation]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -2166,11 +2208,11 @@ function AgentView({ onChangeModel }: { onChangeModel: (scope: "global" | "sessi
 
   // A pending chat is still an empty conversation: show the welcome state
   // until the first prompt is sent instead of leaving a blank transcript.
-  const showEmptyState = !hasContent;
+  const showEmptyState = preparingNewChat || !hasContent;
 
   return (
     <div className="luma-agent-view relative flex h-full flex-col">
-      <div className="min-h-0 flex-1 overflow-auto">
+      <div ref={transcriptScrollRef} className="min-h-0 flex-1 overflow-auto">
         {showEmptyState && (
           <>
             <EmptyAgentState onPrompt={setDraft} />
@@ -2179,7 +2221,7 @@ function AgentView({ onChangeModel }: { onChangeModel: (scope: "global" | "sessi
 
         {!showEmptyState && (
           <div className="luma-agent-transcript mx-auto max-w-[900px] space-y-4 px-6 py-5">
-            {messages.map((message) => message.role === "tools" ? (
+            {messages.filter((message) => showToolActivity || message.role !== "tools").map((message) => message.role === "tools" ? (
               <ToolActivity
                 key={message.id}
                 tools={message.tools ?? []}
@@ -2224,6 +2266,7 @@ function AgentView({ onChangeModel }: { onChangeModel: (scope: "global" | "sessi
         value={draft}
         onChange={setDraft}
         onChangeModel={onChangeModel}
+        sendWithEnter={sendWithEnter}
       />
     </div>
   );
@@ -2721,7 +2764,7 @@ function ChangesView({ onOpenFile }: { onOpenFile: (path: string) => void }) {
   );
 }
 
-function TeammatesPanel({ onSidebarChange }: { onSidebarChange: (sidebar: React.ReactNode) => void }) {
+function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (sidebar: React.ReactNode) => void; sendWithEnter: boolean }) {
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeEvent[]>([]);
@@ -2949,11 +2992,11 @@ function TeammatesPanel({ onSidebarChange }: { onSidebarChange: (sidebar: React.
                   });
                 }}>
                   {chatAttachments.length > 0 && <div className="mb-2 flex flex-wrap gap-1.5">{chatAttachments.map((attachment, index) => <span key={`${attachment.name}-${index}`} className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-[var(--luma-border)] px-2 py-1 text-[10px] text-[var(--luma-text-secondary)]"><span className="max-w-56 truncate">{attachment.name}</span><button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setChatAttachments((items) => items.filter((_, itemIndex) => itemIndex !== index))} className="text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]">×</button></span>)}</div>}
-                  <div className="flex items-end gap-2">
+                  <div className="flex items-center gap-2">
                     <button type="button" aria-label="Attach files" title="Attach text files" disabled={busy || selectedAgent.status === "stopped" || selectedAgent.status === "paused"} onClick={() => void attachChatFiles()} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)] hover:text-[var(--luma-text)] disabled:opacity-40"><PlusIcon /></button>
-                    <textarea value={chatPrompt} onChange={(event) => setChatPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message ${selectedAgent.name}…`} rows={2} className="luma-input min-w-0 flex-1 resize-none border-0 bg-transparent text-[12px] focus:ring-0" />
+                    <textarea value={chatPrompt} onChange={(event) => setChatPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && sendWithEnter) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message ${selectedAgent.name}…`} rows={2} className="luma-input min-h-[36px] min-w-0 flex-1 self-center resize-none border-0 bg-transparent py-2 text-[12px] leading-5 focus:ring-0" />
                   </div>
-                  <div className="flex items-center justify-between px-1 pt-1"><span className="text-[10px] text-[var(--luma-text-muted)]">Enter to send · Shift + Enter for a new line</span><button type="submit" disabled={busy || (!chatPrompt.trim() && chatAttachments.length === 0) || selectedAgent.status === "stopped" || selectedAgent.status === "paused"} className="luma-btn-primary h-8 px-3 text-[11px]">{busy ? "Sending…" : "Send"}</button></div>
+                  <div className="flex items-center justify-between px-1 pt-1"><span className="text-[10px] text-[var(--luma-text-muted)]">{sendWithEnter ? "Enter to send · Shift + Enter for a new line" : "Enter for a new line · Use Send to submit"}</span><button type="submit" disabled={busy || (!chatPrompt.trim() && chatAttachments.length === 0) || selectedAgent.status === "stopped" || selectedAgent.status === "paused"} className="luma-btn-primary h-8 px-3 text-[11px]">{busy ? "Sending…" : "Send"}</button></div>
                 </form>
               </div>
             ) : (
@@ -3097,6 +3140,18 @@ export default function App() {
     try { return window.localStorage.getItem("luma.reduce-motion") === "true"; }
     catch { return false; }
   });
+  const [sendWithEnter, setSendWithEnter] = useState(() => {
+    try { return window.localStorage.getItem("luma.send-with-enter") !== "false"; }
+    catch { return true; }
+  });
+  const [autoScrollToLatest, setAutoScrollToLatest] = useState(() => {
+    try { return window.localStorage.getItem("luma.auto-scroll-latest") !== "false"; }
+    catch { return true; }
+  });
+  const [showToolActivity, setShowToolActivity] = useState(() => {
+    try { return window.localStorage.getItem("luma.show-tool-activity") !== "false"; }
+    catch { return true; }
+  });
 
   useEffect(() => {
     try {
@@ -3112,10 +3167,13 @@ export default function App() {
     try {
       window.localStorage.setItem("luma.compact-history", String(compactHistory));
       window.localStorage.setItem("luma.reduce-motion", String(reducedMotion));
+      window.localStorage.setItem("luma.send-with-enter", String(sendWithEnter));
+      window.localStorage.setItem("luma.auto-scroll-latest", String(autoScrollToLatest));
+      window.localStorage.setItem("luma.show-tool-activity", String(showToolActivity));
     } catch {
       // Keep the current preferences for this session if storage is unavailable.
     }
-  }, [compactHistory, reducedMotion]);
+  }, [compactHistory, reducedMotion, sendWithEnter, autoScrollToLatest, showToolActivity]);
 
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [workspacePath, setWorkspacePath] = useState("");
@@ -3365,6 +3423,12 @@ export default function App() {
         onCompactHistoryChange={setCompactHistory}
         reducedMotion={reducedMotion}
         onReducedMotionChange={setReducedMotion}
+        sendWithEnter={sendWithEnter}
+        onSendWithEnterChange={setSendWithEnter}
+        autoScrollToLatest={autoScrollToLatest}
+        onAutoScrollToLatestChange={setAutoScrollToLatest}
+        showToolActivity={showToolActivity}
+        onShowToolActivityChange={setShowToolActivity}
         onChangeModel={() => { setSettingsOpen(false); setModelPickerScope("global"); }}
         onOpenTour={() => { setSettingsOpen(false); setTourOpen(true); }}
       />
@@ -3382,8 +3446,8 @@ export default function App() {
 
         <main className="luma-main-surface relative min-w-0 flex-1 overflow-hidden bg-[var(--luma-bg)]" aria-busy={workspaceSwitching} inert={workspaceSwitching}>
           <div key={`${mode}:${workspacePath}`} className="luma-view-transition h-full min-w-0">
-          {mode === "teammates" && <TeammatesPanel onSidebarChange={setTeammatesSidebar} />}
-          {mode === "agent" && <AgentView onChangeModel={setModelPickerScope} />}
+          {mode === "teammates" && <TeammatesPanel onSidebarChange={setTeammatesSidebar} sendWithEnter={sendWithEnter} />}
+          {mode === "agent" && <AgentView onChangeModel={setModelPickerScope} sendWithEnter={sendWithEnter} autoScrollToLatest={autoScrollToLatest} showToolActivity={showToolActivity} />}
 
           {mode === "ide" && (
             <IDEView

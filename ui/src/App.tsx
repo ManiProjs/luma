@@ -36,6 +36,7 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
 
   useInput((input, key) => {
     if ((key.meta || key.ctrl) && input.toLowerCase() === "o") {
+      if (state.modelPicker) return;
       const latestGroup = [...recentMessages].reverse().find((message) => message.role === "tool");
       if (latestGroup) setExpandedToolGroups((current) => ({
         ...current,
@@ -159,7 +160,7 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
             const expanded = expandedToolGroups[message.id] ?? false;
             return <Box key={`tool-group-${message.id}`} flexDirection="column" marginTop={1}>
               <Box ref={(element) => { if (element) toolActivityTriggers.current.push({ id: message.id, element }); }}>
-                <Text color={theme.muted} bold>{expanded ? "⌄" : "›"} {group.length} tool{group.length === 1 ? "" : "s"} ran · click or Cmd+O</Text>
+                <Text color={theme.muted} bold>{expanded ? "⌄" : "›"} {group.length} tool{group.length === 1 ? "" : "s"} ran · click or Cmd/Ctrl+O</Text>
               </Box>
               {expanded ? group.map((tool) => <Message key={tool.id} message={tool} running={tool.content.startsWith(`${state.activeTool}:`)} />) : null}
             </Box>;
@@ -179,13 +180,6 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
         value={input}
         onChange={setInput}
         onOpenModelPicker={openModelPicker}
-        onToggleToolActivity={() => {
-          const latestGroup = [...recentMessages].reverse().find((message) => message.role === "tool");
-          if (latestGroup) setExpandedToolGroups((current) => ({
-            ...current,
-            [latestGroup.id]: !(current[latestGroup.id] ?? false),
-          }));
-        }}
         attachmentTriggerRef={attachmentTrigger}
         attachments={attachments}
         attachmentMode={attachmentMode}

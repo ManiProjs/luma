@@ -114,23 +114,6 @@ pub enum PermissionDecision {
 
 impl PermissionProfile {
     pub fn decide(&self, tool: &str, mutating: bool) -> PermissionDecision {
-        if self.denied_tools.iter().any(|item| item == tool) {
-            return PermissionDecision::Deny;
-        }
-        // Network policy is an absolute boundary, not an ordinary default.
-        // An explicit tool allow must never override `allow_network = false`.
-        if !self.allow_network && matches!(tool, "web_search" | "fetch_url" | "http_request") {
-            return PermissionDecision::Deny;
-        }
-        if tool == "http_request" && mutating && self.require_approval_for_mutations {
-            return PermissionDecision::RequireApproval;
-        }
-        if self.allowed_tools.iter().any(|item| item == tool) {
-            return PermissionDecision::Allow;
-        }
-        if mutating && self.require_approval_for_mutations {
-            return PermissionDecision::RequireApproval;
-        }
         let known_read_only = matches!(
             tool,
             "read_file"
@@ -150,8 +133,42 @@ impl PermissionProfile {
                 | "inspect_project"
                 | "list_skills"
                 | "load_skill"
+                | "web_search"
+                | "fetch_url"
         );
-        if !mutating && known_read_only && self.auto_approve_read_only {
+        self.decide_with_capabilities(
+            tool,
+            mutating,
+            matches!(tool, "web_search" | "fetch_url" | "http_request"),
+            known_read_only && !mutating,
+        )
+    }
+
+    pub fn decide_with_capabilities(
+        &self,
+        tool: &str,
+        mutating: bool,
+        requires_network: bool,
+        read_only: bool,
+    ) -> PermissionDecision {
+        if self.denied_tools.iter().any(|item| item == tool) {
+            return PermissionDecision::Deny;
+        }
+        // Network policy is an absolute boundary, not an ordinary default.
+        // An explicit tool allow must never override `allow_network = false`.
+        if !self.allow_network && requires_network {
+            return PermissionDecision::Deny;
+        }
+        if tool == "http_request" && mutating && self.require_approval_for_mutations {
+            return PermissionDecision::RequireApproval;
+        }
+        if self.allowed_tools.iter().any(|item| item == tool) {
+            return PermissionDecision::Allow;
+        }
+        if mutating && self.require_approval_for_mutations {
+            return PermissionDecision::RequireApproval;
+        }
+        if !mutating && read_only && self.auto_approve_read_only {
             return PermissionDecision::Allow;
         }
         PermissionDecision::RequireApproval
@@ -2121,6 +2138,29 @@ mod tests {
         profile.allow_network = true;
         assert_eq!(
             profile.decide("http_request", true),
+            PermissionDecision::RequireApproval
+        );
+    }
+
+    #[test]
+    fn external_plugin_and_mcp_tools_require_network_permission_and_approval() {
+        let mut profile = PermissionProfile::default();
+        assert_eq!(
+            profile.decide_with_capabilities("plugin__calendar__create", true, true, false),
+            PermissionDecision::Deny
+        );
+        assert_eq!(
+            profile.decide_with_capabilities("mcp__filesystem__write_file", true, true, false),
+            PermissionDecision::Deny
+        );
+
+        profile.allow_network = true;
+        assert_eq!(
+            profile.decide_with_capabilities("plugin__calendar__create", true, true, false),
+            PermissionDecision::RequireApproval
+        );
+        assert_eq!(
+            profile.decide_with_capabilities("mcp__filesystem__write_file", true, true, false),
             PermissionDecision::RequireApproval
         );
     }

@@ -4,6 +4,7 @@ import { useEffect, useState, type RefObject } from "react";
 
 import { glyphs, theme } from "../theme";
 import { PromptHeader } from "./PromptHeader";
+import { usePulseColor } from "../hooks/usePulseColor";
 
 import type { Status } from "../state";
 import type { ChatAttachment } from "../../../shared/attachments";
@@ -17,7 +18,6 @@ type Props = {
   onChange: (value: string) => void;
   onSubmit: () => void;
   onOpenModelPicker: () => void;
-  onToggleToolActivity: () => void;
   attachmentTriggerRef: RefObject<DOMElement | null>;
   attachments: ChatAttachment[];
   attachmentMode: boolean;
@@ -30,35 +30,38 @@ type Props = {
 };
 
 const COMMANDS = [
-  "/help",
-  "/clear",
-  "/new",
-  "/quit",
-  "/init",
-  "/model",
-  "/model session",
-  "/tools",
-  "/skills",
-  "/teammates",
-  "/agents",
-  "/tasks",
-  "/approvals",
-  "/schedules",
-  "/memory",
-  "/history",
-  "/history list",
-  "/history show",
-  "/history delete",
-  "/history prune",
-  "/restore",
-  "/summary:add",
-  "/plan",
-  "/resume",
-  "/status",
-  "/workspace",
-  "/version",
-  "/doctor",
-];
+  ["/help", "Show available commands"],
+  ["/clear", "Clear the current conversation"],
+  ["/new", "Start a fresh conversation"],
+  ["/quit", "Exit Luma"],
+  ["/exit", "Exit Luma"],
+  ["/init", "Inspect this workspace and create GALAXY.md"],
+  ["/model", "Choose the global model"],
+  ["/model session", "Choose a model for this session"],
+  ["/tools", "List tools enabled in this session"],
+  ["/skills", "Discover available Agent Skills"],
+  ["/plugins", "List installed Luma plugins"],
+  ["/mcp", "List configured MCP servers"],
+  ["/teammates", "List persistent Teammates agents"],
+  ["/agents", "Alias for /teammates"],
+  ["/tasks", "List recent persistent tasks"],
+  ["/approvals", "List pending tool approvals"],
+  ["/schedules", "List scheduled teammate work"],
+  ["/memory", "List saved user and project memories"],
+  ["/history", "List recent saved conversations"],
+  ["/history list", "List recent saved conversations"],
+  ["/history show", "Inspect a saved conversation by ID"],
+  ["/history delete", "Delete a saved conversation by ID"],
+  ["/history prune", "Delete all saved conversations"],
+  ["/restore", "Restore a saved conversation by ID"],
+  ["/summary:add", "Save a summary for this conversation"],
+  ["/plan", "Create a plan without implementing it"],
+  ["/resume", "Resume the interrupted workspace task"],
+  ["/status", "Show model, workspace, and session status"],
+  ["/workspace", "Show the active workspace"],
+  ["/version", "Show the Luma version"],
+  ["/doctor", "Run session diagnostics"],
+] as const;
 
 export function Composer({
   status,
@@ -69,7 +72,6 @@ export function Composer({
   onChange,
   onSubmit,
   onOpenModelPicker,
-  onToggleToolActivity,
   attachmentTriggerRef,
   attachments,
   attachmentMode,
@@ -84,9 +86,10 @@ export function Composer({
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const commandPrefix = value.slice(0, cursor);
   const suggestions = commandPrefix.startsWith("/")
-    ? COMMANDS.filter((command) => command.startsWith(commandPrefix.toLowerCase()))
+    ? COMMANDS.filter(([command]) => command.startsWith(commandPrefix.toLowerCase()))
     : [];
-  const suggestionWindowSize = 6;
+  const selectedCommandColor = usePulseColor(suggestions.length > 0, theme.brand, "#B5D2FF");
+  const suggestionWindowSize = 7;
   const suggestionStart = Math.max(0, Math.min(selectedSuggestion - 2, suggestions.length - suggestionWindowSize));
   const visibleSuggestions = suggestions.slice(suggestionStart, suggestionStart + suggestionWindowSize);
 
@@ -113,10 +116,6 @@ export function Composer({
     if (confirmation) {
       if (input.toLowerCase() === "y" || key.return) onConfirm(true);
       else if (input.toLowerCase() === "n" || key.escape) onConfirm(false);
-      return;
-    }
-    if ((key.ctrl || key.meta) && input.toLowerCase() === "o") {
-      onToggleToolActivity();
       return;
     }
     if (key.ctrl && input.toLowerCase() === "g") {
@@ -191,11 +190,14 @@ export function Composer({
     <Box flexDirection="column" marginTop={1}>
       {suggestions.length > 0 ? <Box flexDirection="column" marginBottom={1}>
         <Text color={theme.chrome}>COMMANDS {selectedSuggestion + 1}/{suggestions.length}  ·  Tab complete  ·  ↑/↓ scroll</Text>
-        {visibleSuggestions.map((command, index) => {
+        {visibleSuggestions.map(([command, description], index) => {
           const absoluteIndex = suggestionStart + index;
           return (
-            <Text key={command} color={theme.brand} bold={absoluteIndex === selectedSuggestion}>
-              {absoluteIndex === selectedSuggestion ? "› " : "  "}{command}
+            <Text key={command}>
+              <Text color={absoluteIndex === selectedSuggestion ? selectedCommandColor : theme.brand} bold>
+                {absoluteIndex === selectedSuggestion ? "› " : "  "}{command.padEnd(19)}
+              </Text>
+              <Text color={theme.muted}> {description}</Text>
             </Text>
           );
         })}

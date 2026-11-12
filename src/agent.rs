@@ -982,8 +982,15 @@ or test results.
         } else {
             // HTTP requests other than the dedicated read-only web tools are
             // treated as side effects and always go through approval.
-            let mutating = name == "run_command" || name == "http_request";
-            match self.permission_profile.decide(name, mutating) {
+            let read_only = self.tools.is_read_only(name);
+            let mutating = name == "run_command" || !read_only;
+            let requires_network = self.tools.requires_network(name);
+            match self.permission_profile.decide_with_capabilities(
+                name,
+                mutating,
+                requires_network,
+                read_only,
+            ) {
                 PermissionDecision::Allow => {}
                 PermissionDecision::Deny => {
                     let message = format!(

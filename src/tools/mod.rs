@@ -65,6 +65,18 @@ pub trait Tool: Send + Sync {
     fn description(&self) -> &str;
 
     fn execute(&self, input: &str) -> Result<String>;
+
+    /// Tools are treated as mutating unless they explicitly declare that
+    /// their operation is read-only. External integrations default to the
+    /// safer mutating classification.
+    fn is_read_only(&self) -> bool {
+        false
+    }
+
+    /// Whether the tool's execution may access the public network.
+    fn requires_network(&self) -> bool {
+        false
+    }
 }
 
 pub struct ToolRegistry {
@@ -82,6 +94,10 @@ impl ToolRegistry {
         self.tools.insert(tool.name().to_string(), Box::new(tool));
     }
 
+    pub fn register_boxed(&mut self, tool: Box<dyn Tool>) {
+        self.tools.insert(tool.name().to_string(), tool);
+    }
+
     pub fn retain(&mut self, allowed: &[String]) {
         self.tools
             .retain(|name, _| allowed.iter().any(|item| item == name));
@@ -94,6 +110,38 @@ impl ToolRegistry {
             .ok_or_else(|| anyhow::anyhow!("Unknown tool: {name}"))?;
 
         tool.execute(input)
+    }
+
+    pub fn is_read_only(&self, name: &str) -> bool {
+        self.tools.get(name).is_some_and(|tool| {
+            tool.is_read_only()
+                || matches!(
+                    name,
+                    "read_file"
+                        | "list_directory"
+                        | "search_files"
+                        | "git_status"
+                        | "git_diff"
+                        | "find_symbols"
+                        | "find_references"
+                        | "git_log"
+                        | "git_show"
+                        | "git_blame"
+                        | "git_branches"
+                        | "file_metadata"
+                        | "find_todos"
+                        | "count_lines"
+                        | "inspect_project"
+                        | "list_skills"
+                        | "load_skill"
+                )
+        })
+    }
+
+    pub fn requires_network(&self, name: &str) -> bool {
+        self.tools
+            .get(name)
+            .is_some_and(|tool| tool.requires_network())
     }
 
     pub fn names(&self) -> Vec<String> {
@@ -115,5 +163,42 @@ impl ToolRegistry {
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_registry, teammate_registry};
+
+    #[test]
+    fn teammates_keep_every_code_tool_and_add_personal_agent_network_tools() {
+        let code = default_registry();
+        let teammates = teammate_registry();
+        let code_tools = code.names();
+        let teammate_tools = teammates.names();
+
+        assert!(code_tools.iter().all(|name| teammate_tools.contains(name)));
+        for name in ["web_search", "fetch_url", "http_request"] {
+            assert!(teammate_tools.iter().any(|tool| tool == name));
+            assert!(!code_tools.iter().any(|tool| tool == name));
+        }
+    }
+
+    #[test]
+    fn built_in_read_only_tools_are_classified_for_permission_checks() {
+        let tools = default_registry();
+        for name in [
+            "read_file",
+            "list_directory",
+            "search_files",
+            "git_status",
+            "list_skills",
+            "load_skill",
+        ] {
+            assert!(tools.is_read_only(name), "{name} should be read-only");
+        }
+        for name in ["write_file", "patch_file", "run_command"] {
+            assert!(!tools.is_read_only(name), "{name} must remain mutating");
+        }
     }
 }

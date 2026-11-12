@@ -3,7 +3,7 @@ import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { randomUUID } from "node:crypto";
 import { LumaClient } from "./client";
 import { startDesktopServer, stopDesktopServer } from "./server";
-import type { AgentConfiguration, AgentRecord, ClientMessage, ServerEvent } from "./protocol";
+import type { AgentConfiguration, AgentRecord, ClientMessage, RuntimeEvent, ServerEvent, TaskRecord } from "./protocol";
 import { Mascot } from "./components/Mascot";
 import { Markdown } from "./components/Markdown";
 import { theme } from "./theme";
@@ -51,6 +51,7 @@ export function TeammatesManager() {
   const [editValue, setEditValue] = useState("");
   const [chatInput, setChatInput] = useState("");
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const sequence = useRef(0);
   const polling = useRef(false);
@@ -160,12 +161,96 @@ export function TeammatesManager() {
         type: "task_create",
         data: { request_id: requestId, agent_id: agent.id, request: prompt, title: null, workspace: agent.configuration.workspace || process.cwd(), recover_on_restart: false },
       }, "task_saved", requestId);
-      sequence.current = 0;
       setActiveTaskId(response.data.task.id);
     } catch (reason) {
       setChatLines((lines) => [...lines.filter((line) => line.content !== "Thinking…"), { id: randomUUID(), role: "assistant", content: `Could not send message: ${reason instanceof Error ? reason.message : String(reason)}` }]);
     } finally { setBusy(false); }
   }
+
+  useEffect(() => {
+    if (view !== "chat" || !selectedAgent) return;
+    let active = true;
+    const agentId = selectedAgent.id;
+    setHistoryLoading(true);
+    setChatLines([]);
+    setActiveTaskId(null);
+    setError("");
+
+    void (async () => {
+      const tasksRequestId = randomUUID();
+      const tasksResponse = await request(client, {
+        type: "tasks_list",
+        data: { request_id: tasksRequestId, agent_id: agentId, limit: 500 },
+      }, "tasks", tasksRequestId);
+      const tasks = [...tasksResponse.data.tasks]
+        .filter((task) => task.schedule_id === null)
+        .sort((left, right) => left.created_at - right.created_at) as TaskRecord[];
+
+      const events: RuntimeEvent[] = [];
+      let cursor = 0;
+      while (true) {
+        const eventsRequestId = randomUUID();
+        const response = await request(client, {
+          type: "events_since",
+          data: { request_id: eventsRequestId, sequence: cursor, limit: 1000, agent_id: agentId },
+        }, "runtime_events", eventsRequestId);
+        events.push(...response.data.events);
+        const last = response.data.events.at(-1);
+        if (!last || response.data.events.length < 1000) break;
+        cursor = last.sequence;
+      }
+      if (!active) return;
+      sequence.current = events.at(-1)?.sequence ?? 0;
+
+      const byTask = new Map<string, RuntimeEvent[]>();
+      for (const event of events) {
+        if (!event.task_id) continue;
+        const entries = byTask.get(event.task_id) ?? [];
+        entries.push(event);
+        byTask.set(event.task_id, entries);
+      }
+
+      const restored: ChatLine[] = [];
+      for (const task of tasks) {
+        restored.push({ id: `${task.id}-user`, role: "user", content: task.request });
+        for (const event of byTask.get(task.id) ?? []) {
+          if (event.event_type !== "task.agent_event") continue;
+          const payload = event.payload as { type?: string; data?: unknown };
+          if (payload.type === "TextDelta" && typeof payload.data === "string") {
+            const last = restored[restored.length - 1];
+            if (last?.role === "assistant") restored[restored.length - 1] = { ...last, content: last.content + payload.data };
+            else restored.push({ id: event.event_id, role: "assistant", content: payload.data });
+          } else if (payload.type === "ToolStarted" && typeof payload.data === "object" && payload.data !== null && "name" in payload.data) {
+            const tool = payload.data as { name: string; input?: string };
+            restored.push({ id: event.event_id, role: "tool", content: `${tool.name}: ${tool.input ?? ""}` });
+          } else if (payload.type === "ToolFinished" && typeof payload.data === "object" && payload.data !== null && "name" in payload.data) {
+            const tool = payload.data as { name: string; duration_ms?: number; failed?: boolean };
+            for (let index = restored.length - 1; index >= 0; index -= 1) {
+              const line = restored[index];
+              if (line?.role === "tool" && line.content.startsWith(`${tool.name}:`)) {
+                restored[index] = { ...line, content: `${line.content}  ·  ${tool.duration_ms ?? 0} ms${tool.failed ? " · failed" : " · done"}` };
+                break;
+              }
+            }
+          } else if ((payload.type === "SystemMessage" || payload.type === "Error") && typeof payload.data === "string") {
+            restored.push({ id: event.event_id, role: "status", content: payload.data });
+          }
+        }
+        if (task.error && !["completed", "cancelled"].includes(task.status)) {
+          restored.push({ id: `${task.id}-error`, role: "status", content: `${task.status.replaceAll("_", " ")}: ${task.error}` });
+        }
+      }
+      setChatLines(restored);
+      const activeTask = [...tasks].reverse().find((task) => ["queued", "running", "waiting_for_approval"].includes(task.status));
+      setActiveTaskId(activeTask?.id ?? null);
+    })().catch((reason) => {
+      if (active) setError(reason instanceof Error ? reason.message : String(reason));
+    }).finally(() => {
+      if (active) setHistoryLoading(false);
+    });
+
+    return () => { active = false; };
+  }, [client, selectedAgent?.id, view]);
 
   useEffect(() => {
     if (!activeTaskId || !selectedAgent) return;
@@ -318,7 +403,7 @@ export function TeammatesManager() {
     {view === "chat" && selectedAgent ? <Box marginTop={1} flexDirection="column">
       <Box flexDirection="row" alignItems="center" gap={1}><Mascot seed={selectedAgent.name} compact /><Text bold>Chat with {selectedAgent.name}</Text><Text color={theme.muted}>· {selectedAgent.status}</Text></Box>
       <Box marginTop={1} flexDirection="column" gap={1}>
-        {chatLines.length === 0 ? <Text color={theme.muted}>Send a message to start a task with this teammate.</Text> : chatLines.map((line) => line.role === "user" ? (
+        {historyLoading ? <Text color={theme.muted}>Loading this teammate's history…</Text> : chatLines.length === 0 ? <Text color={theme.muted}>Send a message to start a task with this teammate.</Text> : chatLines.map((line) => line.role === "user" ? (
           <Box key={line.id} flexDirection="row" justifyContent="flex-end" marginTop={1}>
             <Box flexDirection="column" borderStyle="round" borderColor={theme.brand} paddingX={1}>
               <Text color={theme.brand} bold>YOU</Text>
@@ -331,8 +416,10 @@ export function TeammatesManager() {
         </Box>)}
       </Box>
       {activeTaskId ? <Text color={theme.brand}>{activitySpinner} Task running · {activeTaskId.slice(0, 8)} · wait for the reply before sending another message.</Text> : null}
-      <Text color={theme.chrome}>{rule}</Text>
-      <Text color={theme.brand}>Message</Text><Text color="white">{chatInput}▌</Text>
+      <Box marginTop={1} borderStyle="round" borderColor={theme.brand} paddingX={1} flexDirection="column" width="100%">
+        <Text color={theme.brand} bold>MESSAGE</Text>
+        <Text color="white">{chatInput}▌</Text>
+      </Box>
       <Text color={theme.muted}>Enter send  ·  Esc back</Text>
     </Box> : null}
 
