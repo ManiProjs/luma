@@ -76,6 +76,7 @@ export type SessionView = {
   info: SessionInfo;
   messages: SessionMessage[];
   confirmation: { name: string; input: string } | null;
+  question?: { question_id: string; prompt: string; choices: string[] } | null;
   busy: boolean;
   fresh: boolean;
   status: string;
@@ -214,6 +215,7 @@ export type ApprovalRecord = {
 export type ClientMessage =
   | { type: "prompt"; data: { text: string } }
   | { type: "confirm"; data: { allowed: boolean } }
+  | { type: "answer_question"; data: { question_id: string; answer: string } }
   | { type: "cancel" }
   | { type: "rollback"; data: { index: number } }
   | { type: "toggle_expanded"; data: { index: number } }
@@ -278,6 +280,7 @@ export type AgentEvent =
   | { type: "ToolStarted"; data: { name: string; input: string } }
   | { type: "ToolFinished"; data: { name: string; duration_ms: number; failed: boolean; diff?: string | null } }
   | { type: "ConfirmationRequired"; data: { name: string; input: string } }
+  | { type: "QuestionRequired"; data: { question_id: string; prompt: string; choices: string[] } }
   | { type: "SystemMessage"; data: string }
   | { type: "Error"; data: string }
   | { type: "Usage"; data: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cost_usd: number } }
@@ -410,6 +413,9 @@ function isAgentEvent(value: unknown): value is AgentEvent {
     case "ToolStarted":
     case "ConfirmationRequired":
       return isRecord(data) && isString(data.name) && isString(data.input);
+    case "QuestionRequired":
+      return isRecord(data) && isString(data.question_id) && isString(data.prompt)
+        && Array.isArray(data.choices) && data.choices.every(isString);
     case "ToolFinished":
       return isRecord(data) && isString(data.name) && isNumber(data.duration_ms)
         && typeof data.failed === "boolean"
@@ -446,7 +452,11 @@ function isSessionView(value: unknown): value is SessionView {
   const confirmation = value.confirmation;
   const validConfirmation = confirmation === null || (isRecord(confirmation)
     && isString(confirmation.name) && isString(confirmation.input));
-  if (!validConfirmation || typeof value.busy !== "boolean" || typeof value.fresh !== "boolean"
+  const question = value.question;
+  const validQuestion = question === undefined || question === null || (isRecord(question)
+    && isString(question.question_id) && isString(question.prompt)
+    && Array.isArray(question.choices) && question.choices.every(isString));
+  if (!validConfirmation || !validQuestion || typeof value.busy !== "boolean" || typeof value.fresh !== "boolean"
     || !isString(value.status) || !isRecord(value.usage) || !isNumber(value.usage.prompt_tokens)
     || !isNumber(value.usage.completion_tokens) || !isNumber(value.usage.total_tokens)
     || !isNumber(value.usage.cost_usd_micros)

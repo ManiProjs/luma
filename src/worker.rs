@@ -200,6 +200,10 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(128);
     let (input_tx, input_rx) = mpsc::channel::<String>(1);
     let (confirmation_tx, confirmation_rx) = mpsc::channel::<Confirmation>(8);
+    // Durable Teammate question routing is intentionally not implemented yet.
+    // Drop the sender so an accidental ask_question fails promptly instead of hanging.
+    let (question_tx, question_rx) = mpsc::channel::<crate::agent::QuestionAnswer>(1);
+    drop(question_tx);
     let shutdown = CancellationToken::new();
     let request_cancel = RequestCancellation::new(shutdown.clone());
     let worker_request_cancel = request_cancel.clone();
@@ -212,6 +216,7 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
                 worker_cancel,
                 worker_request_cancel,
                 confirmation_rx,
+                question_rx,
             )
             .await
     });

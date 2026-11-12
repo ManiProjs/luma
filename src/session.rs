@@ -17,7 +17,7 @@ use anyhow::Result;
 use tokio::sync::mpsc::Sender;
 use tokio_util::sync::CancellationToken;
 
-use crate::agent::Confirmation;
+use crate::agent::{Confirmation, QuestionAnswer};
 use crate::commands;
 use crate::event::AgentEvent;
 use crate::tools::Tool;
@@ -27,6 +27,7 @@ use crate::tools::Tool;
 // ============================================================================
 
 pub type ConfirmationSender = Sender<Confirmation>;
+pub type QuestionAnswerSender = Sender<QuestionAnswer>;
 
 /// A fresh cancellation token is used for each request. The parent token is
 /// reserved for shutting down the whole agent process.
@@ -79,6 +80,9 @@ pub enum AgentCommand {
 
     /// Answer a pending [`AgentEvent::ConfirmationRequired`].
     Confirm { allowed: bool },
+
+    /// Answer the currently pending interactive question.
+    AnswerQuestion { question_id: String, answer: String },
 
     /// Cancel the request currently in flight. The session stays usable and
     /// the agent loop keeps running.
@@ -206,6 +210,8 @@ pub struct SessionView {
     pub info: SessionInfo,
     pub messages: Vec<MessageView>,
     pub confirmation: Option<PendingConfirmation>,
+    #[serde(default)]
+    pub question: Option<PendingQuestion>,
     pub busy: bool,
     pub fresh: bool,
     pub status: String,
@@ -221,6 +227,14 @@ pub struct SessionView {
 pub struct PendingConfirmation {
     pub name: String,
     pub input: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PendingQuestion {
+    pub question_id: String,
+    pub prompt: String,
+    #[serde(default)]
+    pub choices: Vec<String>,
 }
 
 // ============================================================================
@@ -289,6 +303,7 @@ impl SessionInfo {
 pub struct SessionState {
     pub messages: Vec<MessageLine>,
     pub confirmation: Option<PendingConfirmation>,
+    pub question: Option<PendingQuestion>,
 
     /// True from the moment a prompt is submitted until the agent reports
     /// `Finished`.
@@ -311,6 +326,7 @@ impl Default for SessionState {
         Self {
             messages: Vec::new(),
             confirmation: None,
+            question: None,
             busy: false,
             fresh: true,
             status: DEFAULT_STATUS.into(),
@@ -330,6 +346,7 @@ pub struct Session {
     info: SessionInfo,
     state: SessionState,
     confirm_tx: ConfirmationSender,
+    question_tx: QuestionAnswerSender,
     cancel: RequestCancellation,
     started_at: Option<Instant>,
     exit_requested: bool,
@@ -360,12 +377,14 @@ impl Session {
     pub fn new(
         info: SessionInfo,
         confirm_tx: ConfirmationSender,
+        question_tx: QuestionAnswerSender,
         cancel: RequestCancellation,
     ) -> Self {
         let session = Self {
             info,
             state: SessionState::default(),
             confirm_tx,
+            question_tx,
             cancel,
             started_at: None,
             exit_requested: false,
@@ -424,6 +443,7 @@ impl Session {
             info: self.info.clone(),
             messages: self.state.messages.iter().map(MessageLine::view).collect(),
             confirmation: self.state.confirmation.clone(),
+            question: self.state.question.clone(),
             busy: self.state.busy,
             fresh: self.state.fresh,
             status: self.state.status.clone(),
@@ -447,6 +467,14 @@ impl Session {
             AgentCommand::Confirm { allowed } => {
                 self.confirm(allowed).await?;
 
+                Ok(None)
+            }
+
+            AgentCommand::AnswerQuestion {
+                question_id,
+                answer,
+            } => {
+                self.answer_question(question_id, answer).await?;
                 Ok(None)
             }
 
@@ -990,6 +1018,31 @@ impl Session {
         Ok(())
     }
 
+    pub async fn answer_question(&mut self, question_id: String, answer: String) -> Result<()> {
+        let pending = self
+            .state
+            .question
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no question is pending"))?;
+        if pending.question_id != question_id {
+            return Err(anyhow::anyhow!("question is no longer pending"));
+        }
+        let answer = answer.trim();
+        if answer.is_empty() || answer.len() > 8_000 {
+            return Err(anyhow::anyhow!("answer must contain 1–8000 characters"));
+        }
+        self.question_tx
+            .send(QuestionAnswer {
+                question_id,
+                answer: answer.to_owned(),
+            })
+            .await
+            .map_err(|_| anyhow::anyhow!("the agent is no longer listening for an answer"))?;
+        self.state.question = None;
+        self.state.status = BUSY_STATUS.into();
+        Ok(())
+    }
+
     /// Request cancellation and wait for the agent's terminal event before
     /// marking the session idle.
     pub fn cancel(&mut self) {
@@ -998,6 +1051,7 @@ impl Session {
         }
         self.cancel.cancel();
         self.state.confirmation = None;
+        self.state.question = None;
         self.state.status = "Cancelling".into();
     }
 
@@ -1128,6 +1182,19 @@ impl Session {
                 self.state.status = "Waiting for confirmation".into();
             }
 
+            AgentEvent::QuestionRequired {
+                question_id,
+                prompt,
+                choices,
+            } => {
+                self.state.question = Some(PendingQuestion {
+                    question_id,
+                    prompt,
+                    choices,
+                });
+                self.state.status = "Waiting for your answer".into();
+            }
+
             AgentEvent::TextDelta(text) => {
                 if let Some(last) = self.state.messages.last_mut()
                     && last.role == MessageRole::Assistant
@@ -1150,6 +1217,7 @@ impl Session {
             }
 
             AgentEvent::Error(error) => {
+                self.state.question = None;
                 self.push(MessageLine::new(MessageRole::Error, error));
                 self.state.status = "Error".into();
                 self.finish();
@@ -1157,6 +1225,7 @@ impl Session {
 
             AgentEvent::Cancelled => {
                 self.state.confirmation = None;
+                self.state.question = None;
                 for message in &mut self.state.messages {
                     if message.role == MessageRole::Tool && message.running {
                         message.running = false;
@@ -1198,7 +1267,7 @@ impl Session {
                     crate::event::AgentStatus::Thinking => "Thinking".into(),
                     crate::event::AgentStatus::Doing => "Working".into(),
                     crate::event::AgentStatus::Talking => "Generating response".into(),
-                    crate::event::AgentStatus::Waiting => "Waiting for confirmation".into(),
+                    crate::event::AgentStatus::Waiting => "Waiting for input".into(),
                     crate::event::AgentStatus::Error => {
                         self.state.busy = false;
                         "Error".into()
@@ -1238,10 +1307,10 @@ impl Session {
         self.started_at = None;
         self.state.busy = false;
 
-        // A confirmation is not cleared here: the agent may report `Finished`
-        // while still blocked waiting for the user, and erasing the prompt
-        // would leave the tool call hanging with no way to answer it.
+        // A confirmation/question is not cleared here: a frontend may receive
+        // Finished after a snapshot and must retain any actionable request.
         if self.state.confirmation.is_none()
+            && self.state.question.is_none()
             && self.state.status != "Cancelled"
             && self.state.status != "Error"
         {
@@ -1338,11 +1407,13 @@ mod tests {
 
     fn session() -> (Session, tokio::sync::mpsc::Receiver<Confirmation>) {
         let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let (question_tx, _question_rx) = tokio::sync::mpsc::channel(4);
 
         (
             Session::new(
                 SessionInfo::new("Ollama", "qwen3", "/tmp", vec!["read_file".into()]),
                 tx,
+                question_tx,
                 RequestCancellation::new(CancellationToken::new()),
             ),
             rx,
@@ -1665,6 +1736,53 @@ mod tests {
         assert_eq!(rx.recv().await, Some(Confirmation::Allow));
         assert!(session.state().confirmation.is_none());
         assert!(session.confirm(false).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn question_answer_requires_the_current_question_id_and_clears_pending_state() {
+        let (confirm_tx, _confirm_rx) = tokio::sync::mpsc::channel(2);
+        let (question_tx, mut question_rx) = tokio::sync::mpsc::channel(2);
+        let mut session = Session::new(
+            SessionInfo::new("Ollama", "qwen3", "/tmp", vec!["ask_question".into()]),
+            confirm_tx,
+            question_tx,
+            RequestCancellation::new(CancellationToken::new()),
+        );
+        session.handle_event(AgentEvent::QuestionRequired {
+            question_id: "question-123".into(),
+            prompt: "Which option?".into(),
+            choices: vec!["A".into(), "B".into()],
+        });
+        assert_eq!(
+            session.view().question.as_ref().unwrap().question_id,
+            "question-123"
+        );
+        assert!(
+            session
+                .answer_question("stale-id".into(), "A".into())
+                .await
+                .is_err()
+        );
+        assert!(session.state().question.is_some());
+
+        session
+            .answer_question("question-123".into(), "B".into())
+            .await
+            .unwrap();
+        assert_eq!(
+            question_rx.recv().await,
+            Some(QuestionAnswer {
+                question_id: "question-123".into(),
+                answer: "B".into(),
+            })
+        );
+        assert!(session.state().question.is_none());
+        assert!(
+            session
+                .answer_question("question-123".into(), "late".into())
+                .await
+                .is_err()
+        );
     }
 
     #[test]

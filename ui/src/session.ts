@@ -41,6 +41,7 @@ export function useSession(initialSetup = false) {
       let status = current.status;
       let activeTool = current.activeTool;
       let confirmation = current.confirmation;
+      let question = current.question;
 
       switch (event.type) {
         case "Thinking":
@@ -126,6 +127,11 @@ export function useSession(initialSetup = false) {
           confirmation = { name: event.data.name, input: event.data.input };
           break;
 
+        case "QuestionRequired":
+          status = "waiting";
+          question = event.data;
+          break;
+
         case "SystemMessage":
           messages.push({
             id: crypto.randomUUID(),
@@ -144,12 +150,21 @@ export function useSession(initialSetup = false) {
           });
           status = "error";
           activeTool = null;
+          question = null;
+          break;
+
+        case "Cancelled":
+          status = "done";
+          activeTool = null;
+          confirmation = null;
+          question = null;
           break;
 
         case "Finished":
           status = "done";
           activeTool = null;
           confirmation = null;
+          question = null;
           break;
       }
 
@@ -159,6 +174,7 @@ export function useSession(initialSetup = false) {
         status,
         activeTool,
         confirmation,
+        question,
       };
     });
   }
@@ -181,6 +197,7 @@ export function useSession(initialSetup = false) {
           })),
           status: event.data.session.busy ? "thinking" : "idle",
           confirmation: event.data.session.confirmation,
+          question: event.data.session.question ?? null,
         }));
         break;
 
@@ -353,6 +370,13 @@ export function useSession(initialSetup = false) {
     confirm(allowed: boolean) {
       client.send({ type: "confirm", data: { allowed } });
       setState((current) => ({ ...current, confirmation: null, status: "working" }));
+    },
+    answerQuestion(questionId: string, answer: string) {
+      if (!answer.trim()) return;
+      client.send({ type: "answer_question", data: { question_id: questionId, answer: answer.trim() } });
+    },
+    cancel() {
+      client.send({ type: "cancel" });
     },
     selectProvider(provider: SupportedProvider, apiKey?: string) {
       setState((current) => current.modelPicker ? ({

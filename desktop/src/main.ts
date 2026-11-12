@@ -996,6 +996,14 @@ app.whenReady().then(async () => {
     };
   });
 
+  ipcMain.handle("luma:answer-question", async (_event, questionId: string, answer: string) => {
+    if (typeof questionId !== "string" || !questionId.trim() || typeof answer !== "string" || !answer.trim()) {
+      throw new Error("A question ID and non-empty answer are required.");
+    }
+    sendToLuma({ type: "answer_question", data: { question_id: questionId, answer } });
+    return { ok: true };
+  });
+
   ipcMain.handle("luma:cancel", async () => {
     sendToLuma({
       type: "cancel",

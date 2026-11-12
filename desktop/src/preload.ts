@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld("luma", {
   prompt: (text: string) => ipcRenderer.invoke("luma:prompt", text),
 
   confirm: (allowed: boolean) => ipcRenderer.invoke("luma:confirm", allowed),
+  answerQuestion: (questionId: string, answer: string) => ipcRenderer.invoke("luma:answer-question", questionId, answer),
 
   cancel: () => ipcRenderer.invoke("luma:cancel"),
 

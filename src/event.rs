@@ -37,6 +37,14 @@ pub enum AgentEvent {
         input: String,
     },
 
+    /// Ask the user for information before the agent continues its ReAct loop.
+    QuestionRequired {
+        question_id: String,
+        prompt: String,
+        #[serde(default)]
+        choices: Vec<String>,
+    },
+
     SystemMessage(String),
 
     Error(String),

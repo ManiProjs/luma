@@ -73,16 +73,22 @@ pub fn run(args: &[String]) -> Result<()> {
                 println!("No MCP servers configured.");
             }
             for server in servers {
+                let endpoint = match server.transport {
+                    crate::mcp::McpTransport::Stdio => {
+                        format!("{} {}", server.command, server.args.join(" "))
+                    }
+                    crate::mcp::McpTransport::Http => server.url.unwrap_or_default(),
+                };
                 println!(
-                    "{}  {}  {} {}",
+                    "{}  {}  {:?}  {}",
                     server.id,
                     if server.enabled {
                         "enabled"
                     } else {
                         "disabled"
                     },
-                    server.command,
-                    server.args.join(" ")
+                    server.transport,
+                    endpoint
                 );
             }
         }
@@ -116,6 +122,40 @@ pub fn run(args: &[String]) -> Result<()> {
             let server = crate::mcp::McpManager::default().add(id, command, server_args, env)?;
             println!(
                 "Registered MCP server {} (disabled). Run `luma mcp tools {}` to inspect its tools, then enable it.",
+                server.id, server.id
+            );
+        }
+        ("mcp", "add-http") => {
+            if values.len() < 2 {
+                bail!("usage: luma mcp add-http <id> <https-url> [--header KEY=VALUE]");
+            }
+            let id = values[0].clone();
+            let url = values[1].clone();
+            let mut headers = BTreeMap::new();
+            let mut index = 2;
+            while index < values.len() {
+                if values[index] != "--header" {
+                    bail!(
+                        "unexpected argument '{}'; use repeatable --header KEY=VALUE",
+                        values[index]
+                    );
+                }
+                index += 1;
+                let pair = values
+                    .get(index)
+                    .ok_or_else(|| anyhow::anyhow!("--header requires KEY=VALUE"))?;
+                let (key, value) = pair
+                    .split_once('=')
+                    .ok_or_else(|| anyhow::anyhow!("--header requires KEY=VALUE"))?;
+                if key.is_empty() {
+                    bail!("header name cannot be empty");
+                }
+                headers.insert(key.to_owned(), value.to_owned());
+                index += 1;
+            }
+            let server = crate::mcp::McpManager::default().add_http(id, url, headers)?;
+            println!(
+                "Registered HTTP MCP server {} (disabled). Run `luma mcp tools {}` to inspect its tools, then enable it.",
                 server.id, server.id
             );
         }

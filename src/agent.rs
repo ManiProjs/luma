@@ -365,6 +365,20 @@ pub enum Confirmation {
     Deny,
 }
 
+/// A user answer correlated with one outstanding question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuestionAnswer {
+    pub question_id: String,
+    pub answer: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct AskQuestionInput {
+    prompt: String,
+    #[serde(default)]
+    choices: Vec<String>,
+}
+
 // ============================================================================
 // Planning state
 // ============================================================================
@@ -392,6 +406,7 @@ pub struct Agent<M, P> {
     plan_only: bool,
     permission_profile: PermissionProfile,
     workspace_root: Option<PathBuf>,
+    question_channel_closed: bool,
 }
 
 impl<M, P> Agent<M, P>
@@ -401,6 +416,11 @@ where
 {
     pub fn new(model: M, react: P, tools: ToolRegistry, history: History, galaxy: String) -> Self {
         let mut context = Context::new();
+
+        context.add(
+            MessageRole::System,
+            include_str!("../skills/ask-question/SKILL.md").to_owned(),
+        );
 
         if !galaxy.trim().is_empty() {
             context.add(
@@ -427,6 +447,7 @@ where
             plan_only: false,
             permission_profile: PermissionProfile::default(),
             workspace_root: None,
+            question_channel_closed: false,
         }
     }
 
@@ -456,8 +477,10 @@ where
         shutdown: CancellationToken,
         request_cancel: RequestCancellation,
         confirmation_rx: Receiver<Confirmation>,
+        question_rx: Receiver<QuestionAnswer>,
     ) -> Result<()> {
         let mut confirmation_rx = confirmation_rx;
+        let mut question_rx = question_rx;
 
         loop {
             let input = tokio::select! {
@@ -482,7 +505,13 @@ where
                 })
                 .await?;
             if let Err(error) = self
-                .handle_input(input, &event_tx, &cancel, &mut confirmation_rx)
+                .handle_input(
+                    input,
+                    &event_tx,
+                    &cancel,
+                    &mut confirmation_rx,
+                    &mut question_rx,
+                )
                 .await
             {
                 event_tx.send(AgentEvent::Error(error.to_string())).await?;
@@ -499,6 +528,7 @@ where
         tx: &Sender<AgentEvent>,
         cancel: &CancellationToken,
         confirmation_rx: &mut Receiver<Confirmation>,
+        question_rx: &mut Receiver<QuestionAnswer>,
     ) -> Result<()> {
         let input = input.trim();
 
@@ -569,14 +599,15 @@ where
                 checkpoint.status = crate::tasks::TaskStatus::InProgress;
             }
             self.save_checkpoint();
-            self.run_agent_loop(tx, cancel, confirmation_rx).await?;
+            self.run_agent_loop(tx, cancel, confirmation_rx, question_rx)
+                .await?;
             self.finish_checkpoint(cancel);
             self.finish(tx, cancel).await?;
             return Ok(());
         }
 
         if input == "/init" {
-            self.initialize_workspace(tx, cancel, confirmation_rx)
+            self.initialize_workspace(tx, cancel, confirmation_rx, question_rx)
                 .await?;
 
             self.finish(tx, cancel).await?;
@@ -595,7 +626,8 @@ where
         self.begin_request(&input)?;
 
         if self.plan_only || self.needs_workspace(&input) {
-            self.run_agent_loop(tx, cancel, confirmation_rx).await?;
+            self.run_agent_loop(tx, cancel, confirmation_rx, question_rx)
+                .await?;
         } else {
             self.run_conversation(tx, cancel).await?;
         }
@@ -767,6 +799,7 @@ or test results.
         tx: &Sender<AgentEvent>,
         cancel: &CancellationToken,
         confirmation_rx: &mut Receiver<Confirmation>,
+        question_rx: &mut Receiver<QuestionAnswer>,
     ) -> Result<()> {
         tx.send(AgentEvent::Thinking).await?;
 
@@ -830,7 +863,7 @@ or test results.
                         self.record_observation("planning", &message);
                         continue;
                     }
-                    self.execute_tool(&name, &input, tx, cancel, confirmation_rx)
+                    self.execute_tool(&name, &input, tx, cancel, confirmation_rx, question_rx)
                         .await?;
                 }
 
@@ -931,8 +964,77 @@ or test results.
         tx: &Sender<AgentEvent>,
         cancel: &CancellationToken,
         confirmation_rx: &mut Receiver<Confirmation>,
+        question_rx: &mut Receiver<QuestionAnswer>,
     ) -> Result<()> {
         if cancel.is_cancelled() {
+            return Ok(());
+        }
+
+        // ask_question is an asynchronous interaction primitive, not a
+        // synchronous Tool::execute call and not a permission approval.
+        if name == "ask_question" {
+            let input: AskQuestionInput = serde_json::from_str(input)
+                .map_err(|error| anyhow!("ask_question: invalid JSON input: {error}"))?;
+            let prompt = input.prompt.trim();
+            if prompt.is_empty() || prompt.len() > 8_000 {
+                return Err(anyhow!(
+                    "ask_question: prompt must contain 1–8000 characters"
+                ));
+            }
+            if input.choices.len() > 12
+                || input
+                    .choices
+                    .iter()
+                    .any(|choice| choice.trim().is_empty() || choice.len() > 500)
+            {
+                return Err(anyhow!(
+                    "ask_question: choices must contain at most 12 non-empty options of at most 500 characters"
+                ));
+            }
+            const TASK_FALLBACK: &str = "Interactive question input is unavailable in this task execution. Ask the user this question in your final response, do not guess, and wait for their reply in the next task. Previous task conversations are included in your history. Do not call ask_question again for this question.";
+            if self.question_channel_closed || question_rx.is_closed() {
+                self.question_channel_closed = true;
+                self.record_observation(name, &format!("{TASK_FALLBACK}\nQuestion: {prompt}"));
+                return Ok(());
+            }
+            let question_id = uuid::Uuid::new_v4().to_string();
+            tx.send(AgentEvent::QuestionRequired {
+                question_id: question_id.clone(),
+                prompt: prompt.to_owned(),
+                choices: input.choices,
+            })
+            .await?;
+
+            let answer = loop {
+                let response = tokio::select! {
+                    _ = cancel.cancelled() => return Ok(()),
+                    response = question_rx.recv() => match response {
+                        Some(response) => response,
+                        None => {
+                            self.question_channel_closed = true;
+                            self.record_observation(name, &format!("{TASK_FALLBACK}\nQuestion: {prompt}"));
+                            return Ok(());
+                        }
+                    },
+                };
+                if response.question_id == question_id {
+                    if cancel.is_cancelled() {
+                        return Ok(());
+                    }
+                    let answer = response.answer.trim();
+                    if answer.is_empty() || answer.len() > 8_000 {
+                        return Err(anyhow!(
+                            "ask_question: answer must contain 1–8000 characters"
+                        ));
+                    }
+                    break answer.to_owned();
+                }
+                tracing::debug!(received = %response.question_id, expected = %question_id, "discarding stale question answer");
+            };
+            if cancel.is_cancelled() {
+                return Ok(());
+            }
+            self.record_observation(name, &answer);
             return Ok(());
         }
 
@@ -1417,9 +1519,17 @@ or test results.
         tx: &Sender<AgentEvent>,
         cancel: &CancellationToken,
         confirmation_rx: &mut Receiver<Confirmation>,
+        question_rx: &mut Receiver<QuestionAnswer>,
     ) -> Result<()> {
-        self.execute_tool("list_directory", ".", tx, cancel, confirmation_rx)
-            .await?;
+        self.execute_tool(
+            "list_directory",
+            ".",
+            tx,
+            cancel,
+            confirmation_rx,
+            question_rx,
+        )
+        .await?;
 
         let (project, language, important_files) = self.detect_project();
 
@@ -1460,6 +1570,7 @@ or test results.
             tx,
             cancel,
             confirmation_rx,
+            question_rx,
         )
         .await?;
 

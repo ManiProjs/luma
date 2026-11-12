@@ -168,13 +168,13 @@ and optionally inherit the Global teammate's shared skills and memory.
 
 Luma supports two separate integration systems. **Native Luma Plugins** use
 `plugin.toml` manifests and Luma's one-shot JSON process protocol. **MCP
-servers** use the Model Context Protocol over local stdio and JSON-RPC. Both
+servers** use the Model Context Protocol over local stdio or Streamable HTTP. Both
 systems expose enabled tools to Code and to Teammates that inherit the Global
 teammate's connectors. External tool calls require approval.
 
 - [Native Luma Plugins](docs/plugins.md): install, inspect, enable, disable,
   and uninstall local plugin packages with `luma plugins`.
-- [MCP servers](docs/mcp.md): register local stdio servers and inspect their
+- [MCP servers](docs/mcp.md): register stdio or HTTP servers and inspect their
   tools with `luma mcp`.
 
 ### `patch_file`

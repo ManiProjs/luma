@@ -40,6 +40,7 @@ export interface UiState {
   status: Status;
   activeTool: string | null;
   confirmation: { name: string; input: string } | null;
+  question: { question_id: string; prompt: string; choices: string[] } | null;
   modelPicker: {
     scope: "global" | "session";
     stage: "providers" | "models";
@@ -66,5 +67,6 @@ export const initialState: UiState = {
   status: "idle",
   activeTool: null,
   confirmation: null,
+  question: null,
   modelPicker: null,
 };

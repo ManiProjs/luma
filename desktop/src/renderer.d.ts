@@ -64,6 +64,7 @@ declare global {
       confirm(allowed: boolean): Promise<{
         ok: boolean;
       }>;
+      answerQuestion(questionId: string, answer: string): Promise<{ ok: boolean }>;
 
       cancel(): Promise<{
         ok: boolean;

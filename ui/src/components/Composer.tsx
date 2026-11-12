@@ -26,6 +26,9 @@ type Props = {
   onRemoveAttachment: (index: number) => void;
   confirmation: { name: string; input: string } | null;
   onConfirm: (allowed: boolean) => void;
+  question: { question_id: string; prompt: string; choices: string[] } | null;
+  onAnswer: (questionId: string, answer: string) => void;
+  onCancelQuestion: () => void;
   disabled?: boolean;
 };
 
@@ -80,12 +83,15 @@ export function Composer({
   onRemoveAttachment,
   confirmation,
   onConfirm,
+  question,
+  onAnswer,
+  onCancelQuestion,
   disabled = false,
 }: Props) {
   const [cursor, setCursor] = useState(value.length);
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const commandPrefix = value.slice(0, cursor);
-  const suggestions = commandPrefix.startsWith("/")
+  const suggestions = !question && commandPrefix.startsWith("/")
     ? COMMANDS.filter(([command]) => command.startsWith(commandPrefix.toLowerCase()))
     : [];
   const selectedCommandColor = usePulseColor(suggestions.length > 0, theme.brand, "#B5D2FF");
@@ -108,6 +114,16 @@ export function Composer({
     if (attachmentMode && key.escape) {
       onCancelAttachment();
       return;
+    }
+    if (question) {
+      if (((key.ctrl || key.meta) && input.toLowerCase() === "c") || key.escape) {
+        onCancelQuestion();
+        return;
+      }
+      if (key.return) {
+        if (value.trim()) onAnswer(question.question_id, value);
+        return;
+      }
     }
     if ((key.ctrl || key.meta) && input.toLowerCase() === "x" && attachments.length > 0) {
       onRemoveAttachment(attachments.length - 1);
@@ -208,6 +224,12 @@ export function Composer({
         {confirmation.name !== "apply_changes" && confirmation.name !== "approve_plan" ? <Text>{confirmation.input}</Text> : null}
         <Text color={theme.muted}>{confirmation.name === "apply_changes" ? "Review the diff above" : confirmation.name === "approve_plan" ? "Review the plan above" : "Review this action"}  ·  Y approve  ·  N reject</Text>
       </Box> : null}
+      {question ? <Box flexDirection="column" borderStyle="single" borderLeft borderColor={theme.brand} paddingLeft={1} marginBottom={1}>
+        <Text color={theme.brand} bold>Question from Luma</Text>
+        <Text>{question.prompt}</Text>
+        {question.choices.length > 0 ? <Text color={theme.muted}>Options: {question.choices.join("  ·  ")}</Text> : null}
+        <Text color={theme.muted}>Type your answer and press Enter  ·  Esc/Ctrl+C cancel request</Text>
+      </Box> : null}
       <PromptHeader status={status} activeTool={activeTool} toolCalls={toolCalls} turns={turns} />
 
       {attachments.length > 0 ? <Box flexDirection="row" marginTop={1}>
@@ -229,7 +251,7 @@ export function Composer({
           {afterCursor}
         </Text>
       </Box>
-      <Text color={theme.chrome}>{attachmentMode ? "Enter attach  ·  Esc cancel  ·  path relative to workspace" : "Enter send  ·  + attach file  ·  Ctrl+X remove last file  ·  Ctrl+G model"}</Text>
+      <Text color={theme.chrome}>{question ? "Enter answer  ·  Esc/Ctrl+C cancel request" : attachmentMode ? "Enter attach  ·  Esc cancel  ·  path relative to workspace" : "Enter send  ·  + attach file  ·  Ctrl+X remove last file  ·  Ctrl+G model"}</Text>
     </Box>
   );
 }

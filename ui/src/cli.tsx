@@ -207,6 +207,12 @@ async function mcpAdd(id: string, command: string, args: string[], options: { en
   runCoreCommand(forwarded);
 }
 
+async function mcpAddHttp(id: string, url: string, options: { header?: string[] }) {
+  const forwarded = ["mcp", "add-http", id, url];
+  for (const item of options.header ?? []) forwarded.push("--header", item);
+  runCoreCommand(forwarded);
+}
+
 async function mcpToggle(id: string, enabled: boolean) {
   runCoreCommand(["mcp", enabled ? "enable" : "disable", id]);
 }
@@ -536,6 +542,9 @@ export async function runCli(argv: string[]) {
     .allowUnknownOption(true)
     .option("--env <key=value>", "Pass an environment variable (repeatable)", (value: string, previous: string[] = []) => [...previous, value], [])
     .action(mcpAdd);
+  mcp.command("add-http <id> <url>").description("Register a Streamable HTTP MCP server (disabled by default)")
+    .option("--header <key=value>", "HTTP request header (repeatable)", (value: string, previous: string[] = []) => [...previous, value], [])
+    .action(mcpAddHttp);
   mcp.command("enable <id>").description("Enable an MCP server").action((id: string) => mcpToggle(id, true));
   mcp.command("disable <id>").description("Disable an MCP server").action((id: string) => mcpToggle(id, false));
   mcp.command("remove <id>").description("Remove an MCP server configuration").action(mcpRemove);

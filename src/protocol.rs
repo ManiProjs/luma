@@ -38,6 +38,12 @@ pub enum ClientMessage {
         allowed: bool,
     },
 
+    /// Submit the answer to the currently pending Agent question.
+    AnswerQuestion {
+        question_id: String,
+        answer: String,
+    },
+
     /// Cancel the request in flight.
     Cancel,
 
@@ -243,6 +249,7 @@ impl ClientMessage {
             Self::GetSession
             | Self::Prompt { .. }
             | Self::Confirm { .. }
+            | Self::AnswerQuestion { .. }
             | Self::Cancel
             | Self::Rollback { .. }
             | Self::ToggleExpanded { .. } => None,
@@ -288,6 +295,13 @@ impl From<AgentCommand> for ClientMessage {
         match command {
             AgentCommand::Submit(text) => Self::Prompt { text },
             AgentCommand::Confirm { allowed } => Self::Confirm { allowed },
+            AgentCommand::AnswerQuestion {
+                question_id,
+                answer,
+            } => Self::AnswerQuestion {
+                question_id,
+                answer,
+            },
             AgentCommand::Cancel => Self::Cancel,
             AgentCommand::Rollback { index } => Self::Rollback { index },
             AgentCommand::ToggleExpanded { index } => Self::ToggleExpanded { index },
@@ -302,6 +316,13 @@ impl ClientMessage {
         match self {
             Self::Prompt { text } => Some(AgentCommand::Submit(text)),
             Self::Confirm { allowed } => Some(AgentCommand::Confirm { allowed }),
+            Self::AnswerQuestion {
+                question_id,
+                answer,
+            } => Some(AgentCommand::AnswerQuestion {
+                question_id,
+                answer,
+            }),
             Self::Cancel => Some(AgentCommand::Cancel),
             Self::Rollback { index } => Some(AgentCommand::Rollback { index }),
             Self::ToggleExpanded { index } => Some(AgentCommand::ToggleExpanded { index }),
@@ -543,6 +564,10 @@ mod tests {
         let commands = [
             AgentCommand::Submit("hi".into()),
             AgentCommand::Confirm { allowed: true },
+            AgentCommand::AnswerQuestion {
+                question_id: "q-1".into(),
+                answer: "yes".into(),
+            },
             AgentCommand::Cancel,
             AgentCommand::Rollback { index: 2 },
             AgentCommand::ToggleExpanded { index: 0 },

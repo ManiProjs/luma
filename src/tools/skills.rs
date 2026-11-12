@@ -156,7 +156,12 @@ fn discover_skills(workspace: &Path, user_dirs: &[PathBuf]) -> Vec<Skill> {
         workspace.join(".agents/skills"),
         workspace.join(".luma/skills"),
     ];
-    for root in workspace_dirs.iter().chain(user_dirs.iter()) {
+    let bundled = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("skills");
+    for root in workspace_dirs
+        .iter()
+        .chain(user_dirs.iter())
+        .chain(std::iter::once(&bundled))
+    {
         let Ok(entries) = fs::read_dir(root) else {
             continue;
         };
@@ -319,7 +324,7 @@ mod tests {
         );
 
         let skills = discover_skills(workspace.path(), &[user.path().to_path_buf()]);
-        assert_eq!(skills.len(), 2);
+        assert_eq!(skills.len(), 3);
         let review = skills.iter().find(|skill| skill.name == "review").unwrap();
         assert!(
             review
@@ -349,7 +354,11 @@ mod tests {
     fn rejects_mismatched_directory_and_frontmatter_names() {
         let workspace = tempfile::tempdir().unwrap();
         write_skill(workspace.path(), "actual", "different", "Mismatch", "Body");
-        assert!(discover_skills(workspace.path(), &[]).is_empty());
+        assert!(
+            discover_skills(workspace.path(), &[])
+                .iter()
+                .all(|skill| skill.name != "actual")
+        );
     }
 
     #[test]
@@ -365,14 +374,24 @@ mod tests {
         let skill_path = skill_dir.join("SKILL.md");
         fs::write(&skill_path, &content).unwrap();
         assert_eq!(fs::metadata(&skill_path).unwrap().len(), MAX_SKILL_BYTES);
-        assert_eq!(discover_skills(workspace.path(), &[]).len(), 1);
+        assert_eq!(discover_skills(workspace.path(), &[]).len(), 2);
 
         fs::write(&skill_path, format!("{content}x")).unwrap();
         assert_eq!(
             fs::metadata(&skill_path).unwrap().len(),
             MAX_SKILL_BYTES + 1
         );
-        assert!(discover_skills(workspace.path(), &[]).is_empty());
+        assert_eq!(discover_skills(workspace.path(), &[]).len(), 1);
+    }
+
+    #[test]
+    fn bundled_ask_question_skill_is_available_to_code_and_teammates() {
+        let workspace = tempfile::tempdir().unwrap();
+        let discovered = discover_skills(workspace.path(), &[]);
+        assert!(discovered.iter().any(|skill| skill.name == "ask-question"));
+        let loaded = load_agent_skill(workspace.path(), "ask-question").unwrap();
+        assert!(loaded.contains("ask_question"));
+        assert!(loaded.contains("normal approval flow"));
     }
 
     #[test]

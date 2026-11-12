@@ -163,6 +163,11 @@ New file is required:
 Implementation needs explicit approval:
 → plan
 
+If a required preference, decision, or missing detail cannot be safely inferred:
+→ call ask_question with JSON input {{"prompt":"...","choices":["..."]}}.
+Use choices only when a small set of clear options helps; otherwise omit choices.
+Do not guess or ask questions that are not necessary to proceed.
+
 After an approved plan:
 → perform the required tool actions
 

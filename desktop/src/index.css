@@ -1821,6 +1821,40 @@ html[data-platform="linux"] .luma-workspace-picker {
   animation: luma-view-enter 165ms cubic-bezier(.2, .75, .25, 1) both;
 }
 
+.luma-teammate-sidebar-transition {
+  animation: luma-teammate-sidebar-enter 190ms cubic-bezier(.2, .75, .25, 1) both;
+}
+
+.luma-teammate-history-transition {
+  animation: luma-teammate-history-enter 210ms cubic-bezier(.2, .75, .25, 1) both;
+}
+
+.luma-teammate-history-item {
+  border: 1px solid transparent;
+  color: var(--luma-text-secondary);
+}
+
+.luma-teammate-history-item:hover {
+  background: var(--luma-surface-hover);
+  color: var(--luma-text);
+}
+
+.luma-teammate-history-item.is-selected {
+  border-color: var(--luma-border);
+  background: var(--luma-selection);
+  color: var(--luma-text);
+}
+
+@keyframes luma-teammate-sidebar-enter {
+  from { opacity: 0; transform: translateX(-9px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes luma-teammate-history-enter {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
 @keyframes luma-view-enter {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
@@ -2207,7 +2241,11 @@ html[data-platform="linux"] .luma-sidebar-glass {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .luma-progress-indicator { animation: none; }
+  .luma-progress-indicator,
+  .luma-teammate-sidebar-transition,
+  .luma-teammate-history-transition {
+    animation: none !important;
+  }
 }
 
 /* User-controlled desktop density and motion preferences. Keep the closed

@@ -181,6 +181,7 @@ async fn run() -> Result<()> {
     let (input_tx, input_rx) = tokio::sync::mpsc::channel::<String>(100);
 
     let (confirmation_tx, confirmation_rx) = tokio::sync::mpsc::channel::<agent::Confirmation>(16);
+    let (question_tx, question_rx) = tokio::sync::mpsc::channel::<agent::QuestionAnswer>(4);
 
     let cancel = CancellationToken::new();
 
@@ -207,7 +208,12 @@ async fn run() -> Result<()> {
     );
 
     let request_cancel = session::RequestCancellation::new(cancel.clone());
-    let session = session::Session::new(info, confirmation_tx, request_cancel.clone());
+    let session = session::Session::new(
+        info,
+        confirmation_tx,
+        question_tx.clone(),
+        request_cancel.clone(),
+    );
 
     // ========================================================
     // Agent
@@ -223,6 +229,7 @@ async fn run() -> Result<()> {
                 agent_cancel,
                 request_cancel,
                 confirmation_rx,
+                question_rx,
             )
             .await
         {
@@ -323,6 +330,7 @@ async fn run_desktop_server() -> Result<()> {
     let (input_tx, input_rx) = tokio::sync::mpsc::channel::<String>(100);
 
     let (confirmation_tx, confirmation_rx) = tokio::sync::mpsc::channel::<agent::Confirmation>(16);
+    let (question_tx, question_rx) = tokio::sync::mpsc::channel::<agent::QuestionAnswer>(4);
 
     let cancel = CancellationToken::new();
 
@@ -334,7 +342,12 @@ async fn run_desktop_server() -> Result<()> {
     );
 
     let request_cancel = session::RequestCancellation::new(cancel.clone());
-    let session = session::Session::new(info, confirmation_tx.clone(), request_cancel.clone());
+    let session = session::Session::new(
+        info,
+        confirmation_tx.clone(),
+        question_tx.clone(),
+        request_cancel.clone(),
+    );
 
     // ========================================================
     // Agent
@@ -350,6 +363,7 @@ async fn run_desktop_server() -> Result<()> {
                 agent_cancel,
                 request_cancel,
                 confirmation_rx,
+                question_rx,
             )
             .await
         {

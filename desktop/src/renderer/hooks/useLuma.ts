@@ -110,7 +110,7 @@ export function useLuma() {
           });
           return items;
         }, []));
-        setThinking(snapshot.busy);
+        setThinking(snapshot.busy && !snapshot.question);
         setConfirmation(snapshot.confirmation);
         setError(null);
         break;
@@ -285,6 +285,11 @@ export function useLuma() {
           input: data.input,
         });
 
+        break;
+      }
+
+      case "QuestionRequired": {
+        setThinking(false);
         break;
       }
 

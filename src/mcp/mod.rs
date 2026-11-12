@@ -12,6 +12,14 @@ pub use tool::McpTool;
 use crate::tools::ToolRegistry;
 use anyhow::Result;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpTransport {
+    #[default]
+    Stdio,
+    Http,
+}
+
 pub fn register_enabled_tools(registry: &mut ToolRegistry) -> Result<usize> {
     let tools = match McpManager::default().enabled_tools() {
         Ok(tools) => tools,

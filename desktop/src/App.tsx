@@ -2777,6 +2777,8 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
   const [workspacePath, setWorkspacePath] = useState("");
   const [memoryRevision, setMemoryRevision] = useState(0);
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [showTeammateList, setShowTeammateList] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const [agentName, setAgentName] = useState("");
   const [agentDescription, setAgentDescription] = useState("");
@@ -2850,6 +2852,9 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
   const agentTasks = tasks.filter((task) => task.agent_id === selectedAgentId && !task.schedule_id);
+  const visibleAgentTasks = selectedTaskId
+    ? agentTasks.filter((task) => task.id === selectedTaskId)
+    : agentTasks;
   const taskTimeline = (taskId: string): TeammateTimelineSegment[] => {
     const segments: TeammateTimelineSegment[] = [];
     for (const event of runtimeEvents
@@ -2886,30 +2891,52 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
 
   useEffect(() => {
     onSidebarChange(
-      <div>
-        <div className="mb-2 flex items-center justify-between px-1">
-          <span className="luma-kicker">Your teammates</span>
-          <button type="button" disabled={busy} onClick={() => setCreateOpen(true)} className="luma-btn-ghost inline-flex h-6 items-center gap-1 px-2 text-[10px]" aria-label="Create teammate">
-            <PlusIcon /> Create
+      <div key={`${showTeammateList ? "list" : "history"}:${selectedAgentId || "teammates"}`} className="luma-teammate-sidebar-transition">
+        {selectedAgent && !showTeammateList ? <>
+          <button type="button" onClick={() => { setShowTeammateList(true); setSelectedTaskId(null); }} className="mb-3 flex h-7 w-full items-center gap-2 rounded-md px-1 text-left text-[11px] text-[var(--luma-text-muted)] transition-colors hover:bg-[var(--luma-surface-hover)] hover:text-[var(--luma-text)]">
+            <span aria-hidden="true">←</span> All teammates
           </button>
-        </div>
-        {agents.length === 0 && <p className="px-1 py-3 text-[11px] text-[var(--luma-text-muted)]">No teammates yet. Create one to give it a persistent identity and workspace.</p>}
-        <div className="space-y-1">
-          {agents.map((agent) => (
-            <button key={agent.id} type="button" onClick={() => setSelectedAgentId(agent.id)} className={`luma-teammate-nav-item w-full rounded-md border px-2.5 py-2 text-left transition-colors ${selectedAgentId === agent.id ? "is-selected" : ""}`}>
-              <div className="flex items-center gap-2">
-                <MascotAvatar seed={agent.name} mascot={agent.configuration.mascot} size={30} active={agent.status === "active"} />
-                <span className={`h-1.5 w-1.5 rounded-full ${agent.status === "active" ? "bg-[var(--luma-success)]" : agent.status === "waiting" ? "bg-[var(--luma-warning)]" : "bg-[var(--luma-text-muted)]"}`} />
-                <span className="min-w-0 flex-1 truncate text-[12px] font-medium">{agent.name}</span>
-              </div>
-              <div className="mt-1 pl-3.5 text-[10px] capitalize text-[var(--luma-text-muted)]">{agent.id === "agent_global" ? "Global defaults · protected" : `${agent.status} · ${agent.kind}`}</div>
+          <div className="mb-2 flex items-center gap-2 px-1">
+            <MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={24} active={selectedAgent.status === "active"} />
+            <span className="min-w-0 flex-1 truncate text-[12px] font-semibold">{selectedAgent.name}</span>
+          </div>
+          <div className="mb-2 flex items-center justify-between px-1">
+            <span className="luma-kicker">History</span>
+            <span className="text-[10px] tabular-nums text-[var(--luma-text-muted)]">{agentTasks.length}</span>
+          </div>
+          {agentTasks.length === 0 ? <p className="px-1 py-3 text-[11px] text-[var(--luma-text-muted)]">Conversations with this teammate will appear here.</p> : <div className="space-y-0.5">
+            {agentTasks.slice().sort((left, right) => right.created_at - left.created_at).map((task) => (
+              <button key={task.id} type="button" onClick={() => setSelectedTaskId(task.id)} aria-current={selectedTaskId === task.id ? "page" : undefined} className={`luma-teammate-history-item w-full rounded-md px-2 py-2 text-left transition-colors ${selectedTaskId === task.id ? "is-selected" : ""}`}>
+                <span className="block truncate text-[11px] font-medium">{task.title || task.request}</span>
+                <span className="mt-0.5 block text-[10px] capitalize text-[var(--luma-text-muted)]">{task.status.replace(/_/g, " ")} · {new Date(task.created_at * 1000).toLocaleDateString()}</span>
+              </button>
+            ))}
+          </div>}
+        </> : <>
+          <div className="mb-2 flex items-center justify-between px-1">
+            <span className="luma-kicker">Your teammates</span>
+            <button type="button" disabled={busy} onClick={() => setCreateOpen(true)} className="luma-btn-ghost inline-flex h-6 items-center gap-1 px-2 text-[10px]" aria-label="Create teammate">
+              <PlusIcon /> Create
             </button>
-          ))}
-        </div>
+          </div>
+          {agents.length === 0 && <p className="px-1 py-3 text-[11px] text-[var(--luma-text-muted)]">No teammates yet. Create one to give it a persistent identity and workspace.</p>}
+          <div className="space-y-1">
+            {agents.map((agent) => (
+              <button key={agent.id} type="button" onClick={() => { setSelectedTaskId(null); setSelectedAgentId(agent.id); setShowTeammateList(false); }} className="luma-teammate-nav-item w-full rounded-md border px-2.5 py-2 text-left transition-colors">
+                <div className="flex items-center gap-2">
+                  <MascotAvatar seed={agent.name} mascot={agent.configuration.mascot} size={30} active={agent.status === "active"} />
+                  <span className={`h-1.5 w-1.5 rounded-full ${agent.status === "active" ? "bg-[var(--luma-success)]" : agent.status === "waiting" ? "bg-[var(--luma-warning)]" : "bg-[var(--luma-text-muted)]"}`} />
+                  <span className="min-w-0 flex-1 truncate text-[12px] font-medium">{agent.name}</span>
+                </div>
+                <div className="mt-1 pl-3.5 text-[10px] capitalize text-[var(--luma-text-muted)]">{agent.id === "agent_global" ? "Global defaults · protected" : `${agent.status} · ${agent.kind}`}</div>
+              </button>
+            ))}
+          </div>
+        </>}
       </div>,
     );
     return () => onSidebarChange(null);
-  }, [agents, busy, onSidebarChange, selectedAgentId]);
+  }, [agents, busy, onSidebarChange, selectedAgentId, selectedTaskId, showTeammateList, tasks]);
 
   useEffect(() => {
     if (!selectedAgent) return;
@@ -2964,8 +2991,8 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
           <div className="min-h-0 flex-1 overflow-auto p-4">
             {!selectedAgent ? <div className="flex h-full items-center justify-center text-[12px] text-[var(--luma-text-muted)]">Select a teammate to start chatting.</div> : activeTab === "chat" ? (
               <div className="mx-auto flex h-full w-full max-w-[850px] flex-col">
-                <div className="min-h-0 flex-1 space-y-5 overflow-auto pb-5">
-                  {agentTasks.length === 0 ? <div className="flex h-full flex-col items-center justify-center text-center"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={76} active /><h3 className="mt-4 text-[16px] font-semibold">Chat with {selectedAgent.name}</h3><p className="mt-1 max-w-sm text-[12px] leading-6 text-[var(--luma-text-muted)]">Start a conversation. Messages and task context are kept separately for this teammate.</p></div> : agentTasks.slice().reverse().map((task) => {
+                <div key={selectedAgent.id} className="luma-teammate-history-transition min-h-0 flex-1 space-y-5 overflow-auto pb-5">
+                  {agentTasks.length === 0 ? <div className="flex h-full flex-col items-center justify-center text-center"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={76} active /><h3 className="mt-4 text-[16px] font-semibold">Chat with {selectedAgent.name}</h3><p className="mt-1 max-w-sm text-[12px] leading-6 text-[var(--luma-text-muted)]">Start a conversation. Messages and task context are kept separately for this teammate.</p></div> : visibleAgentTasks.slice().reverse().map((task) => {
                     const timeline = taskTimeline(task.id);
                     const hasAnswer = timeline.some((segment) => segment.kind === "text");
                     return <article key={task.id} className="space-y-3">
@@ -3069,7 +3096,7 @@ function TeammatesPanel({ onSidebarChange, sendWithEnter }: { onSidebarChange: (
               max_concurrent_tasks: 1, recover_interrupted_tasks: false,
             };
             const created = await window.luma.createAgent({ name: agentName.trim(), description: agentDescription.trim() || null, kind: "teammates", configuration });
-            setSelectedAgentId(created.id); setCreateOpen(false); setAgentName(""); setAgentDescription(""); setAgentPersonality(""); setAgentInitialMemory(""); setAgentWorkspace(""); setAgentMascot("auto"); setAgentUseGlobalContext(true); setActiveTab("chat");
+            setSelectedAgentId(created.id); setSelectedTaskId(null); setShowTeammateList(false); setCreateOpen(false); setAgentName(""); setAgentDescription(""); setAgentPersonality(""); setAgentInitialMemory(""); setAgentWorkspace(""); setAgentMascot("auto"); setAgentUseGlobalContext(true); setActiveTab("chat");
             if (agentInitialMemory.trim()) {
               try { await window.luma.addMemory("agent", created.id, agentInitialMemory.trim()); }
               catch (reason) { setError(reason instanceof Error ? `Teammate created, but initial memory could not be saved: ${reason.message}` : "Teammate created, but initial memory could not be saved."); }

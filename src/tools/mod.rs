@@ -9,6 +9,23 @@ pub mod shell;
 pub mod skills;
 pub mod web;
 
+struct AskQuestion;
+
+impl Tool for AskQuestion {
+    fn name(&self) -> &str {
+        "ask_question"
+    }
+    fn description(&self) -> &str {
+        "Ask the user for missing information and wait for their answer. Input JSON: {\"prompt\":\"question\",\"choices\":[\"optional choice\"]}. This is an interactive control-flow action, not an approval."
+    }
+    fn execute(&self, _input: &str) -> Result<String> {
+        anyhow::bail!("ask_question must be handled by the Agent interaction loop")
+    }
+    fn is_read_only(&self) -> bool {
+        true
+    }
+}
+
 /// Construct the standard tool set for an isolated agent execution.
 /// Keep registration in one place so Code and Teammates cannot silently gain
 /// different capabilities.
@@ -46,6 +63,7 @@ pub fn default_registry() -> ToolRegistry {
     tools.register(InspectProject);
     tools.register(ListSkills);
     tools.register(LoadSkill);
+    tools.register(AskQuestion);
     tools
 }
 
@@ -100,7 +118,7 @@ impl ToolRegistry {
 
     pub fn retain(&mut self, allowed: &[String]) {
         self.tools
-            .retain(|name, _| allowed.iter().any(|item| item == name));
+            .retain(|name, _| name == "ask_question" || allowed.iter().any(|item| item == name));
     }
 
     pub fn execute(&self, name: &str, input: &str) -> Result<String> {
@@ -178,10 +196,20 @@ mod tests {
         let teammate_tools = teammates.names();
 
         assert!(code_tools.iter().all(|name| teammate_tools.contains(name)));
+        assert!(code_tools.iter().any(|name| name == "ask_question"));
+        assert!(teammate_tools.iter().any(|name| name == "ask_question"));
         for name in ["web_search", "fetch_url", "http_request"] {
             assert!(teammate_tools.iter().any(|tool| tool == name));
             assert!(!code_tools.iter().any(|tool| tool == name));
         }
+    }
+
+    #[test]
+    fn ask_question_remains_available_when_teammate_tools_are_allowlisted() {
+        let mut tools = teammate_registry();
+        tools.retain(&["read_file".into()]);
+        assert!(tools.names().iter().any(|name| name == "ask_question"));
+        assert!(tools.names().iter().any(|name| name == "read_file"));
     }
 
     #[test]

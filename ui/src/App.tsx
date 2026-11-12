@@ -15,7 +15,7 @@ import { theme } from "./theme";
 import { formatChatPrompt, type ChatAttachment } from "../../shared/attachments";
 
 export function App({ initialSetup = false }: { initialSetup?: boolean }) {
-  const { state, send, openModelPicker, selectProvider, chooseModel, closeModelPicker, confirm } = useSession(initialSetup);
+  const { state, send, openModelPicker, selectProvider, chooseModel, closeModelPicker, confirm, answerQuestion, cancel } = useSession(initialSetup);
 
   const [input, setInput] = useState("");
   const [expandedToolGroups, setExpandedToolGroups] = useState<Record<string, boolean>>({});
@@ -33,6 +33,10 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
   const hasConversation = state.messages.some(
     (message) => message.role !== "system",
   );
+
+  useEffect(() => {
+    if (!state.question) setInput("");
+  }, [state.question]);
 
   useInput((input, key) => {
     if ((key.meta || key.ctrl) && input.toLowerCase() === "o") {
@@ -175,6 +179,9 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
         activeTool={state.activeTool}
         confirmation={state.confirmation}
         onConfirm={(allowed) => confirm(allowed)}
+        question={state.question}
+        onAnswer={answerQuestion}
+        onCancelQuestion={cancel}
         toolCalls={state.messages.filter((message) => message.role === "tool").length}
         turns={state.messages.filter((message) => message.role === "user").length}
         value={input}

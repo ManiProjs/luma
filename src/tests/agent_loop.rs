@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    agent::{Agent, Confirmation},
+    agent::{Agent, Confirmation, QuestionAnswer},
     event::AgentEvent,
     history::History,
     react::ReActAction,
@@ -93,6 +93,7 @@ async fn run_agent_once(
     let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(100);
     let (input_tx, input_rx) = mpsc::channel::<String>(10);
     let (confirmation_tx, confirmation_rx) = mpsc::channel::<Confirmation>(16);
+    let (_question_tx, question_rx) = mpsc::channel::<QuestionAnswer>(4);
     let cancel = CancellationToken::new();
 
     // Feed queued confirmations (auto-answer any confirmation request).
@@ -116,6 +117,7 @@ async fn run_agent_once(
                 agent_cancel.clone(),
                 crate::session::RequestCancellation::new(agent_cancel),
                 confirmation_rx,
+                question_rx,
             )
             .await
     });
@@ -165,6 +167,7 @@ async fn a_request_error_is_reported_without_stopping_the_agent_loop() {
     let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(32);
     let (input_tx, input_rx) = mpsc::channel::<String>(4);
     let (_confirmation_tx, confirmation_rx) = mpsc::channel::<Confirmation>(4);
+    let (_question_tx, question_rx) = mpsc::channel::<QuestionAnswer>(4);
     let shutdown = CancellationToken::new();
     let request_cancel = crate::session::RequestCancellation::new(shutdown.clone());
 
@@ -176,6 +179,7 @@ async fn a_request_error_is_reported_without_stopping_the_agent_loop() {
                 shutdown,
                 request_cancel,
                 confirmation_rx,
+                question_rx,
             )
             .await
     });
@@ -225,6 +229,7 @@ async fn a_react_failure_falls_back_to_a_direct_answer() {
     let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(32);
     let (input_tx, input_rx) = mpsc::channel::<String>(4);
     let (_confirmation_tx, confirmation_rx) = mpsc::channel::<Confirmation>(4);
+    let (_question_tx, question_rx) = mpsc::channel::<QuestionAnswer>(4);
     let shutdown = CancellationToken::new();
     let request_cancel = crate::session::RequestCancellation::new(shutdown.clone());
 
@@ -236,6 +241,7 @@ async fn a_react_failure_falls_back_to_a_direct_answer() {
                 shutdown,
                 request_cancel,
                 confirmation_rx,
+                question_rx,
             )
             .await
     });
@@ -264,6 +270,223 @@ async fn a_react_failure_falls_back_to_a_direct_answer() {
 
     drop(input_tx);
     let _ = handle.await;
+}
+
+#[tokio::test]
+async fn ask_question_waits_for_matching_answer_and_records_observation() {
+    let tools = crate::tools::default_registry();
+    let model = MockModel::new(vec![
+        r#"{"type":"tool","name":"ask_question","input":{"prompt":"Which target?","choices":["A","B"]}}"#.into(),
+        r#"{"type":"answer","content":"Done with the selected target."}"#.into(),
+    ]);
+    let capture = model.clone();
+    let react = crate::react::ReAct::new(model.clone(), &tools);
+    let mut agent = Agent::new(model, react, tools, History::default(), String::new());
+    let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(32);
+    let (input_tx, input_rx) = mpsc::channel::<String>(2);
+    let (_confirmation_tx, confirmation_rx) = mpsc::channel::<Confirmation>(2);
+    let (question_tx, question_rx) = mpsc::channel::<QuestionAnswer>(4);
+    let shutdown = CancellationToken::new();
+    let request_cancel = crate::session::RequestCancellation::new(shutdown.clone());
+    let worker = tokio::spawn(async move {
+        agent
+            .run(
+                input_rx,
+                event_tx,
+                shutdown,
+                request_cancel,
+                confirmation_rx,
+                question_rx,
+            )
+            .await
+    });
+    input_tx.send("/plan Choose a target".into()).await.unwrap();
+
+    let question = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if let Some(AgentEvent::QuestionRequired {
+                question_id,
+                prompt,
+                choices,
+            }) = event_rx.recv().await
+            {
+                break (question_id, prompt, choices);
+            }
+        }
+    })
+    .await
+    .expect("question event should arrive");
+    assert_eq!(question.1, "Which target?");
+    assert_eq!(question.2, vec!["A", "B"]);
+    question_tx
+        .send(QuestionAnswer {
+            question_id: "stale-question".into(),
+            answer: "wrong".into(),
+        })
+        .await
+        .unwrap();
+    question_tx
+        .send(QuestionAnswer {
+            question_id: question.0,
+            answer: "Target B".into(),
+        })
+        .await
+        .unwrap();
+
+    loop {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if matches!(event, AgentEvent::Finished) {
+            break;
+        }
+    }
+    drop(input_tx);
+    worker.await.unwrap().unwrap();
+    let requests = capture.requests();
+    assert!(
+        requests
+            .iter()
+            .skip(1)
+            .any(|messages| messages.iter().any(|message| message.role
+                == crate::context::MessageRole::Observation
+                && message.content.contains("Target B"))),
+        "the answer must be returned to ReAct as an observation"
+    );
+}
+
+#[tokio::test]
+async fn ask_question_unblocks_when_request_is_cancelled() {
+    let tools = crate::tools::default_registry();
+    let model = MockModel::new(vec![
+        r#"{"type":"tool","name":"ask_question","input":{"prompt":"Need input"}}"#.into(),
+    ]);
+    let react = crate::react::ReAct::new(model.clone(), &tools);
+    let mut agent = Agent::new(model, react, tools, History::default(), String::new());
+    let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(32);
+    let (input_tx, input_rx) = mpsc::channel::<String>(2);
+    let (_confirmation_tx, confirmation_rx) = mpsc::channel::<Confirmation>(2);
+    let (_question_tx, question_rx) = mpsc::channel::<QuestionAnswer>(2);
+    let shutdown = CancellationToken::new();
+    let request_cancel = crate::session::RequestCancellation::new(shutdown.clone());
+    let cancel_handle = request_cancel.clone();
+    let worker = tokio::spawn(async move {
+        agent
+            .run(
+                input_rx,
+                event_tx,
+                shutdown,
+                request_cancel,
+                confirmation_rx,
+                question_rx,
+            )
+            .await
+    });
+    input_tx.send("/plan Need a decision".into()).await.unwrap();
+    loop {
+        if matches!(
+            tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
+                .await
+                .unwrap(),
+            Some(AgentEvent::QuestionRequired { .. })
+        ) {
+            break;
+        }
+    }
+    cancel_handle.cancel();
+    drop(input_tx);
+    let mut saw_cancel = false;
+    while let Some(event) = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
+        .await
+        .unwrap()
+    {
+        if matches!(event, AgentEvent::Cancelled) {
+            saw_cancel = true;
+        }
+        if matches!(event, AgentEvent::Finished) {
+            break;
+        }
+    }
+    worker.await.unwrap().unwrap();
+    assert!(
+        saw_cancel,
+        "cancellation must release the pending question wait"
+    );
+}
+
+#[tokio::test]
+async fn ask_question_falls_back_to_a_follow_up_task_when_interaction_is_unavailable() {
+    let tools = crate::tools::teammate_registry();
+    let model = MockModel::new(vec![
+        r#"{"type":"tool","name":"ask_question","input":{"prompt":"Which target?"}}"#.into(),
+        r#"{"type":"answer","content":"Which target should I optimize for? Please reply in your next message."}"#.into(),
+    ]);
+    let capture = model.clone();
+    let react = crate::react::ReAct::new(model.clone(), &tools);
+    let mut agent = Agent::new(model, react, tools, History::default(), String::new());
+    let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(32);
+    let (input_tx, input_rx) = mpsc::channel::<String>(2);
+    let (_confirmation_tx, confirmation_rx) = mpsc::channel::<Confirmation>(2);
+    let (_question_tx, question_rx) = mpsc::channel::<QuestionAnswer>(1);
+    drop(_question_tx);
+    let shutdown = CancellationToken::new();
+    let request_cancel = crate::session::RequestCancellation::new(shutdown.clone());
+    let worker = tokio::spawn(async move {
+        agent
+            .run(
+                input_rx,
+                event_tx,
+                shutdown,
+                request_cancel,
+                confirmation_rx,
+                question_rx,
+            )
+            .await
+    });
+    input_tx
+        .send("/plan Choose an optimization target.".into())
+        .await
+        .unwrap();
+
+    let mut events = Vec::new();
+    loop {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), event_rx.recv())
+            .await
+            .expect("fallback question should finish")
+            .expect("agent event channel should remain open");
+        let finished = matches!(event, AgentEvent::Finished);
+        events.push(event);
+        if finished {
+            break;
+        }
+    }
+    drop(input_tx);
+    worker.await.unwrap().unwrap();
+
+    assert!(events.iter().any(|event| matches!(event, AgentEvent::TextDelta(text) if text.contains("Which target should I optimize"))), "events: {events:?}");
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::Error(_)))
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, AgentEvent::QuestionRequired { .. }))
+    );
+    assert!(
+        capture
+            .requests()
+            .iter()
+            .skip(1)
+            .any(|messages| messages.iter().any(|message| {
+                message.role == crate::context::MessageRole::Observation
+                    && message
+                        .content
+                        .contains("wait for their reply in the next task")
+            }))
+    );
 }
 
 /// Serializes tests that change the process working directory.
