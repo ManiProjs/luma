@@ -8,8 +8,11 @@ mod desktop;
 mod event;
 mod gateway;
 mod history;
+mod integration_cli;
 mod logging;
+mod mcp;
 mod model;
+mod plugins;
 mod protocol;
 mod provider;
 mod react;
@@ -34,7 +37,7 @@ use event::AgentEvent;
 use history::History;
 use tokio_util::sync::CancellationToken;
 
-use crate::{model::DynamicModel, session::SessionInfo};
+use crate::{model::DynamicModel, runtime::PermissionProfile, session::SessionInfo};
 
 use dialoguer::Confirm;
 
@@ -43,6 +46,17 @@ fn confirm_setup() -> Result<bool> {
         .with_prompt("Luma is not configured yet. Run setup?")
         .default(true)
         .interact()?)
+}
+
+fn code_permissions(tool_names: &[String]) -> PermissionProfile {
+    PermissionProfile {
+        // Installing and enabling a native integration is an explicit user
+        // choice. Its individual tool calls still require approval.
+        allow_network: tool_names
+            .iter()
+            .any(|name| name.starts_with("plugin__") || name.starts_with("mcp__")),
+        ..PermissionProfile::default()
+    }
 }
 
 #[tokio::main]
@@ -76,6 +90,10 @@ async fn run() -> Result<()> {
     // ========================================================
 
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+
+    if integration_cli::handles(&args) {
+        return integration_cli::run(&args);
+    }
 
     // The desktop server receives JSONL over stdin. It must never run the
     // interactive setup prompt on that stream, or an unconfigured install
@@ -124,7 +142,9 @@ async fn run() -> Result<()> {
     // Tools
     // ========================================================
 
-    let tools = tools::default_registry();
+    let mut tools = tools::default_registry();
+    plugins::register_enabled_tools(&mut tools)?;
+    mcp::register_enabled_tools(&mut tools)?;
 
     let tool_names = tools.names();
 
@@ -150,6 +170,7 @@ async fn run() -> Result<()> {
     // ========================================================
 
     let mut agent = Agent::new(model, react, tools, history, galaxy);
+    agent.set_permission_profile(code_permissions(&tool_names));
 
     // ========================================================
     // Channels
@@ -263,7 +284,9 @@ async fn run_desktop_server() -> Result<()> {
     // Tools
     // ========================================================
 
-    let tools = tools::default_registry();
+    let mut tools = tools::default_registry();
+    plugins::register_enabled_tools(&mut tools)?;
+    mcp::register_enabled_tools(&mut tools)?;
 
     let tool_names = tools.names();
 
@@ -289,6 +312,7 @@ async fn run_desktop_server() -> Result<()> {
     // ========================================================
 
     let mut agent = Agent::new(model.clone(), react, tools, history, galaxy);
+    agent.set_permission_profile(code_permissions(&tool_names));
 
     // ========================================================
     // Channels
@@ -342,4 +366,16 @@ async fn run_desktop_server() -> Result<()> {
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::code_permissions;
+
+    #[test]
+    fn code_enables_network_policy_only_when_external_integrations_are_enabled() {
+        assert!(!code_permissions(&["read_file".into()]).allow_network);
+        assert!(code_permissions(&["plugin__calendar__create".into()]).allow_network);
+        assert!(code_permissions(&["mcp__filesystem__read_file".into()]).allow_network);
+    }
 }

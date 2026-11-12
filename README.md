@@ -122,6 +122,9 @@ Luma currently provides:
 The inspection tools are read-only. Git and search output is bounded so a
 large repository cannot flood the model context. Luma can combine these tools
 with `run_command` when it needs to execute a build, test suite, or formatter.
+Persistent Teammates receive this complete tool set plus `web_search`,
+`fetch_url`, and `http_request`. Their network permission is configurable per
+agent, and external integration calls remain approval-gated.
 
 ### Agent Skills
 
@@ -158,7 +161,21 @@ to discover metadata and `load_skill` to load a relevant skill only when
 needed, keeping unrelated instructions out of the model context. A loaded
 skill can reference companion files in its own directory; use `read_file` to
 inspect those resources. Skills are guidance, not permission to bypass user
-approval or Luma's safety boundaries.
+approval or Luma's safety boundaries. Each Teammate can attach its own skills
+and optionally inherit the Global teammate's shared skills and memory.
+
+### External integrations
+
+Luma supports two separate integration systems. **Native Luma Plugins** use
+`plugin.toml` manifests and Luma's one-shot JSON process protocol. **MCP
+servers** use the Model Context Protocol over local stdio and JSON-RPC. Both
+systems expose enabled tools to Code and to Teammates that inherit the Global
+teammate's connectors. External tool calls require approval.
+
+- [Native Luma Plugins](docs/plugins.md): install, inspect, enable, disable,
+  and uninstall local plugin packages with `luma plugins`.
+- [MCP servers](docs/mcp.md): register local stdio servers and inspect their
+  tools with `luma mcp`.
 
 ### `patch_file`
 

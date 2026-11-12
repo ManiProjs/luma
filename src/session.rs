@@ -627,6 +627,59 @@ impl Session {
             return Ok(None);
         }
 
+        if text == "/plugins" {
+            let output = match crate::plugins::PluginManager::default().list() {
+                Ok(entries) if entries.is_empty() => "No native Luma plugins installed.".to_owned(),
+                Ok(entries) => entries
+                    .into_iter()
+                    .map(|(record, manifest)| {
+                        format!(
+                            "{}  [{}]  {} v{} · {}",
+                            record.id,
+                            if record.enabled {
+                                "enabled"
+                            } else {
+                                "disabled"
+                            },
+                            manifest.name,
+                            manifest.version,
+                            manifest.tools.len()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                Err(error) => format!("Could not list Luma plugins: {error:#}"),
+            };
+            self.push_system(output);
+            return Ok(None);
+        }
+
+        if text == "/mcp" {
+            let output = match crate::mcp::McpManager::default().list() {
+                Ok(servers) if servers.is_empty() => "No MCP servers configured.".to_owned(),
+                Ok(servers) => servers
+                    .into_iter()
+                    .map(|server| {
+                        format!(
+                            "{}  [{}]  {} {}",
+                            server.id,
+                            if server.enabled {
+                                "enabled"
+                            } else {
+                                "disabled"
+                            },
+                            server.command,
+                            server.args.join(" ")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                Err(error) => format!("Could not list MCP servers: {error:#}"),
+            };
+            self.push_system(output);
+            return Ok(None);
+        }
+
         if text == "/teammates" || text == "/agents" {
             let output = match crate::runtime::RuntimeStore::open_default()
                 .and_then(|store| store.list_agents())
@@ -837,6 +890,10 @@ impl Session {
             self.summary = Some(summary.trim().to_owned());
             self.push_system("Summary saved for this chat.");
             self.persist();
+            return Ok(None);
+        }
+        if text == "/summary:add" {
+            self.push_system("Usage: /summary:add <text> — save a summary for this chat.");
             return Ok(None);
         }
 
@@ -1252,6 +1309,8 @@ impl Session {
             "  /doctor  inspect the active model, workspace and session",
             "  /tools   list tools enabled in this session",
             "  /skills  discover available Agent Skills",
+            "  /plugins list installed native Luma plugins",
+            "  /mcp     list configured MCP servers",
             "  /teammates  list persistent personal agents (/agents is an alias)",
             "  /tasks   list recent persistent tasks",
             "  /approvals  list pending approvals",
@@ -1323,6 +1382,21 @@ mod tests {
         assert_eq!(
             session.submit("/init".into()).unwrap().as_deref(),
             Some("/init")
+        );
+    }
+
+    #[test]
+    fn summary_command_without_arguments_shows_usage_locally() {
+        let (mut session, _rx) = session();
+        assert_eq!(session.submit("/summary:add".into()).unwrap(), None);
+        assert!(
+            session
+                .state()
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("Usage: /summary:add")
         );
     }
 

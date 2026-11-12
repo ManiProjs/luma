@@ -96,8 +96,14 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     } else {
         tools::default_registry()
     };
-    // A Teammate owns its own tool selection. Global context shares memory,
-    // skills and defaults; it must not silently replace the agent's tools.
+    // Native Luma plugins and MCP servers are global connectors. A Teammate
+    // receives them only when it opts into the Global teammate's context.
+    if inherit_global {
+        crate::plugins::register_enabled_tools(&mut registry)?;
+        crate::mcp::register_enabled_tools(&mut registry)?;
+    }
+    // A Teammate still owns its Code tools, web access and attached skills;
+    // inheriting global context only adds shared defaults and connectors.
     let enabled_tools = agent_record.configuration.enabled_tools.as_slice();
     if !enabled_tools.is_empty() {
         // The runtime only exposes explicitly configured tools. Read-only

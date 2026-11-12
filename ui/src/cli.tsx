@@ -2,6 +2,8 @@ import React from "react";
 import { render } from "ink";
 import { Command } from "commander";
 import { spawn } from "bun";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
@@ -177,6 +179,53 @@ async function providersList() {
     }
     if (event.data.providers.length === 0) process.stdout.write("No providers are available.\n");
   });
+}
+
+async function pluginsList() {
+  runCoreCommand(["plugins", "list"]);
+}
+
+async function pluginInstall(path: string) {
+  runCoreCommand(["plugins", "install", resolve(path)]);
+}
+
+async function pluginToggle(id: string, enabled: boolean) {
+  runCoreCommand(["plugins", enabled ? "enable" : "disable", id]);
+}
+
+async function pluginRemove(id: string) {
+  runCoreCommand(["plugins", "uninstall", id]);
+}
+
+async function mcpList() {
+  runCoreCommand(["mcp", "list"]);
+}
+
+async function mcpAdd(id: string, command: string, args: string[], options: { env?: string[] }) {
+  const forwarded = ["mcp", "add", id, command, ...args];
+  for (const item of options.env ?? []) forwarded.push("--env", item);
+  runCoreCommand(forwarded);
+}
+
+async function mcpToggle(id: string, enabled: boolean) {
+  runCoreCommand(["mcp", enabled ? "enable" : "disable", id]);
+}
+
+async function mcpRemove(id: string) {
+  runCoreCommand(["mcp", "remove", id]);
+}
+
+async function mcpTools(id: string) {
+  runCoreCommand(["mcp", "tools", id]);
+}
+
+function runCoreCommand(args: string[]) {
+  const localBuilds = [
+    resolve(import.meta.dir, "../../target/debug/luma-core"),
+    resolve(import.meta.dir, "../../target/release/luma-core"),
+  ];
+  const executable = process.env.LUMA_BINARY ?? process.env.LUMA_CORE_BIN ?? localBuilds.find(existsSync) ?? "luma-core";
+  execFileSync(executable, args, { stdio: "inherit" });
 }
 
 function configPath() {
@@ -473,6 +522,24 @@ export async function runCli(argv: string[]) {
   config.command("path").description("Print the active config.toml path").action(configPath);
 
   program.command("providers").description("List model providers supported by this Luma build").action(providersList);
+
+  const plugins = program.command("plugins").description("Manage native Luma plugins").action(pluginsList);
+  plugins.command("list").description("List installed Luma plugins").action(pluginsList);
+  plugins.command("install <path>").description("Install a local Luma plugin package (disabled by default)").action(pluginInstall);
+  plugins.command("enable <id>").description("Enable a Luma plugin").action((id: string) => pluginToggle(id, true));
+  plugins.command("disable <id>").description("Disable a Luma plugin").action((id: string) => pluginToggle(id, false));
+  plugins.command("uninstall <id>").description("Uninstall a Luma plugin").action(pluginRemove);
+
+  const mcp = program.command("mcp").description("Manage Model Context Protocol servers").action(mcpList);
+  mcp.command("list").description("List MCP servers").action(mcpList);
+  mcp.command("add <id> <command> [args...]").description("Register a local stdio MCP server (disabled by default)")
+    .allowUnknownOption(true)
+    .option("--env <key=value>", "Pass an environment variable (repeatable)", (value: string, previous: string[] = []) => [...previous, value], [])
+    .action(mcpAdd);
+  mcp.command("enable <id>").description("Enable an MCP server").action((id: string) => mcpToggle(id, true));
+  mcp.command("disable <id>").description("Disable an MCP server").action((id: string) => mcpToggle(id, false));
+  mcp.command("remove <id>").description("Remove an MCP server configuration").action(mcpRemove);
+  mcp.command("tools <id>").description("Discover tools exposed by an MCP server").action(mcpTools);
 
   program.command("summary")
     .description("Manage saved conversation summaries")

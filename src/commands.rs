@@ -18,6 +18,8 @@ const COMMANDS: &[&str] = &[
     "/model session",
     "/tools",
     "/skills",
+    "/plugins",
+    "/mcp",
     "/teammates",
     "/agents",
     "/tasks",
@@ -112,6 +114,8 @@ mod tests {
         assert_eq!(suggestions("/tea"), vec!["/teammates"]);
         assert!(suggestions("/mem").contains(&"/memory".to_owned()));
         assert!(suggestions("/app").contains(&"/approvals".to_owned()));
+        assert_eq!(suggestions("/plu"), vec!["/plugins"]);
+        assert_eq!(suggestions("/mc"), vec!["/mcp"]);
     }
 
     #[test]

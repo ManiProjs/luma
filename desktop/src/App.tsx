@@ -68,6 +68,8 @@ const SLASH_COMMANDS = [
   { command: "/doctor", description: "Inspect model, workspace and session health" },
   { command: "/tools", description: "List tools enabled in this session" },
   { command: "/skills", description: "Discover available Agent Skills" },
+  { command: "/plugins", description: "List installed native Luma plugins" },
+  { command: "/mcp", description: "List configured MCP servers" },
   { command: "/teammates", description: "List persistent personal agents" },
   { command: "/agents", description: "List persistent personal agents (alias)" },
   { command: "/tasks", description: "List recent persistent tasks" },
