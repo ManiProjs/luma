@@ -92,7 +92,19 @@ export class LumaClient {
       type: "error",
       data: { request_id: null, message: error.message, category: "transient" },
     };
-    for (const listener of this.listeners) listener(failure);
+    this.emit(failure);
+  }
+
+  private emit(event: ServerEvent) {
+    for (const listener of this.listeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        // A broken UI subscriber must not interrupt delivery to other views
+        // or turn a recoverable core event into an unhandled rejection.
+        process.stderr.write(`Luma UI event listener failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    }
   }
 
   private async readEvents(child: Subprocess) {
@@ -136,9 +148,7 @@ export class LumaClient {
           this.rejectReady = null;
         }
 
-        for (const listener of this.listeners) {
-          listener(event);
-        }
+        this.emit(event);
       }
     }
 
@@ -153,7 +163,7 @@ export class LumaClient {
         this.resolveReady = null;
         this.rejectReady = null;
       }
-      for (const listener of this.listeners) listener(event);
+      this.emit(event);
     }
     if (this.process === child) throw new Error("The Luma core connection closed.");
   }

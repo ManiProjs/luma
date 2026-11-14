@@ -7,6 +7,7 @@ pub mod filesystem;
 pub mod git;
 pub mod shell;
 pub mod skills;
+pub mod titlebar;
 pub mod web;
 
 struct AskQuestion;
@@ -41,6 +42,7 @@ pub fn default_registry() -> ToolRegistry {
     use git::{GitDiff, GitStatus};
     use shell::RunCommand;
     use skills::{ListSkills, LoadSkill};
+    use titlebar::SetTitlebarStatus;
 
     let mut tools = ToolRegistry::new();
     tools.register(ReadFile);
@@ -63,6 +65,7 @@ pub fn default_registry() -> ToolRegistry {
     tools.register(InspectProject);
     tools.register(ListSkills);
     tools.register(LoadSkill);
+    tools.register(SetTitlebarStatus);
     tools.register(AskQuestion);
     tools
 }
@@ -131,8 +134,11 @@ impl ToolRegistry {
     }
 
     pub fn retain(&mut self, allowed: &[String]) {
-        self.tools
-            .retain(|name, _| name == "ask_question" || allowed.iter().any(|item| item == name));
+        self.tools.retain(|name, _| {
+            name == "ask_question"
+                || name == "set_titlebar_status"
+                || allowed.iter().any(|item| item == name)
+        });
     }
 
     pub fn execute(&self, name: &str, input: &str) -> Result<String> {
@@ -218,7 +224,13 @@ mod tests {
 
         assert!(code_tools.iter().all(|name| teammate_tools.contains(name)));
         assert!(code_tools.iter().any(|name| name == "ask_question"));
+        assert!(code_tools.iter().any(|name| name == "set_titlebar_status"));
         assert!(teammate_tools.iter().any(|name| name == "ask_question"));
+        assert!(
+            teammate_tools
+                .iter()
+                .any(|name| name == "set_titlebar_status")
+        );
         for name in ["web_search", "fetch_url", "http_request"] {
             assert!(teammate_tools.iter().any(|tool| tool == name));
             assert!(!code_tools.iter().any(|tool| tool == name));
@@ -230,6 +242,12 @@ mod tests {
         let mut tools = teammate_registry();
         tools.retain(&["read_file".into()]);
         assert!(tools.names().iter().any(|name| name == "ask_question"));
+        assert!(
+            tools
+                .names()
+                .iter()
+                .any(|name| name == "set_titlebar_status")
+        );
         assert!(tools.names().iter().any(|name| name == "read_file"));
     }
 

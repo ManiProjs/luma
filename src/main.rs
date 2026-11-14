@@ -102,8 +102,8 @@ async fn run() -> Result<()> {
         return run_desktop_server().await;
     }
 
-    if args.as_slice() == ["gateway"] {
-        return gateway::run().await;
+    if args.first().is_some_and(|argument| argument == "gateway") {
+        return gateway::run_command(&args[1..]).await;
     }
 
     if args.len() == 2 && args[0] == "task-worker" {

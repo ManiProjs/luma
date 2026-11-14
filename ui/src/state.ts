@@ -35,6 +35,8 @@ export interface Message {
 export type Status = "idle" | "thinking" | "working" | "streaming" | "waiting" | "cancelling" | "done" | "error";
 
 export interface UiState {
+  connection: "connecting" | "connected" | "failed";
+  connectionError: string | null;
   messages: Message[];
   session: UiSessionInfo;
   status: Status;
@@ -55,6 +57,8 @@ export interface UiState {
 }
 
 export const initialState: UiState = {
+  connection: "connecting",
+  connectionError: null,
   messages: [],
 
   session: {

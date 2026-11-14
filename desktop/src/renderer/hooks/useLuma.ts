@@ -26,6 +26,8 @@ export type ConfirmationRequest = {
   input: string;
 };
 
+export type QuestionRequest = { question_id: string; prompt: string; choices: string[] };
+
 export function useLuma() {
   const [connected, setConnected] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -39,6 +41,7 @@ export function useLuma() {
   const [confirmation, setConfirmation] = useState<ConfirmationRequest | null>(
     null,
   );
+  const [question, setQuestion] = useState<QuestionRequest | null>(null);
 
   const activeToolIds = useRef<string[]>([]);
   const pendingToolDiff = useRef<string | undefined>(undefined);
@@ -112,6 +115,7 @@ export function useLuma() {
         }, []));
         setThinking(snapshot.busy && !snapshot.question);
         setConfirmation(snapshot.confirmation);
+        setQuestion(snapshot.question ?? null);
         setError(null);
         break;
       }
@@ -289,6 +293,9 @@ export function useLuma() {
       }
 
       case "QuestionRequired": {
+        if (typeof data !== "object" || data === null || !("question_id" in data) || !("prompt" in data) || !("choices" in data)) return;
+        const request = data as QuestionRequest;
+        setQuestion(request);
         setThinking(false);
         break;
       }
@@ -321,6 +328,7 @@ export function useLuma() {
       case "Finished": {
         setThinking(false);
         setConfirmation(null);
+        setQuestion(null);
         pendingToolDiff.current = undefined;
         break;
       }
@@ -328,6 +336,7 @@ export function useLuma() {
       case "Cancelled": {
         setThinking(false);
         setConfirmation(null);
+        setQuestion(null);
         activeToolIds.current = [];
         setMessages((current) => current.map((message) => message.role === "tools"
           ? { ...message, tools: message.tools?.map((tool) => ({ ...tool, finished: true })) }
@@ -412,6 +421,7 @@ export function useLuma() {
     setThinking(false);
     setError(null);
     setConfirmation(null);
+    setQuestion(null);
   }, []);
 
   const sendPrompt = useCallback(async (text: string) => {
@@ -474,6 +484,21 @@ export function useLuma() {
     }
   }, []);
 
+  const respondToQuestion = useCallback(async (answer: string) => {
+    const pending = question;
+    if (!pending || !answer.trim()) return;
+    setQuestion(null);
+    setThinking(true);
+    setMessages((current) => [...current, { id: crypto.randomUUID(), role: "user", content: answer.trim() }]);
+    try {
+      await window.luma.answerQuestion(pending.question_id, answer.trim());
+    } catch (reason) {
+      setQuestion(pending);
+      setThinking(false);
+      setError(reason instanceof Error ? reason.message : "Failed to send your answer.");
+    }
+  }, [question]);
+
   // ----------------------------------------------------------
   // Cancel
   // ----------------------------------------------------------
@@ -496,9 +521,11 @@ export function useLuma() {
     thinking,
     error,
     confirmation,
+    question,
     sendPrompt,
     runCommand,
     respondToConfirmation,
+    respondToQuestion,
     cancel,
     resetSession,
   };

@@ -62,12 +62,12 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
   }, [finished, onComplete]);
 
   return (
-    <div id="setup-wizard" className="h-screen w-screen overflow-hidden bg-[var(--luma-bg)] text-[var(--luma-text)]">
+    <div id="setup-wizard" data-setup-step={step} className="h-screen w-screen overflow-hidden bg-[var(--luma-bg)] text-[var(--luma-text)]">
       <div className="flex h-full w-full flex-col">
         <header
           className="
             drag-region
-            flex h-[44px] shrink-0 items-center
+            flex h-[48px] shrink-0 items-center
             border-b border-[var(--luma-border)]
             bg-[var(--luma-surface)]
             pl-[82px] pr-5
@@ -82,19 +82,27 @@ export default function SetupWizard({ onComplete }: SetupWizardProps) {
           </div>
         </header>
 
-        <main className="min-h-0 flex-1">
-            <div
-              key={step}
-              className={`${hasNavigated ? `setup-page-transition setup-page-${direction}` : ""} h-full`}
-            >
+        <main className="setup-layout min-h-0 flex-1">
+          <aside className="setup-rail">
+            <div className="setup-rail-heading"><span className="luma-kicker">YOUR WORKSPACE</span><strong>Get started</strong><p>Set up Luma in a few steps.</p></div>
+            <ol className="setup-rail-steps">
+              {(["welcome", "provider", "model", "complete"] as const).map((item, index) => {
+                const active = item === step;
+                const complete = ["welcome", "provider", "model", "complete"].indexOf(step) > index;
+                const labels = ["Your profile", "Provider", "Model", "Review"];
+                return <li key={item} data-active={active} data-complete={complete}><span>{complete ? "✓" : `0${index + 1}`}</span><div><strong>{labels[index]}</strong><small>{active ? "In progress" : complete ? "Complete" : "Up next"}</small></div></li>;
+              })}
+            </ol>
+            <div className="setup-rail-foot"><span className="setup-rail-status-dot" />Private by default <span>·</span> Saved locally</div>
+          </aside>
+          <section className="setup-stage min-w-0 flex-1">
+            <div key={step} className={`${hasNavigated ? `setup-page-transition setup-page-${direction}` : ""} h-full`}>
               {step === "welcome" && <SetupWelcome />}
-
               {step === "provider" && <SetupProvider />}
-
               {step === "model" && <SetupModel />}
-
               {step === "complete" && <SetupComplete />}
             </div>
+          </section>
         </main>
       </div>
     </div>

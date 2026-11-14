@@ -36,14 +36,14 @@ export const themes: ThemeDefinition[] = [
   {
     id: "luma",
     name: "Luma Dark",
-    description: "The default Luma interface.",
-    accent: "#78aaff",
+    description: "Warm charcoal with the reference's per-workspace accents.",
+    accent: "#9DB2F8",
   },
   {
     id: "luma-light",
     name: "Luma Light",
-    description: "A bright workspace for daylight.",
-    accent: "#89652f",
+    description: "Warm paper surfaces with the reference's per-workspace accents.",
+    accent: "#2F55D4",
   },
   {
     id: "midnight",

@@ -1,8 +1,11 @@
 import { LumaMark } from "../components/LumaWordmark";
 import { useSetupStore } from "../stores/setupStore";
+import { useProfileStore } from "../stores/profileStore";
 
 export default function SetupWelcome() {
   const next = useSetupStore((state) => state.next);
+  const name = useProfileStore((state) => state.name);
+  const setName = useProfileStore((state) => state.setName);
 
   return (
     <div className="flex h-full flex-col">
@@ -25,19 +28,25 @@ export default function SetupWelcome() {
           <div>
             <div className="luma-kicker">GETTING STARTED / LUMA</div>
 
-            <h1 className="mt-3 text-[34px] font-semibold tracking-[-0.045em]">
-              Set up your coding workspace.
+              <h1 className="mt-3 text-[34px] font-semibold tracking-[-0.045em]">
+              A workspace that feels like yours.
             </h1>
 
             <p className="mt-3 max-w-lg text-[14px] leading-6 text-[var(--luma-text-secondary)]">
-              Connect a provider, choose a model, and Luma will be ready to work with your code.
+              Give Luma a name to call you, connect a provider, and choose the model you want to work with.
             </p>
           </div>
 
-          <div className="setup-welcome-steps mt-9 grid grid-cols-3 gap-5">
-            <Step number="01" title="Provider" description="Connect a compatible API." />
-            <Step number="02" title="Model" description="Choose the model Luma uses." />
-            <Step number="03" title="Workspace" description="Start working in your project." />
+          <label className="setup-name-field mt-7 block max-w-md">
+            <span className="mb-2 block text-[12px] font-medium text-[var(--luma-text)]">What should Luma call you?</span>
+            <input value={name} onChange={(event) => setName(event.target.value)} maxLength={48} placeholder="User" autoComplete="nickname" className="luma-input h-11 w-full px-3 text-[13px]" />
+            <span className="mt-1.5 block text-[11px] text-[var(--luma-text-muted)]">You can change this anytime in Settings.</span>
+          </label>
+
+          <div className="setup-welcome-steps mt-8 grid grid-cols-3 gap-5">
+            <Step number="01" title="Connect" description="Choose your model provider." />
+            <Step number="02" title="Choose" description="Pick a model for Luma." />
+            <Step number="03" title="Create" description="Start building together." />
           </div>
         </div>
       </div>

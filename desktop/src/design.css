@@ -1,0 +1,1155 @@
+/*
+ * Desktop visual system adapted from desktop/luma_designed_by_claude.html.
+ * Keep the original concept file in the repository as the visual reference;
+ * this stylesheet applies that language to the live, interactive React UI.
+ */
+
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../assets/fonts/Inter-Variable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("../assets/fonts/JetBrainsMono-Variable.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: Syne;
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url("../assets/fonts/Syne-Variable.woff2") format("woff2");
+}
+
+:root {
+  --luma-control-radius: 7px;
+  --luma-panel-radius: 10px;
+}
+
+.luma-topbar {
+  height: 44px;
+  min-height: 44px;
+  background: color-mix(in srgb, var(--luma-surface) 70%, transparent);
+  border-bottom-color: var(--luma-border);
+}
+
+.luma-wordmark { gap: 8px; }
+.luma-wordmark-mark { width: 20px; height: 20px; }
+.luma-wordmark-mark svg { width: 20px; height: 20px; }
+.luma-wordmark-text { font-size: 11px; letter-spacing: .14em; }
+.luma-wordmark-section { font-size: 13px; }
+
+.luma-sidebar-slot,
+.luma-sidebar-slot .luma-sidebar {
+  width: 264px;
+  min-width: 264px;
+  flex-basis: 264px;
+}
+
+.luma-sidebar-slot .luma-sidebar {
+  background: var(--luma-surface);
+  border-right-color: var(--luma-border-strong);
+}
+
+.luma-primary-switcher {
+  display: flex;
+  gap: 2px;
+  margin: 0 12px 14px;
+  padding: 2px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--luma-text) 8%, transparent);
+}
+
+.luma-primary-switcher button {
+  display: flex;
+  min-width: 0;
+  height: 30px;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--luma-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+
+.luma-primary-switcher button:hover { color: var(--luma-text); }
+.luma-primary-switcher button[data-active="true"] {
+  background: var(--luma-surface-raised);
+  color: var(--luma-text);
+  font-weight: 650;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .12), 0 0 0 .5px var(--luma-border);
+}
+.luma-primary-switcher-icon {
+  color: var(--luma-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* The workspace accent belongs to the selected workspace, not permanently
+   to the Code glyph. Both switcher icons follow the active mode. */
+.luma-primary-switcher button[data-active="true"] .luma-primary-switcher-icon,
+.luma-primary-switcher button[data-active="true"] > svg {
+  color: var(--luma-accent);
+}
+
+.luma-sidebar .luma-workspace-picker {
+  margin: 0 12px 16px;
+  border-color: var(--luma-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--luma-text) 6%, transparent);
+}
+.luma-sidebar .luma-workspace-picker > span {
+  border-radius: 6px;
+  background: var(--luma-surface-raised);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .1), 0 0 0 .5px var(--luma-border);
+}
+.luma-sidebar .luma-workspace-picker button { min-height: 29px; font-size: 11px; }
+
+.luma-sidebar .luma-new-chat { padding: 0 12px 14px; }
+.luma-sidebar .luma-new-chat button {
+  height: 34px;
+  justify-content: flex-start;
+  border-color: var(--luma-border-strong);
+  border-radius: 8px;
+  background: var(--luma-surface-raised);
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.luma-sidebar .luma-kicker {
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .08em;
+}
+
+.luma-sidebar-history-list { display: flex; flex-direction: column; }
+.luma-sidebar-history-list > .luma-sidebar-section-today { order: 1; }
+.luma-sidebar-history-list > .luma-sidebar-section-earlier { order: 2; }
+.luma-sidebar-history-list > .luma-sidebar-section-projects { order: 3; }
+.luma-sidebar-history-list > .luma-sidebar-section-pinned { order: 4; }
+.luma-sidebar .luma-workspace-nav,
+.luma-sidebar .luma-teammate-nav-item {
+  min-height: 34px;
+  border: 0;
+  border-radius: 7px !important;
+  font-size: 12px;
+}
+.luma-sidebar .luma-workspace-nav[data-active="true"],
+.luma-sidebar .luma-teammate-nav-item.is-selected {
+  background: var(--luma-accent-soft) !important;
+  color: var(--luma-text) !important;
+}
+.luma-sidebar .luma-teammate-nav-item.is-selected {
+  border-left: 0;
+  padding-left: 10px;
+}
+
+.luma-conversation-header {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  gap: 12px;
+  padding: 0 22px 0 24px;
+  border-bottom: 1px solid var(--luma-border);
+  background: color-mix(in srgb, var(--luma-bg) 90%, transparent);
+}
+.luma-conversation-location {
+  margin-top: 1px;
+  color: var(--luma-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+}
+.luma-activity-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: var(--luma-accent-soft);
+  color: var(--luma-accent);
+  font-size: 11px;
+}
+.luma-activity-pill i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: luma-activity-pulse 1.3s ease-in-out infinite;
+}
+@keyframes luma-activity-pulse { 50% { opacity: .35; } }
+
+.luma-agent-transcript { max-width: 720px; padding-top: 26px; }
+.luma-message-row.is-user .luma-message-content {
+  border: 0;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--luma-text) 6%, var(--luma-bg));
+  padding: 10px 14px;
+}
+.luma-composer-shell {
+  padding: 8px 24px 18px;
+  border-top: 0;
+  background: transparent;
+}
+.luma-composer {
+  max-width: 720px;
+  min-height: 64px;
+  border-radius: 14px;
+  border-color: var(--luma-border-strong);
+  background: var(--luma-surface-raised);
+  box-shadow: 0 1px 3px rgba(28, 27, 26, .06);
+  padding: 8px 12px;
+}
+.luma-composer:focus-within {
+  border-color: color-mix(in srgb, var(--luma-accent) 55%, var(--luma-border-strong));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--luma-accent) 12%, transparent);
+}
+.luma-composer-shell > .mx-auto.mt-2 { max-width: 720px; }
+
+.luma-teammates-content { background: var(--luma-bg); }
+.luma-teammate-header {
+  min-height: 52px;
+  padding-inline: 22px;
+  border-bottom-color: var(--luma-border);
+  background: color-mix(in srgb, var(--luma-bg) 90%, transparent);
+}
+.luma-teammate-header button.is-active {
+  border-radius: 7px;
+  background: var(--luma-surface-raised);
+  box-shadow: 0 0 0 .5px var(--luma-border-strong);
+}
+.luma-teammate-user-message {
+  max-width: 82%;
+  border: 0;
+  border-radius: 14px 14px 4px 14px;
+  background: color-mix(in srgb, var(--luma-text) 6%, var(--luma-bg));
+  padding: 10px 14px;
+}
+.luma-teammate-assistant-bubble { max-width: 100%; }
+.luma-teammates-content > div.min-h-0.flex-1 { padding: 24px; }
+.luma-teammates-content .luma-teammate-history-transition { max-width: 720px; margin-inline: auto; }
+.luma-teammate-inspector {
+  display: flex;
+  width: min(38vw, 440px);
+  min-width: 300px;
+  max-width: 440px;
+  flex: 1 1 340px;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--luma-border);
+  background: color-mix(in srgb, var(--luma-surface) 52%, var(--luma-bg));
+}
+.luma-teammate-inspector-tabs {
+  display: flex;
+  height: 52px;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--luma-border);
+}
+.luma-teammate-inspector-tabs button {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--luma-text-muted);
+  font-size: 11px;
+}
+.luma-teammate-inspector-tabs button[data-active="true"] {
+  background: var(--luma-surface-hover);
+  color: var(--luma-text);
+  font-weight: 650;
+}
+.luma-teammate-inspector-tabs button span { color: var(--luma-text-muted); font-size: 10px; }
+.luma-teammate-inspector-body { min-height: 0; flex: 1; overflow: auto; padding: 18px 14px; }
+.luma-teammate-inspector-body section + section { margin-top: 22px; }
+.luma-teammate-inspector-body h3 {
+  margin-bottom: 8px;
+  color: var(--luma-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .04em;
+}
+.luma-teammate-inspector-body h3.is-attention { color: var(--luma-accent); }
+.luma-inspector-task {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 5px;
+  padding: 9px 10px;
+  border: 1px solid var(--luma-border);
+  border-radius: 9px;
+  background: var(--luma-surface-raised);
+  color: var(--luma-text);
+  text-align: left;
+}
+.luma-inspector-task:hover,
+.luma-inspector-task.is-selected { background: var(--luma-accent-soft); }
+.luma-inspector-task.is-attention { border-color: color-mix(in srgb, var(--luma-accent) 35%, var(--luma-border)); }
+.luma-inspector-task-avatar { flex: none; padding-top: 1px; }
+.luma-inspector-task-title,
+.luma-inspector-task-subtitle { display: block; overflow: hidden; text-overflow: ellipsis; }
+.luma-inspector-task-title { font-size: 11px; font-weight: 600; white-space: nowrap; }
+.luma-inspector-task-subtitle { margin-top: 2px; color: var(--luma-text-muted); font-size: 10px; }
+.luma-inspector-task > div > button {
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 6px;
+  padding: 3px 8px;
+  color: var(--luma-text-secondary);
+  font-size: 10px;
+}
+.luma-inspector-empty { padding: 5px 2px; color: var(--luma-text-muted); font-size: 11px; }
+.luma-inspector-memory { border-top: 1px solid var(--luma-border); padding: 9px 1px; color: var(--luma-text-secondary); font-size: 11px; line-height: 1.55; }
+.luma-teammates-content section.rounded-lg.border {
+  border: 0;
+  border-top: 1px solid var(--luma-border);
+  border-radius: 0;
+  background: transparent;
+}
+
+.luma-sidebar-glass {
+  background: color-mix(in srgb, var(--luma-surface) 68%, transparent);
+  backdrop-filter: blur(28px) saturate(1.3);
+  -webkit-backdrop-filter: blur(28px) saturate(1.3);
+}
+html[data-platform="darwin"] .luma-topbar-glass,
+html[data-platform="darwin"] .luma-sidebar-glass {
+  background: color-mix(in srgb, var(--luma-surface) 64%, transparent);
+  backdrop-filter: blur(30px) saturate(1.35);
+  -webkit-backdrop-filter: blur(30px) saturate(1.35);
+}
+html[data-platform="win32"] .luma-topbar-glass,
+html[data-platform="win32"] .luma-sidebar-glass {
+  background: color-mix(in srgb, var(--luma-surface) 72%, transparent);
+  backdrop-filter: blur(24px) saturate(1.25);
+  -webkit-backdrop-filter: blur(24px) saturate(1.25);
+}
+html[data-platform="linux"] .luma-topbar-glass,
+html[data-platform="linux"] .luma-sidebar-glass {
+  background: var(--luma-surface);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.luma-main-surface,
+.luma-agent-view,
+.luma-teammates-content { background: var(--luma-bg); }
+
+.luma-composer { background: var(--luma-surface-raised); }
+
+@media (max-width: 760px) {
+  .luma-sidebar-slot,
+  .luma-sidebar-slot .luma-sidebar { width: 220px; min-width: 220px; flex-basis: 220px; }
+  .luma-conversation-header { padding-inline: 14px; }
+  .luma-composer-shell { padding-inline: 12px; }
+}
+
+@media (max-width: 1150px) {
+  .luma-teammate-inspector { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luma-activity-pill i { animation: none; }
+}
+
+/* Reference-matched desktop shell and Code inspector. Theme colors stay owned
+   by ThemeProvider; this layer only defines geometry and component treatment. */
+.luma-sidebar-brand {
+  display: flex;
+  height: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px 0 20px;
+}
+
+/* Electron supplies native macOS traffic lights in this titlebar region. */
+html[data-platform="darwin"] .luma-sidebar-brand .luma-wordmark { display: none; }
+
+.luma-sidebar-icon-button,
+.luma-inspector-icon-button {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--luma-text-muted);
+}
+
+.luma-sidebar-icon-button:hover,
+.luma-inspector-icon-button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+
+.luma-sidebar-search {
+  display: flex;
+  height: 32px;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--luma-text-secondary);
+  font-size: 12px;
+  text-align: left;
+}
+.luma-sidebar-search:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-sidebar-search kbd { margin-left: auto; color: var(--luma-text-muted); font-size: 11px; }
+
+.luma-sidebar-history-list { display: flex; flex-direction: column; }
+.luma-sidebar-section-pinned { order: 1; }
+.luma-sidebar-section-today { order: 2; }
+.luma-sidebar-section-earlier { order: 3; }
+.luma-sidebar-section-projects { order: 4; }
+
+.luma-sidebar-footer {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  gap: 8px;
+  margin: 12px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--luma-border-strong);
+}
+.luma-sidebar-account { display: flex; min-width: 0; flex: 1; align-items: center; gap: 10px; }
+.luma-sidebar-account-avatar {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--luma-text);
+  color: var(--luma-bg);
+  font-size: 12px;
+  font-weight: 650;
+}
+.luma-sidebar-account strong { display: block; overflow: hidden; color: var(--luma-text); font-size: 11px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.luma-sidebar-account small { display: flex; align-items: center; gap: 5px; color: var(--luma-text-muted); font-size: 10px; }
+.luma-sidebar-account small i { width: 6px; height: 6px; border-radius: 50%; background: var(--luma-danger); }
+.luma-sidebar-account small i[data-connected="true"] { background: var(--luma-success); }
+
+.luma-code-inspector {
+  display: flex;
+  width: min(38vw, 440px);
+  min-width: 300px;
+  max-width: 440px;
+  flex: 1 1 340px;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--luma-border);
+  background: color-mix(in srgb, var(--luma-surface) 45%, var(--luma-bg));
+}
+.luma-inspector-header {
+  display: flex;
+  height: 52px;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px 0 16px;
+  border-bottom: 1px solid var(--luma-border);
+}
+.luma-inspector-tabs { display: flex; min-width: 0; align-items: center; gap: 4px; }
+.luma-inspector-tabs button {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--luma-text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+.luma-inspector-tabs button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-inspector-tabs button[data-active="true"] { background: var(--luma-surface-hover); color: var(--luma-text); font-weight: 650; }
+.luma-inspector-summary { display: flex; align-items: center; gap: 8px; padding: 14px 16px 8px; }
+.luma-inspector-summary strong { display: block; color: var(--luma-text); font-size: 12px; font-weight: 650; }
+.luma-inspector-summary span { display: block; overflow: hidden; margin-top: 2px; color: var(--luma-text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.luma-inspector-summary > button { width: 28px; height: 28px; flex: none; border-radius: 6px; color: var(--luma-text-muted); }
+.luma-inspector-actions { display: flex; justify-content: flex-end; gap: 7px; padding: 4px 16px 12px; }
+.luma-inspector-actions button,
+.luma-inspector-terminal button {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 7px;
+  background: var(--luma-surface-raised);
+  color: var(--luma-text);
+  font-size: 11px;
+}
+.luma-inspector-actions button:last-child,
+.luma-inspector-terminal button { border-color: transparent; background: var(--luma-accent); color: var(--luma-on-accent); font-weight: 600; }
+.luma-inspector-actions button:disabled,
+.luma-inspector-terminal button:disabled { cursor: default; opacity: .4; }
+.luma-inspector-change-list { min-height: 0; overflow: auto; padding: 0 10px 8px; }
+.luma-inspector-change-list > button { display: flex; width: 100%; min-height: 30px; align-items: center; gap: 8px; padding: 0 8px; border-radius: 6px; color: var(--luma-text-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; text-align: left; }
+.luma-inspector-change-list > button:hover,
+.luma-inspector-change-list > button[data-selected="true"] { background: var(--luma-accent-soft); color: var(--luma-text); }
+.luma-change-status { width: 15px; flex: none; color: var(--luma-accent); font-weight: 700; text-align: center; }
+.luma-change-kind { flex: none; color: var(--luma-text-muted); font-family: inherit; font-size: 9px; }
+.luma-inspector-diff-header { display: flex; min-height: 36px; align-items: center; gap: 8px; padding: 0 14px; border-top: 1px solid var(--luma-border); border-bottom: 1px solid var(--luma-border); color: var(--luma-text-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; }
+.luma-inspector-diff-header button { flex: none; color: var(--luma-accent); font-family: inherit; font-size: 10px; }
+.luma-inspector-diff { min-height: 0; flex: 1; overflow: auto; margin: 0; padding: 12px 14px; color: var(--luma-text-secondary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.luma-inspector-file-tree { min-height: 0; flex: 1; overflow: auto; padding: 8px; }
+.luma-inspector-terminal { display: flex; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; text-align: center; }
+.luma-inspector-terminal-mark { color: var(--luma-accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 28px; font-weight: 700; }
+.luma-inspector-terminal strong { color: var(--luma-text); font-size: 13px; }
+.luma-inspector-terminal p { max-width: 230px; color: var(--luma-text-muted); font-size: 11px; }
+.luma-inspector-terminal code { max-width: 100%; overflow: hidden; color: var(--luma-text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.luma-inspector-terminal button { margin-top: 6px; }
+.luma-inspector-error { margin: 8px 12px 0; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--luma-danger) 35%, transparent); border-radius: 7px; color: var(--luma-danger); font-size: 10px; }
+.luma-inspector-empty { padding: 12px 16px; color: var(--luma-text-muted); font-size: 11px; }
+.luma-conversation-action { height: 30px; padding: 0 10px; border-radius: 7px; color: var(--luma-text-secondary); font-size: 11px; }
+.luma-conversation-action:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+
+.luma-teammate-sidebar-heading { display: flex; align-items: center; justify-content: space-between; padding: 4px 10px 8px; color: var(--luma-text-muted); font-size: 11px; font-weight: 650; }
+.luma-teammate-sidebar-heading button { display: flex; width: 26px; height: 26px; align-items: center; justify-content: center; border-radius: 6px; color: var(--luma-text-muted); }
+.luma-teammate-sidebar-heading button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-teammate-sidebar-actions { display: flex; flex-direction: column; gap: 2px; padding: 0 2px; }
+.luma-teammate-sidebar-actions button { display: flex; height: 32px; align-items: center; gap: 8px; padding: 0 8px; border-radius: 7px; color: var(--luma-text-secondary); font-size: 12px; text-align: left; }
+.luma-teammate-sidebar-actions button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-teammate-sidebar-actions kbd { margin-left: auto; color: var(--luma-text-muted); font-size: 10px; }
+.luma-teammate-search { margin: 8px 2px 0; width: calc(100% - 4px); }
+.luma-teammate-nav-item { display: block; padding: 7px 9px !important; border-radius: 7px !important; }
+.luma-teammate-nav-item.is-selected { background: var(--luma-accent-soft) !important; }
+.luma-mention-menu { display: flex; max-height: 160px; flex-direction: column; overflow: auto; border: 1px solid var(--luma-border-strong); border-radius: 8px; background: var(--luma-surface-raised); box-shadow: 0 8px 24px rgba(0,0,0,.14); }
+.luma-mention-menu > p { padding: 7px 10px; border-bottom: 1px solid var(--luma-border); color: var(--luma-text-muted); font-size: 9px; }
+.luma-mention-menu button { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; color: var(--luma-text); font-size: 11px; text-align: left; }
+.luma-mention-menu button:hover { background: var(--luma-surface-hover); }
+.luma-mention-menu button span { color: var(--luma-text-muted); font-size: 10px; }
+.luma-mention-button { display: flex; width: 28px; height: 28px; flex: none; align-items: center; justify-content: center; border-radius: 6px; color: var(--luma-text-secondary); font-size: 15px; }
+.luma-mention-button:hover { background: var(--luma-surface-hover); }
+.luma-note-save { height: 28px; margin-top: 8px; padding: 0 10px; border-radius: 7px; background: var(--luma-accent); color: var(--luma-on-accent); font-size: 11px; font-weight: 600; }
+.luma-note-save:disabled { opacity: .4; }
+
+@media (max-width: 1050px) {
+  .luma-code-inspector { width: 320px; min-width: 280px; flex-basis: 320px; }
+  .luma-teammate-inspector { width: 300px; min-width: 260px; flex-basis: 300px; }
+}
+@media (max-width: 820px) {
+  .luma-code-inspector, .luma-teammate-inspector { display: none; }
+}
+
+/* Profile menu, restored sidebar affordance, and the animated mode switcher. */
+.luma-primary-switcher { position: relative; isolation: isolate; }
+.luma-primary-switcher-indicator {
+  position: absolute; z-index: 0; top: 2px; bottom: 2px; left: 2px;
+  width: calc((100% - 6px) / 2); border: 1px solid var(--luma-border);
+  border-radius: 7px; background: var(--luma-surface-raised);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .12); transform: translateX(0);
+  transition: transform 145ms cubic-bezier(.2, .85, .25, 1), background-color 120ms ease, box-shadow 120ms ease;
+  pointer-events: none;
+}
+.luma-primary-switcher[data-mode="teammates"] .luma-primary-switcher-indicator { transform: translateX(calc(100% + 2px)); }
+.luma-primary-switcher button { position: relative; z-index: 1; background: transparent !important; box-shadow: none !important; transition: color 110ms ease, transform 110ms ease; }
+.luma-primary-switcher button[data-active="true"] { color: var(--luma-text); }
+.luma-primary-switcher button:active { transform: scale(.97); }
+
+.luma-sidebar-reopen {
+  position: absolute; z-index: 25; top: 8px; left: 12px; display: inline-flex;
+  width: 32px; height: 32px; align-items: center; justify-content: center;
+  border: 1px solid var(--luma-border); border-radius: 8px;
+  background: color-mix(in srgb, var(--luma-surface-raised) 88%, transparent);
+  color: var(--luma-text-secondary); box-shadow: 0 2px 8px rgba(0, 0, 0, .08);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  animation: luma-sidebar-button-in 240ms cubic-bezier(.2, .8, .2, 1) both;
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, transform 180ms ease;
+}
+.luma-sidebar-reopen:hover { transform: translateY(-1px); background: var(--luma-surface-raised); color: var(--luma-text); border-color: var(--luma-border-strong); }
+.luma-sidebar-reopen:active { transform: scale(.94); }
+@keyframes luma-sidebar-button-in { from { opacity: 0; transform: translateX(-5px) scale(.94); } to { opacity: 1; transform: translateX(0) scale(1); } }
+html[data-platform="darwin"] [data-sidebar-open="false"] .luma-sidebar-reopen { left: 82px; }
+
+/* With the navigation rail collapsed, the conversation header reaches the
+   window's leading edge. Keep its title/subtitle clear of both native traffic
+   lights and the sidebar-reopen control. */
+html[data-platform="darwin"] .luma-app-shell[data-sidebar-open="false"] .luma-conversation-header,
+html[data-platform="darwin"] .luma-app-shell[data-sidebar-open="false"] .luma-teammate-header {
+  padding-left: 124px;
+}
+
+/* The reference's titlebar is compact and belongs to the sidebar rail. */
+.luma-sidebar-brand { -webkit-app-region: drag; app-region: drag; }
+.luma-sidebar-brand .no-drag,
+.luma-sidebar-brand button { -webkit-app-region: no-drag; app-region: no-drag; }
+.luma-conversation-header,
+.luma-teammate-header { min-height: 44px; height: 44px; }
+.luma-conversation-header button,
+.luma-teammate-header button { -webkit-app-region: no-drag; app-region: no-drag; }
+.luma-activity-pill[data-status-color="blue"] { background: var(--luma-accent-soft); color: var(--luma-accent); }
+.luma-activity-pill[data-status-color="green"] { background: color-mix(in srgb, var(--luma-success) 13%, transparent); color: var(--luma-success); }
+.luma-activity-pill[data-status-color="amber"] { background: color-mix(in srgb, var(--luma-warning) 15%, transparent); color: var(--luma-warning); }
+.luma-activity-pill[data-status-color="red"] { background: color-mix(in srgb, var(--luma-danger) 13%, transparent); color: var(--luma-danger); }
+.luma-activity-pill[data-status-color="muted"] { background: var(--luma-surface-hover); color: var(--luma-text-muted); }
+
+html[data-platform="darwin"] [data-sidebar-open="false"] .luma-sidebar-reopen { top: 8px; }
+
+.luma-embedded-terminal { display: flex; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; background: #171816; }
+.luma-terminal-toolbar { display: flex; height: 34px; min-height: 34px; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid #30332e; color: #aeb3a9; font-size: 10px; }
+.luma-terminal-indicator { width: 7px; height: 7px; flex: none; border-radius: 50%; background: #98c379; }
+.luma-terminal-toolbar button { padding: 3px 7px; border: 1px solid #3a3e37; border-radius: 5px; color: #c4c8c0; font-size: 10px; }
+.luma-terminal-toolbar button:hover { background: #282c26; }
+.luma-terminal-xterm { min-height: 0; flex: 1; padding: 9px 10px; overflow: hidden; }
+.luma-terminal-xterm .xterm { height: 100%; }
+.luma-terminal-xterm .xterm-viewport { overflow-y: auto !important; }
+.luma-terminal-xterm .xterm-screen { width: 100% !important; }
+
+.luma-profile-menu-anchor { position: relative; min-width: 0; flex: 1; }
+.luma-sidebar-footer { padding: 6px 4px; }
+.luma-sidebar-account {
+  width: 100%; min-width: 0; padding: 6px 7px; border: 1px solid transparent;
+  border-radius: 9px; background: transparent; cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+.luma-sidebar-account:hover,
+.luma-sidebar-account[aria-expanded="true"] { border-color: var(--luma-border); background: var(--luma-surface-hover); }
+.luma-profile-chevron { flex: none; color: var(--luma-text-muted); font-size: 12px; transition: transform 180ms ease; }
+.luma-sidebar-account[aria-expanded="true"] .luma-profile-chevron { transform: rotate(180deg); }
+.luma-profile-menu {
+  position: absolute; z-index: 60; right: 0; bottom: calc(100% + 10px); width: 224px;
+  overflow: hidden; padding: 5px; border: 1px solid var(--luma-border-strong);
+  border-radius: 11px; background: var(--luma-surface-raised);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, .2); transform-origin: bottom left;
+  animation: luma-profile-menu-in 180ms cubic-bezier(.2, .8, .2, 1) both;
+}
+.luma-profile-menu-heading { display: flex; flex-direction: column; gap: 3px; padding: 9px 10px 10px; border-bottom: 1px solid var(--luma-border); margin-bottom: 4px; }
+.luma-profile-menu-heading strong { overflow: hidden; color: var(--luma-text); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.luma-profile-menu-heading span { color: var(--luma-text-muted); font-size: 10px; }
+.luma-profile-menu > button { display: flex; width: 100%; height: 32px; align-items: center; justify-content: space-between; padding: 0 9px; border-radius: 7px; color: var(--luma-text-secondary); font-size: 11px; text-align: left; transition: background-color 130ms ease, color 130ms ease, padding 130ms ease; }
+.luma-profile-menu > button:hover { padding-left: 12px; background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-profile-menu-shortcut { color: var(--luma-text-muted); font-size: 10px; }
+@keyframes luma-profile-menu-in { from { opacity: 0; transform: translateY(5px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+/* Chat bubbles align to the same transcript column on both sides. */
+.luma-teammate-user-row { align-items: flex-start; }
+.luma-teammate-user-message { width: fit-content; max-width: min(82%, 620px); min-width: 0; margin-left: auto; flex: 0 1 auto; text-align: left; overflow-wrap: anywhere; }
+.luma-teammate-assistant-message { width: 100%; min-width: 0; }
+.luma-teammate-assistant-bubble { min-width: 0; overflow-wrap: anywhere; }
+.luma-teammate-history-transition > article { animation: luma-chat-message-in 260ms cubic-bezier(.2, .8, .2, 1) both; }
+.luma-teammate-history-transition > article:nth-child(2) { animation-delay: 25ms; }
+.luma-teammate-history-transition > article:nth-child(3) { animation-delay: 45ms; }
+@keyframes luma-chat-message-in { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Setup is a guided workspace flow, not a stack of disconnected dialogs. */
+.setup-layout { display: flex; min-width: 0; }
+.setup-rail { display: flex; width: 260px; min-width: 260px; flex-direction: column; padding: 34px 22px 20px; border-right: 1px solid var(--luma-border); background: color-mix(in srgb, var(--luma-surface) 76%, var(--luma-bg)); }
+.setup-rail-heading { display: flex; flex-direction: column; gap: 7px; }
+.setup-rail-heading > strong { margin-top: 8px; color: var(--luma-text); font-size: 18px; font-weight: 650; letter-spacing: -.035em; }
+.setup-rail-heading > p { color: var(--luma-text-muted); font-size: 11px; line-height: 1.6; }
+.setup-rail-steps { display: flex; flex-direction: column; gap: 7px; margin-top: 36px; }
+.setup-rail-steps li { display: flex; min-height: 54px; align-items: center; gap: 11px; padding: 8px 9px; border: 1px solid transparent; border-radius: 9px; transition: background-color 180ms ease, border-color 180ms ease, transform 180ms ease; }
+.setup-rail-steps li > span { display: grid; width: 27px; height: 27px; flex: none; place-items: center; border: 1px solid var(--luma-border-strong); border-radius: 50%; color: var(--luma-text-muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; }
+.setup-rail-steps li > div { display: flex; flex-direction: column; gap: 3px; }
+.setup-rail-steps li strong { color: var(--luma-text-secondary); font-size: 11px; font-weight: 550; }
+.setup-rail-steps li small { color: var(--luma-text-muted); font-size: 9px; }
+.setup-rail-steps li[data-active="true"] { border-color: var(--luma-border); background: var(--luma-surface-raised); box-shadow: 0 2px 8px rgba(0,0,0,.04); transform: translateX(2px); }
+.setup-rail-steps li[data-active="true"] > span { border-color: var(--luma-accent); background: var(--luma-accent-soft); color: var(--luma-accent); }
+.setup-rail-steps li[data-active="true"] strong { color: var(--luma-text); font-weight: 650; }
+.setup-rail-steps li[data-complete="true"] > span { border-color: color-mix(in srgb, var(--luma-success) 45%, var(--luma-border)); color: var(--luma-success); }
+.setup-rail-foot { display: flex; align-items: center; gap: 7px; margin-top: auto; padding-top: 18px; color: var(--luma-text-muted); font-size: 9px; }
+.setup-rail-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--luma-success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--luma-success) 12%, transparent); }
+.setup-stage { min-width: 0; overflow: hidden; background: var(--luma-bg); }
+.setup-stage .setup-welcome { max-width: 700px; }
+.setup-stage .setup-welcome h1 { max-width: 620px; font-size: clamp(28px, 3vw, 42px); line-height: 1.08; }
+.setup-stage .setup-welcome-steps { max-width: 640px; }
+.setup-stage .setup-welcome-step { padding-top: 13px; border-top: 1px solid var(--luma-border); }
+.setup-name-field input { border-color: var(--luma-border-strong); background: var(--luma-surface-raised); transition: border-color 160ms ease, box-shadow 160ms ease; }
+.setup-name-field input:focus { border-color: var(--luma-accent); box-shadow: 0 0 0 3px var(--luma-accent-soft); outline: none; }
+.setup-stage .luma-btn-primary,
+.setup-stage .luma-btn-secondary,
+.setup-stage .luma-btn-ghost { transition: transform 160ms ease, box-shadow 160ms ease, background-color 160ms ease; }
+.setup-stage .luma-btn-primary:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 4px 12px color-mix(in srgb, var(--luma-accent) 18%, transparent); }
+
+/* A little more life, without adding glow-heavy decoration. */
+.luma-sidebar-slot { transition: width 260ms cubic-bezier(.2, .8, .2, 1), flex-basis 260ms cubic-bezier(.2, .8, .2, 1); }
+.luma-sidebar-slot .luma-sidebar { transition: opacity 180ms ease, transform 260ms cubic-bezier(.2, .8, .2, 1); }
+.luma-sidebar-slot[data-open="false"] .luma-sidebar { opacity: 0; transform: translateX(-8px); }
+.luma-sidebar .luma-workspace-nav,
+.luma-sidebar .luma-teammate-nav-item { transition: background-color 150ms ease, color 150ms ease, transform 150ms ease; }
+.luma-sidebar .luma-workspace-nav:hover,
+.luma-sidebar .luma-teammate-nav-item:hover { transform: translateX(2px); }
+.luma-inspector-task { transition: background-color 150ms ease, border-color 150ms ease, transform 150ms ease; }
+.luma-inspector-task:hover { transform: translateX(2px); }
+.luma-teammate-composer { transition: border-color 180ms ease, box-shadow 180ms ease; }
+.luma-teammate-composer:focus-within { border-color: color-mix(in srgb, var(--luma-accent) 55%, var(--luma-border-strong)); box-shadow: 0 0 0 2px var(--luma-accent-soft); }
+.luma-handoff-to-code { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--luma-border); border-radius: 7px; color: var(--luma-text-muted); font-size: 10px; transition: color 150ms ease, border-color 150ms ease, background-color 150ms ease, transform 150ms ease; }
+.luma-handoff-to-code:hover { transform: translateY(-1px); border-color: var(--luma-border-strong); background: var(--luma-surface-hover); color: var(--luma-text); }
+
+@media (max-width: 760px) { .setup-rail { width: 190px; min-width: 190px; padding-inline: 14px; } .setup-rail-foot { flex-wrap: wrap; } }
+@media (max-width: 560px) { .setup-rail { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .luma-primary-switcher-indicator, .luma-sidebar-slot, .luma-sidebar-slot .luma-sidebar,
+  .luma-sidebar-reopen, .luma-profile-menu, .luma-teammate-history-transition > article,
+  .setup-rail-steps li, .luma-inspector-task { animation: none !important; transition: none !important; transform: none !important; }
+}
+html[data-reduced-motion="true"] .luma-primary-switcher-indicator,
+html[data-reduced-motion="true"] .luma-sidebar-slot,
+html[data-reduced-motion="true"] .luma-sidebar-slot .luma-sidebar,
+html[data-reduced-motion="true"] .luma-sidebar-reopen,
+html[data-reduced-motion="true"] .luma-profile-menu,
+html[data-reduced-motion="true"] .luma-teammate-history-transition > article,
+html[data-reduced-motion="true"] .setup-rail-steps li,
+html[data-reduced-motion="true"] .luma-inspector-task,
+html[data-reduced-motion="true"] .luma-handoff-to-code { animation: none !important; transition: none !important; transform: none !important; }
+
+/* The bundled Claude reference defines the Luma light and dark palettes.
+   Keep other selectable themes intact, and scope workspace accents so Code
+   and Teammates retain their own identity. */
+html[data-theme="luma"][data-appearance="dark"] {
+  color-scheme: dark;
+  --luma-bg: #1A1918;
+  --luma-surface: #232220;
+  --luma-surface-raised: #2B2A28;
+  --luma-surface-hover: #353432;
+  --luma-border: #2E2D2B;
+  --luma-border-strong: #3A3937;
+  --luma-text: #ECEBE8;
+  --luma-text-secondary: #A8A6A1;
+  --luma-text-muted: #8F8D88;
+  --luma-accent: #9DB2F8;
+  --luma-accent-soft: #2A3866;
+  --luma-selection: #22305C;
+  --luma-on-accent: #FFFFFF;
+  --luma-success: #6FCF8E;
+  --luma-danger: #F08A82;
+  --luma-warning: #E9B85C;
+}
+
+html[data-theme="luma-light"][data-appearance="light"],
+html[data-theme="luma"][data-appearance="light"] {
+  color-scheme: light;
+  --luma-bg: #FCFCFB;
+  --luma-surface: #EDECE9;
+  --luma-surface-raised: #FFFFFF;
+  --luma-surface-hover: #E3E2DE;
+  --luma-border: #DAD8D4;
+  --luma-border-strong: #C9C6C0;
+  --luma-text: #1C1B1A;
+  --luma-text-secondary: #5E5D5A;
+  --luma-text-muted: #66645F;
+  --luma-accent: #2F55D4;
+  --luma-accent-soft: #E8EDFF;
+  --luma-selection: #E8EDFF;
+  --luma-on-accent: #FFFFFF;
+  --luma-success: #1F6B39;
+  --luma-danger: #B43D36;
+  --luma-warning: #A94608;
+}
+
+html:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="code"] {
+  --luma-accent: #2F55D4;
+  --luma-accent-soft: color-mix(in srgb, #2F55D4 13%, transparent);
+  --luma-on-accent: #FFFFFF;
+}
+
+html[data-appearance="dark"]:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="code"] {
+  --luma-accent: #9DB2F8;
+  --luma-accent-soft: #2A3866;
+  --luma-on-accent: #FFFFFF;
+}
+
+html:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="teammates"] {
+  --luma-accent: #A94608;
+  --luma-accent-soft: #FBEBDD;
+  --luma-on-accent: #FFFFFF;
+}
+
+html[data-appearance="dark"]:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="teammates"] {
+  --luma-accent: #F0955A;
+  --luma-accent-soft: #4A2E1C;
+  --luma-on-accent: #FFFFFF;
+}
+
+/* Match the reference's warm, paper-like sidebar and subtle active rows. */
+html[data-theme="luma"][data-appearance="light"] .luma-sidebar-slot .luma-sidebar,
+html[data-theme="luma-light"][data-appearance="light"] .luma-sidebar-slot .luma-sidebar {
+  background: #EDECE9;
+  border-right-color: #DAD8D4;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-sidebar-slot .luma-sidebar {
+  background: #232220;
+  border-right-color: #323130;
+}
+
+html[data-theme="luma"][data-appearance="light"] .luma-sidebar .luma-workspace-nav[data-active="true"],
+html[data-theme="luma-light"][data-appearance="light"] .luma-sidebar .luma-workspace-nav[data-active="true"],
+html[data-theme="luma"][data-appearance="light"] .luma-sidebar .luma-teammate-nav-item.is-selected,
+html[data-theme="luma-light"][data-appearance="light"] .luma-sidebar .luma-teammate-nav-item.is-selected {
+  background: color-mix(in srgb, var(--luma-accent) 10%, transparent) !important;
+}
+
+/* Let both workspace prompts grow naturally as the user types. */
+.luma-code-prompt {
+  width: 0;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 0%;
+  box-sizing: border-box;
+  height: 40px;
+  min-height: 40px;
+  max-height: 128px;
+  overflow-y: auto;
+  border: 0 !important;
+  background: var(--luma-surface-raised) !important;
+  box-shadow: none !important;
+  outline: none;
+}
+
+.luma-teammate-prompt {
+  width: 0;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 0%;
+  box-sizing: border-box;
+  height: 34px;
+  min-height: 34px;
+  max-height: 88px;
+  overflow-y: auto;
+  border: 0 !important;
+  background: var(--luma-surface) !important;
+  box-shadow: none !important;
+  outline: none;
+}
+
+.luma-teammate-composer {
+  padding: 7px 9px;
+  background: var(--luma-surface);
+}
+
+.luma-teammate-composer-row {
+  min-height: 38px;
+}
+
+.luma-sidebar-projects {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 38vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* Remove the outline around the composer itself, not its surrounding layout. */
+.luma-composer,
+.luma-composer:focus-within,
+.luma-teammate-composer,
+.luma-teammate-composer:focus-within {
+  border: 0;
+  box-shadow: none;
+}
+
+/* Keep the native/translucent sidebar material when sidebar blur is enabled. */
+.luma-sidebar-slot .luma-sidebar.luma-sidebar-glass {
+  background: color-mix(in srgb, var(--luma-surface) 58%, transparent);
+  backdrop-filter: blur(28px) saturate(1.3);
+  -webkit-backdrop-filter: blur(28px) saturate(1.3);
+}
+
+html[data-platform="darwin"] .luma-sidebar-slot .luma-sidebar.luma-sidebar-glass {
+  background: color-mix(in srgb, var(--luma-surface) 48%, transparent);
+  backdrop-filter: blur(30px) saturate(1.35);
+  -webkit-backdrop-filter: blur(30px) saturate(1.35);
+}
+
+/* Claude's Luma Dark art direction: warm graphite, quiet borders, and a
+   separate blue/orange identity for the two workspaces. */
+html[data-theme="luma"][data-appearance="dark"] {
+  color-scheme: dark;
+  --luma-bg: #1A1918;
+  --luma-surface: #232220;
+  --luma-surface-raised: #2B2A28;
+  --luma-surface-hover: #353432;
+  --luma-border: #2E2D2B;
+  --luma-border-strong: #3A3937;
+  --luma-text: #ECEBE8;
+  --luma-text-secondary: #A8A6A1;
+  --luma-text-muted: #8F8D88;
+  --luma-accent: #9DB2F8;
+  --luma-accent-soft: #2A3866;
+  --luma-selection: #22305C;
+  --luma-on-accent: #FFFFFF;
+  --luma-success: #6FCF8E;
+  --luma-danger: #F08A82;
+  --luma-warning: #E9B85C;
+}
+
+html[data-theme="luma"][data-appearance="dark"] body,
+html[data-theme="luma"][data-appearance="dark"] #root {
+  background: var(--luma-bg);
+  color: var(--luma-text);
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-app-shell,
+html[data-theme="luma"][data-appearance="dark"] .luma-main-surface,
+html[data-theme="luma"][data-appearance="dark"] .luma-agent-view,
+html[data-theme="luma"][data-appearance="dark"] .luma-teammates-content {
+  background: var(--luma-bg);
+  color: var(--luma-text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .font-mono,
+html[data-theme="luma"][data-appearance="dark"] code,
+html[data-theme="luma"][data-appearance="dark"] kbd,
+html[data-theme="luma"][data-appearance="dark"] pre,
+html[data-theme="luma"][data-appearance="dark"] .luma-inspector-summary span,
+html[data-theme="luma"][data-appearance="dark"] .luma-inspector-change-list,
+html[data-theme="luma"][data-appearance="dark"] .luma-inspector-diff,
+html[data-theme="luma"][data-appearance="dark"] .luma-inspector-diff-header {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-sidebar-slot .luma-sidebar {
+  background: #232220;
+  border-right-color: #323130;
+  color: #ECEBE8;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-sidebar-slot .luma-sidebar.luma-sidebar-glass {
+  background: #232220;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-topbar,
+html[data-theme="luma"][data-appearance="dark"] .luma-conversation-header,
+html[data-theme="luma"][data-appearance="dark"] .luma-teammate-header {
+  background: #1A1918;
+  border-color: #2E2D2B;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-code-inspector,
+html[data-theme="luma"][data-appearance="dark"] .luma-teammate-inspector {
+  background: #1F1E1C;
+  border-color: #2E2D2B;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-inspector-header {
+  background: #1F1E1C;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-inspector-tabs button[data-active="true"] {
+  background: #353432;
+  color: #ECEBE8;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-inspector-header,
+html[data-theme="luma"][data-appearance="dark"] .luma-teammate-inspector-tabs,
+html[data-theme="luma"][data-appearance="dark"] .luma-inspector-diff-header,
+html[data-theme="luma"][data-appearance="dark"] .luma-sidebar-footer {
+  border-color: #2E2D2B;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-composer {
+  min-height: 64px;
+  border: 1px solid #3A3937;
+  border-radius: 14px;
+  background: #232220;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+  padding: 12px 12px 10px;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-composer:focus-within {
+  border-color: #4A4845;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-code-prompt,
+html[data-theme="luma"][data-appearance="dark"] .luma-teammate-prompt {
+  border: 0 !important;
+  background: transparent !important;
+  color: #ECEBE8;
+  box-shadow: none !important;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-code-prompt::placeholder,
+html[data-theme="luma"][data-appearance="dark"] .luma-teammate-prompt::placeholder {
+  color: #8F8D88;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-teammate-composer {
+  border: 1px solid #3A3937;
+  border-radius: 14px;
+  background: #232220;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+  padding: 12px 12px 10px;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-teammate-composer:focus-within {
+  border-color: #4A4845;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .4);
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-message-row.is-user .luma-message-content,
+html[data-theme="luma"][data-appearance="dark"] .luma-teammate-user-message {
+  background: #2B2A28;
+  color: #ECEBE8;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-message-content {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-teammate-assistant-bubble,
+html[data-theme="luma"][data-appearance="dark"] .luma-tool-activity-row {
+  color: #ECEBE8;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-teammate-assistant-bubble {
+  font-size: 14px;
+  line-height: 1.6;
+  color: #C9C7C2;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-inspector-task,
+html[data-theme="luma"][data-appearance="dark"] .luma-teammates-content section.rounded-lg.border {
+  border-color: #343331;
+  background: #232220;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-inspector-task:hover,
+html[data-theme="luma"][data-appearance="dark"] .luma-inspector-task.is-selected {
+  background: #2B2A28;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-sidebar .luma-workspace-nav[data-active="true"],
+html[data-theme="luma"][data-appearance="dark"] .luma-sidebar .luma-teammate-nav-item.is-selected {
+  background: #2B2A28;
+  color: #ECEBE8;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-app-shell[data-workspace="teammates"] .luma-sidebar .luma-teammate-nav-item.is-selected {
+  background: #4A2E1C;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-sidebar .luma-workspace-nav:hover:not([data-active="true"]),
+html[data-theme="luma"][data-appearance="dark"] .luma-sidebar .luma-teammate-nav-item:hover:not(.is-selected),
+html[data-theme="luma"][data-appearance="dark"] .luma-sidebar-search:hover {
+  background: #2D2C2A;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-primary-switcher {
+  background: #2E2D2B;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-primary-switcher-indicator {
+  background: #4A4845;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 0 0 .5px rgba(255, 255, 255, .06);
+}
+
+html[data-theme="luma"][data-appearance="dark"]:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="code"] {
+  --luma-accent: #9DB2F8;
+  --luma-accent-soft: #2A3866;
+  --luma-on-accent: #FFFFFF;
+}
+
+html[data-theme="luma"][data-appearance="dark"]:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="teammates"] {
+  --luma-accent: #F0955A;
+  --luma-accent-soft: #4A2E1C;
+  --luma-on-accent: #FFFFFF;
+}
+
+html[data-theme="luma"][data-appearance="dark"]:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="teammates"] .luma-primary-switcher button[data-active="true"] svg,
+html[data-theme="luma"][data-appearance="dark"]:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="teammates"] .luma-primary-switcher button[data-active="true"] {
+  color: #F0955A;
+}
+
+html[data-theme="luma"][data-appearance="dark"]:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="code"] .luma-primary-switcher button[data-active="true"] .luma-primary-switcher-icon,
+html[data-theme="luma"][data-appearance="dark"]:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="code"] .luma-primary-switcher button[data-active="true"] {
+  color: #9DB2F8;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-sidebar-account-avatar {
+  background: #ECEBE8;
+  color: #1C1B1A;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-profile-menu,
+html[data-theme="luma"][data-appearance="dark"] .luma-mention-menu,
+html[data-theme="luma"][data-appearance="dark"] .luma-command-menu,
+html[data-theme="luma"][data-appearance="dark"] .luma-model-dropdown-menu {
+  border-color: #3A3937;
+  background: #232220;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-embedded-terminal {
+  background: #0F0F0E;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-terminal-toolbar {
+  border-color: #2E2D2B;
+  color: #A8A6A1;
+}
+
+html[data-theme="luma"][data-appearance="dark"] ::selection {
+  background: #22305C;
+  color: #ECEBE8;
+}
+
+/* The editor and its surrounding chrome use the same graphite layers as the
+   reference rather than Monaco's stock near-black surface. */
+html[data-theme="luma"][data-appearance="dark"] .monaco-editor,
+html[data-theme="luma"][data-appearance="dark"] .monaco-editor .margin,
+html[data-theme="luma"][data-appearance="dark"] .monaco-editor-background {
+  background-color: #161615 !important;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .monaco-editor .minimap,
+html[data-theme="luma"][data-appearance="dark"] .monaco-editor .minimap-shadow-visible {
+  background-color: #161615;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-code-inspector .luma-inspector-diff,
+html[data-theme="luma"][data-appearance="dark"] .luma-teammate-inspector .luma-inspector-diff {
+  background: #161615;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-settings-close,
+html[data-theme="luma"][data-appearance="dark"] .luma-settings-close--corner {
+  color: #A8A6A1;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-settings-close:hover,
+html[data-theme="luma"][data-appearance="dark"] .luma-settings-close--corner:hover {
+  background: #353432;
+  color: #ECEBE8;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-activity-pill[data-status-color="blue"] {
+  background: #22305C;
+  color: #B4C4FA;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-activity-pill[data-status-color="green"] {
+  background: #1C3324;
+  color: #6FCF8E;
+}
+
+html[data-theme="luma"][data-appearance="dark"] .luma-activity-pill[data-status-color="red"] {
+  background: #3A1F1D;
+  color: #F08A82;
+}

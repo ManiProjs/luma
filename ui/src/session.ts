@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { userError } from "./errors";
 
 import { startDesktopServer, stopDesktopServer } from "./server";
 
@@ -182,6 +183,7 @@ export function useSession(initialSetup = false) {
   function handleEvent(event: ServerEvent) {
     switch (event.type) {
       case "ready":
+        setState((current) => ({ ...current, connection: "connected", connectionError: null }));
         addMessage("system", `Connected to luma-core v${event.data.version}`);
         break;
 
@@ -250,6 +252,7 @@ export function useSession(initialSetup = false) {
         addMessage("error", event.data.message);
         setState((current) => ({
           ...current,
+          ...(event.data.category === "initialization_failed" ? { connection: "failed" as const, connectionError: event.data.message } : {}),
           status: "error",
           modelPicker: current.modelPicker ? {
             ...current.modelPicker,
@@ -281,13 +284,13 @@ export function useSession(initialSetup = false) {
       client.send({ type: "get_providers", data: { request_id: crypto.randomUUID() } });
       client.send({ type: "get_setup_config", data: { request_id: crypto.randomUUID() } });
     } catch (error) {
-      addMessage("error", String(error));
+      addMessage("error", userError(error));
       setState((current) => ({
         ...current,
         modelPicker: current.modelPicker ? {
           ...current.modelPicker,
           loading: false,
-          error: String(error),
+          error: userError(error),
         } : null,
       }));
     }
@@ -307,10 +310,16 @@ export function useSession(initialSetup = false) {
           if (initialSetup) openModelPicker();
         }
       }).catch((error) => {
-        if (mounted) addMessage("error", error instanceof Error ? error.message : String(error));
+        if (mounted) {
+          const message = userError(error);
+          setState((current) => ({ ...current, connection: "failed", connectionError: message }));
+          addMessage("error", message);
+        }
       });
     } catch (error) {
-      addMessage("error", String(error));
+      const message = userError(error);
+      setState((current) => ({ ...current, connection: "failed", connectionError: message }));
+      addMessage("error", message);
     }
 
     return () => {
@@ -358,7 +367,7 @@ export function useSession(initialSetup = false) {
             data: { request_id: crypto.randomUUID(), model: requestedModel },
           });
         } catch (error) {
-          addMessage("error", String(error));
+          addMessage("error", userError(error));
           setState((current) => ({ ...current, status: "error" }));
         }
         return;
@@ -372,7 +381,7 @@ export function useSession(initialSetup = false) {
           data: { text },
         });
       } catch (error) {
-        addMessage("error", String(error));
+        addMessage("error", userError(error));
         setState((current) => ({ ...current, status: "error" }));
       }
     },

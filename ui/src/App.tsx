@@ -1,4 +1,5 @@
 import { Box, Text, measureElement, useApp, useInput, useStdin, useStdout } from "ink";
+import { userError } from "./errors";
 import type { DOMElement } from "ink";
 import { useEffect, useRef, useState } from "react";
 import { readFile, realpath, stat } from "node:fs/promises";
@@ -139,11 +140,20 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
       setAttachments(next);
       setAttachmentError("");
     } catch (reason) {
-      setAttachmentError(reason instanceof Error ? reason.message : String(reason));
+      setAttachmentError(userError(reason));
     } finally {
       setAttachmentMode(false);
       setInput("");
     }
+  }
+
+  if (state.connection !== "connected") {
+    return <Box flexDirection="column" paddingX={2} paddingY={1}>
+      <Text color={theme.brand} bold>LUMA</Text>
+      {state.connection === "connecting"
+        ? <Text color={theme.muted}>Connecting...</Text>
+        : <><Text color={theme.error}>Couldn't connect to Luma Core</Text><Text color={theme.muted}>{state.connectionError ?? "The core process failed to start."}</Text><Text color={theme.chrome}>Check the core installation and try launching Luma again. Ctrl+C to exit.</Text></>}
+    </Box>;
   }
 
   return (

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { userError } from "./errors";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { randomUUID } from "node:crypto";
 import { LumaClient } from "./client";
@@ -84,7 +85,7 @@ export function TeammatesManager() {
       if (!active) return;
       setConnected(true);
       await refresh();
-    }).catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : String(reason)); });
+    }).catch((reason) => { if (active) setError(userError(reason)); });
     return () => { active = false; client.disconnect(); stopDesktopServer(); };
   }, [client]);
 
@@ -99,7 +100,7 @@ export function TeammatesManager() {
       setConfirmDelete(false);
       setView("list");
       await refresh();
-    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    } catch (reason) { setError(userError(reason)); }
     finally { setBusy(false); }
   }
 
@@ -124,7 +125,7 @@ export function TeammatesManager() {
       setAgents((items) => items.map((agent) => agent.id === response.data.agent.id ? response.data.agent : agent));
       setEditing(null);
       setEditValue("");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    } catch (reason) { setError(userError(reason)); }
     finally { setBusy(false); }
   }
 
@@ -136,7 +137,7 @@ export function TeammatesManager() {
       const requestId = randomUUID();
       const response = await request(client, { type: "agent_update", data: { request_id: requestId, id: selectedAgent.id, name: null, description: null, configuration } }, "agent_saved", requestId);
       setAgents((items) => items.map((agent) => agent.id === response.data.agent.id ? response.data.agent : agent));
-    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    } catch (reason) { setError(userError(reason)); }
     finally { setBusy(false); }
   }
 
@@ -153,7 +154,7 @@ export function TeammatesManager() {
       const requestId = randomUUID();
       const response = await request(client, { type: "agent_update", data: { request_id: requestId, id: selectedAgent.id, name: null, description: null, configuration } }, "agent_saved", requestId);
       setAgents((items) => items.map((agent) => agent.id === response.data.agent.id ? response.data.agent : agent));
-    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    } catch (reason) { setError(userError(reason)); }
     finally { setBusy(false); }
   }
 
@@ -172,7 +173,7 @@ export function TeammatesManager() {
       }, "task_saved", requestId);
       setActiveTaskId(response.data.task.id);
     } catch (reason) {
-      setChatLines((lines) => [...lines.filter((line) => line.content !== "Thinking…"), { id: randomUUID(), role: "assistant", content: `Could not send message: ${reason instanceof Error ? reason.message : String(reason)}` }]);
+      setChatLines((lines) => [...lines.filter((line) => line.content !== "Thinking…"), { id: randomUUID(), role: "assistant", content: `Could not send message: ${userError(reason)}` }]);
     } finally { setBusy(false); }
   }
 
@@ -189,7 +190,7 @@ export function TeammatesManager() {
       if (response.data.task.status === "cancelled") setActiveTaskId(null);
       setChatLines((lines) => [...lines.filter((line) => line.content !== "Thinking…"), { id: randomUUID(), role: "status", content: response.data.task.status === "cancelled" ? "Task cancelled." : "Cancellation requested…" }]);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      setError(userError(reason));
     } finally { setBusy(false); }
   }
 
@@ -270,7 +271,7 @@ export function TeammatesManager() {
       const activeTask = [...tasks].reverse().find((task) => ["queued", "running", "waiting_for_approval"].includes(task.status));
       setActiveTaskId(activeTask?.id ?? null);
     })().catch((reason) => {
-      if (active) setError(reason instanceof Error ? reason.message : String(reason));
+      if (active) setError(userError(reason));
     }).finally(() => {
       if (active) setHistoryLoading(false);
     });
@@ -336,7 +337,7 @@ export function TeammatesManager() {
           }
         }
       } catch (reason) {
-        if (active) setError(reason instanceof Error ? reason.message : String(reason));
+        if (active) setError(userError(reason));
       } finally {
         polling.current = false;
       }
@@ -393,10 +394,19 @@ export function TeammatesManager() {
     if (key.upArrow) setSelected((index) => Math.max(0, index - 1));
     else if (key.downArrow) setSelected((index) => Math.min(agents.length - 1, index + 1));
     else if (input.toLowerCase() === "d" && selectedAgent && selectedAgent.id !== "agent_global") setConfirmDelete(true);
-    else if (input.toLowerCase() === "r") void refresh().catch((reason) => setError(String(reason)));
+    else if (input.toLowerCase() === "r") void refresh().catch((reason) => setError(userError(reason)));
     else if (input.toLowerCase() === "e" && selectedAgent) setView("settings");
     else if (input.toLowerCase() === "c" && selectedAgent) { setChatLines([]); setView("chat"); }
   });
+
+  if (!connected) {
+    return <Box flexDirection="column" paddingX={2} paddingY={1}>
+      <Text color={theme.brand} bold>LUMA / TEAMMATES</Text>
+      {error
+        ? <><Text color={theme.error}>Couldn't connect to Luma Core</Text><Text color={theme.muted}>{error}</Text><Text color={theme.chrome}>Check the core installation and launch Teammates again.</Text></>
+        : <Text color={theme.muted}>Connecting...</Text>}
+    </Box>;
+  }
 
   const rule = "─".repeat(Math.max(1, Math.min((stdout.columns || 72) - 4, 96)));
   return <Box flexDirection="column" paddingX={1}>

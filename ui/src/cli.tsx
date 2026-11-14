@@ -2,8 +2,8 @@ import React from "react";
 import { render } from "ink";
 import { Command } from "commander";
 import { spawn } from "bun";
-import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
@@ -12,6 +12,7 @@ import { createInterface } from "node:readline/promises";
 import { App } from "./App";
 import { TeammatesManager } from "./TeammatesManager";
 import { LumaClient } from "./client";
+import { userError } from "./errors";
 import { startDesktopServer, stopDesktopServer } from "./server";
 import type { ClientMessage, ServerEvent } from "./protocol";
 import type { AgentConfiguration, AgentKind, MemoryScope } from "./protocol";
@@ -232,7 +233,56 @@ function runCoreCommand(args: string[]) {
     resolve(import.meta.dir, "../../target/release/luma-core"),
   ];
   const executable = process.env.LUMA_BINARY ?? process.env.LUMA_CORE_BIN ?? localBuilds.find(existsSync) ?? "luma-core";
-  execFileSync(executable, args, { stdio: "inherit" });
+  const result = spawnSync(executable, args, { encoding: "utf8", windowsHide: true });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.status !== 0) {
+    const message = result.stderr?.trim() || (result.error ? userError(result.error) : `luma-core ${args.join(" ")} exited with code ${result.status ?? "unknown"}.`);
+    throw new Error(userError(message));
+  }
+}
+
+function lumaConfigDirectory() {
+  return process.platform === "darwin"
+    ? resolve(homedir(), "Library", "Application Support", "luma")
+    : process.platform === "win32"
+      ? resolve(process.env.APPDATA ?? resolve(homedir(), "AppData", "Roaming"), "luma")
+      : resolve(process.env.XDG_CONFIG_HOME ?? resolve(homedir(), ".config"), "luma");
+}
+
+function gatewayStatus() {
+  runCoreCommand(["gateway", "status"]);
+}
+
+function gatewayStart() {
+  runCoreCommand(["gateway", "start"]);
+}
+
+function gatewayStop() {
+  runCoreCommand(["gateway", "stop"]);
+}
+
+function gatewayRestart() {
+  runCoreCommand(["gateway", "restart"]);
+}
+
+async function gatewayLogs(options: { lines?: string }) {
+  const path = resolve(lumaConfigDirectory(), "luma.log");
+  const lines = Number(options.lines ?? 50);
+  if (!Number.isInteger(lines) || lines < 1 || lines > 10_000) throw new Error("--lines must be an integer from 1 to 10000.");
+  if (!existsSync(path)) {
+    process.stdout.write("No Luma log file exists yet.\n");
+    return;
+  }
+  const content = readFileSync(path, "utf8");
+  process.stdout.write(content.split(/\r?\n/).slice(-lines).join("\n"));
+}
+
+function gatewayConfig() {
+  const directory = lumaConfigDirectory();
+  const endpoint = process.platform === "win32"
+    ? "127.0.0.1:39271"
+    : resolve(directory, "gateway.sock");
+  process.stdout.write(`Config directory: ${directory}\nConfig: ${resolve(directory, "config.toml")}\nRuntime database: ${resolve(directory, "runtime.sqlite3")}\nGateway endpoint: ${endpoint}\nLog: ${resolve(directory, "luma.log")}\n`);
 }
 
 function configPath() {
@@ -527,6 +577,16 @@ export async function runCli(argv: string[]) {
 
   const config = program.command("config").description("Inspect Luma configuration locations");
   config.command("path").description("Print the active config.toml path").action(configPath);
+
+  const gateway = program.command("gateway").description("Manage the persistent Teammates gateway");
+  gateway.command("status").description("Show whether the gateway is running").action(gatewayStatus);
+  gateway.command("start").description("Start the gateway in the background").action(gatewayStart);
+  gateway.command("stop").description("Stop the gateway").action(gatewayStop);
+  gateway.command("restart").description("Restart the gateway").action(gatewayRestart);
+  gateway.command("logs").description("Show recent gateway log output")
+    .option("-n, --lines <count>", "Number of lines to show", "50")
+    .action(gatewayLogs);
+  gateway.command("config").description("Print gateway and runtime file locations").action(gatewayConfig);
 
   program.command("providers").description("List model providers supported by this Luma build").action(providersList);
 

@@ -1,15 +1,32 @@
 @import "tailwindcss";
 
-.luma-mascot { display: block; flex: none; overflow: visible; transform-origin: 50% 55%; }
-.luma-mascot--thinking { animation: luma-mascot-think 1.8s ease-in-out infinite; }
-.luma-mascot--writing { animation: luma-mascot-write .42s ease-in-out infinite alternate; }
-.luma-mascot-dots { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 3px; }
+.luma-mascot-stage { position: relative; display: inline-grid; flex: none; place-items: center; overflow: visible; }
+.luma-mascot-face, .luma-mascot-dots, .luma-mascot-writing-props { position: absolute; inset: 0; margin: auto; transition: opacity .28s ease, transform .38s cubic-bezier(.2,.8,.2,1); }
+.luma-mascot-face { display: block; transform-origin: 50% 55%; opacity: 1; }
+.luma-mascot-writing-props { width: 100%; height: 100%; overflow: visible; opacity: 0; transform: translateY(8%) scale(.62); transform-origin: 50% 85%; pointer-events: none; }
+.luma-mascot-notebook-shadow { fill: #171923; opacity: .18; }
+.luma-mascot-notebook { fill: #D9E3F2; stroke: #536B91; stroke-width: 1.1; }
+.luma-mascot-notebook-page { fill: #FAFCFF; }
+.luma-mascot-notebook-line { fill: none; stroke: #A6B7D0; stroke-width: .8; stroke-linecap: round; }
+.luma-mascot-notebook-spine { fill: none; stroke: #7890B5; stroke-width: 1.3; }
+.luma-mascot-pencil { transform-box: view-box; transform-origin: 36px 25px; }
+.luma-mascot-dots { display: inline-flex; width: max-content; height: max-content; align-items: center; justify-content: center; gap: 3px; opacity: 0; transform: scale(.25) rotate(-35deg); pointer-events: none; }
 .luma-mascot-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--luma-text-muted); animation: luma-mascot-dot .8s ease-in-out infinite; }
 .luma-mascot-dots i:nth-child(2) { animation-delay: .12s; }
 .luma-mascot-dots i:nth-child(3) { animation-delay: .24s; }
-@keyframes luma-mascot-think { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-2px) rotate(-5deg); } }
-@keyframes luma-mascot-write { from { transform: translateY(0) rotate(-3deg); } to { transform: translateY(-2px) rotate(3deg); } }
-@keyframes luma-mascot-dot { 0%, 60%, 100% { opacity: .35; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-4px); } }
+.luma-mascot-stage--working .luma-mascot-face { opacity: 0; transform: scale(.28) rotate(70deg); }
+.luma-mascot-stage--working .luma-mascot-dots { opacity: 1; transform: scale(1) rotate(0); }
+.luma-mascot-stage--thinking .luma-mascot-face { animation: luma-mascot-think 1.8s ease-in-out infinite; }
+.luma-mascot-stage--writing .luma-mascot-face { animation: luma-mascot-write .72s ease-in-out infinite alternate; }
+.luma-mascot-stage--writing .luma-mascot-writing-props { opacity: 1; transform: translateY(0) scale(1); }
+.luma-mascot-stage--writing .luma-mascot-pencil { animation: luma-mascot-pencil-write .34s ease-in-out infinite alternate; }
+@keyframes luma-mascot-think { 0%, 100% { transform: translateY(0) rotate(0) scale(1); } 35% { transform: translateY(-2px) rotate(-4deg) scale(1.025); } 70% { transform: translateY(0) rotate(3deg) scale(.99); } }
+@keyframes luma-mascot-write { from { transform: translateY(0) rotate(-4deg) scale(.98,1.02); } to { transform: translateY(-2px) rotate(4deg) scale(1.02,.98); } }
+@keyframes luma-mascot-pencil-write { from { transform: rotate(-8deg) translateY(0); } to { transform: rotate(8deg) translateY(1px); } }
+@keyframes luma-mascot-dot { 0%, 60%, 100% { opacity: .35; transform: translateY(0) scale(.8); } 30% { opacity: 1; transform: translateY(-4px) scale(1.12); } }
+@media (prefers-reduced-motion: reduce) {
+  .luma-mascot-face, .luma-mascot-dots, .luma-mascot-dots i, .luma-mascot-pencil { animation: none !important; transition-duration: .01ms !important; }
+}
 
 :root {
   color-scheme: dark;
@@ -448,6 +465,63 @@ button:focus-visible {
   .setup-page-backward {
     animation: none !important;
   }
+}
+
+.luma-connection-screen {
+  display: flex;
+  min-height: 100vh;
+  width: 100vw;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 32px;
+  background: var(--luma-bg);
+  color: var(--luma-text);
+  text-align: center;
+}
+.luma-fatal-error {
+  display: flex;
+  min-height: 100vh;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px;
+  background: var(--luma-bg);
+  color: var(--luma-text);
+  text-align: center;
+}
+.luma-fatal-error h1 { margin: 0; font-size: 16px; font-weight: 650; }
+.luma-fatal-error p { max-width: 640px; margin: 0; color: var(--luma-text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.luma-fatal-error button { margin-top: 6px; border-radius: 5px; background: var(--luma-accent); padding: 7px 13px; color: var(--luma-on-accent); font-size: 11px; }
+.luma-connection-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 10px;
+  place-items: center;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 11px;
+  color: var(--luma-text);
+  font-size: 21px;
+  font-weight: 700;
+}
+.luma-connection-spinner {
+  width: 17px;
+  height: 17px;
+  border: 2px solid var(--luma-border-strong);
+  border-top-color: var(--luma-accent);
+  border-radius: 50%;
+  animation: luma-connection-spin 800ms linear infinite;
+}
+.luma-connection-title { margin: 0; font-size: 13px; font-weight: 600; }
+.luma-connection-detail { max-width: min(520px, 90vw); margin: 0; color: var(--luma-text-muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.luma-app-enter { animation: luma-app-enter 220ms ease-out both; }
+@keyframes luma-connection-spin { to { transform: rotate(360deg); } }
+@keyframes luma-app-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .luma-connection-spinner, .luma-app-enter { animation: none !important; }
 }
 
 /* Desktop interaction language: native toolbar, sidebar, transcript and controls. */
@@ -1319,7 +1393,46 @@ html[data-platform="linux"] .luma-btn-ghost {
   border-radius: 6px;
   background: var(--luma-surface);
 }
-.luma-teammate-composer { padding: 6px 8px; }
+.luma-teammate-composer { padding: 4px 6px; }
+.luma-teammate-composer-row { min-height: 28px; }
+.luma-teammate-prompt {
+  display: block;
+  height: 24px;
+  min-height: 24px;
+  max-height: 88px;
+  margin: 0;
+  padding: 2px 0;
+  line-height: 20px;
+  overflow-y: auto;
+  vertical-align: middle;
+}
+.luma-teammate-new-chat {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 4px;
+  color: var(--luma-text-secondary);
+  opacity: 1;
+  visibility: visible;
+}
+.luma-teammate-new-chat svg { display: block; width: 14px; height: 14px; opacity: 1; visibility: visible; }
+.luma-teammate-new-chat:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-teammate-new-chat:disabled { opacity: .4; }
+.luma-teammate-send, .luma-teammate-stop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--luma-accent);
+  color: var(--luma-on-accent);
+}
+.luma-teammate-send:hover, .luma-teammate-stop:hover { filter: brightness(1.08); }
+.luma-teammate-send:disabled, .luma-teammate-stop:disabled { cursor: not-allowed; opacity: .4; }
+.luma-teammate-stop { background: var(--luma-danger); color: white; }
 .luma-teammate-header { border-bottom: 0; }
 .luma-teammate-history-item { border: 0; }
 .luma-history-action { display: inline-flex; width: 22px; height: 22px; flex: none; align-items: center; justify-content: center; border-radius: 4px; color: var(--luma-text-muted); opacity: 0; transition: opacity .12s, background .12s, color .12s; }
@@ -1825,12 +1938,24 @@ html[data-platform="linux"] .luma-workspace-picker {
 }
 
 .luma-sidebar-slot .luma-sidebar {
-  width: 280px;
-  min-width: 280px;
+  width: 100%;
+  min-width: 0;
   opacity: 1;
   transform: translateX(0);
   transition: opacity 130ms ease, transform 190ms cubic-bezier(.2, .75, .25, 1);
 }
+
+.luma-sidebar-resize {
+  position: relative;
+  z-index: 5;
+  flex: 0 0 4px;
+  margin-left: -2px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.luma-sidebar-resize::after { position: absolute; inset: 0 1px; content: ""; background: transparent; transition: background-color 120ms ease; }
+.luma-sidebar-resize:hover::after, .luma-sidebar-resize:focus-visible::after, .luma-sidebar-resize[data-dragging="true"]::after { background: var(--luma-accent); }
+.luma-sidebar-resize:focus-visible { outline: none; }
 
 .luma-sidebar-slot[data-open="false"] .luma-sidebar {
   opacity: 0;
@@ -1904,9 +2029,8 @@ html[data-platform="linux"] .luma-workspace-picker {
 }
 
 @media (max-width: 760px) {
-  .luma-sidebar-slot { width: 220px; flex-basis: 220px; }
   .luma-sidebar-slot[data-open="false"] { width: 0; flex-basis: 0; }
-  .luma-sidebar-slot .luma-sidebar { width: 220px; min-width: 220px; }
+  .luma-sidebar-slot .luma-sidebar { width: 100%; min-width: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1965,12 +2089,12 @@ button, input, textarea, select {
 
 .luma-sidebar-slot,
 .luma-sidebar-slot .luma-sidebar {
-  width: 252px;
-  flex-basis: 252px;
+  width: 100%;
+  flex-basis: auto;
 }
 
 .luma-sidebar-slot .luma-sidebar {
-  min-width: 252px;
+  min-width: 0;
   padding-top: 12px;
 }
 
@@ -2215,12 +2339,6 @@ html[data-platform="darwin"] .luma-topbar {
   border-bottom-color: color-mix(in srgb, var(--luma-border) 72%, transparent);
 }
 
-html[data-platform="darwin"] .luma-sidebar-glass {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  box-shadow: inset -1px 0 var(--luma-border);
-}
-
 html[data-platform="darwin"] .luma-sidebar-slot .luma-sidebar {
   padding-top: 8px;
 }
@@ -2257,8 +2375,7 @@ html[data-platform="linux"] .luma-sidebar-glass {
 
 @media (max-width: 760px) {
   .luma-sidebar-slot,
-  .luma-sidebar-slot .luma-sidebar { width: 220px; flex-basis: 220px; }
-  .luma-sidebar-slot .luma-sidebar { min-width: 220px; }
+  .luma-sidebar-slot .luma-sidebar { width: 100%; min-width: 0; flex-basis: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -57,6 +57,7 @@ pub enum TaskStatus {
     Queued,
     Running,
     WaitingForApproval,
+    WaitingForInput,
     Paused,
     Completed,
     Failed,
@@ -330,6 +331,7 @@ pub struct RuntimeEvent {
 pub enum GatewayCommand {
     Cancel,
     Confirm { approval_id: String, allowed: bool },
+    AnswerQuestion { question_id: String, answer: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -576,7 +578,7 @@ impl RuntimeStore {
             .optional()?;
         let Some(name) = agent else { return Ok(false) };
         let active: i64 = db.query_row(
-            "SELECT COUNT(*) FROM tasks WHERE agent_id=?1 AND json_extract(status, '$') IN ('queued','running','waiting_for_approval','paused')",
+            "SELECT COUNT(*) FROM tasks WHERE agent_id=?1 AND json_extract(status, '$') IN ('queued','running','waiting_for_approval','waiting_for_input','paused')",
             [id],
             |row| row.get(0),
         )?;
@@ -663,7 +665,7 @@ impl RuntimeStore {
             .ok_or_else(|| anyhow!("agent not found: {id}"))?;
         let current_status: AgentStatus = from_json_or_plain_string(&current_status)?;
         let active_tasks: i64 = transaction.query_row(
-            "SELECT COUNT(*) FROM tasks WHERE agent_id=?1 AND json_extract(status, '$') IN ('running','waiting_for_approval')",
+            "SELECT COUNT(*) FROM tasks WHERE agent_id=?1 AND json_extract(status, '$') IN ('running','waiting_for_approval','waiting_for_input')",
             [id],
             |row| row.get(0),
         )?;
@@ -684,7 +686,7 @@ impl RuntimeStore {
         if matches!(status, AgentStatus::Paused | AgentStatus::Stopped) && active_tasks > 0 {
             let task_ids = {
                 let mut statement = transaction.prepare(
-                    "SELECT id FROM tasks WHERE agent_id=?1 AND json_extract(status, '$') IN ('running','waiting_for_approval')",
+                    "SELECT id FROM tasks WHERE agent_id=?1 AND json_extract(status, '$') IN ('running','waiting_for_approval','waiting_for_input')",
                 )?;
                 let rows = statement.query_map([id], |row| row.get::<_, String>(0))?;
                 rows.collect::<rusqlite::Result<Vec<_>>>()?
@@ -809,6 +811,7 @@ impl RuntimeStore {
             TaskStatus::Queued
                 | TaskStatus::Running
                 | TaskStatus::WaitingForApproval
+                | TaskStatus::WaitingForInput
                 | TaskStatus::Paused
         ) {
             bail!("cannot delete an active chat; cancel its task first");
@@ -878,6 +881,7 @@ impl RuntimeStore {
         let event = match status {
             TaskStatus::Running => "task.started",
             TaskStatus::WaitingForApproval => "task.waiting_for_approval",
+            TaskStatus::WaitingForInput => "task.waiting_for_input",
             TaskStatus::Paused => "task.paused",
             TaskStatus::Completed => "task.completed",
             TaskStatus::Failed => "task.failed",
@@ -910,7 +914,9 @@ impl RuntimeStore {
             .list_tasks(None, 500)?
             .into_iter()
             .filter(|task| {
-                task.status == TaskStatus::Running || task.status == TaskStatus::WaitingForApproval
+                task.status == TaskStatus::Running
+                    || task.status == TaskStatus::WaitingForApproval
+                    || task.status == TaskStatus::WaitingForInput
             })
             .collect::<Vec<_>>();
         let mut recovered = Vec::new();
@@ -1073,7 +1079,7 @@ impl RuntimeStore {
             .ok_or_else(|| anyhow!("task not found: {task_id}"))?;
         if !matches!(
             task.status,
-            TaskStatus::Running | TaskStatus::WaitingForApproval
+            TaskStatus::Running | TaskStatus::WaitingForApproval | TaskStatus::WaitingForInput
         ) {
             bail!("only active tasks can receive a gateway cancellation");
         }
@@ -1084,6 +1090,61 @@ impl RuntimeStore {
             params![new_id("gateway_cmd"), task_id, serde_json::to_string(&command)?, now()],
         )?;
         Ok(())
+    }
+
+    pub fn answer_task_question(
+        &self,
+        task_id: &str,
+        question_id: &str,
+        answer: &str,
+    ) -> Result<TaskRecord> {
+        let answer = answer.trim();
+        if answer.is_empty() || answer.len() > 8_000 {
+            bail!("answer must contain 1–8000 characters");
+        }
+        let timestamp = now();
+        let mut db = self.db()?;
+        let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task = transaction.query_row("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at FROM tasks WHERE id=?1", [task_id], task_from_row)?;
+        if task.status != TaskStatus::WaitingForInput {
+            bail!("the task is not waiting for an answer");
+        }
+        let agent_status: String = transaction.query_row(
+            "SELECT status FROM agents WHERE id=?1",
+            [&task.agent_id],
+            |row| row.get(0),
+        )?;
+        let agent_status: AgentStatus = from_json_or_plain_string(&agent_status)?;
+        if matches!(agent_status, AgentStatus::Paused | AgentStatus::Stopped) {
+            bail!("resume the teammate before answering its question");
+        }
+        let pending_id = task
+            .checkpoint
+            .as_ref()
+            .and_then(|value| value.get("question_id"))
+            .and_then(serde_json::Value::as_str);
+        if pending_id != Some(question_id) {
+            bail!("question is no longer pending");
+        }
+        let changed = transaction.execute("UPDATE tasks SET status=?2,checkpoint=NULL,error=NULL,updated_at=?3 WHERE id=?1 AND status=?4", params![task_id, serde_json::to_string(&TaskStatus::Running)?, timestamp, serde_json::to_string(&TaskStatus::WaitingForInput)?])?;
+        if changed == 0 {
+            bail!("question is no longer pending");
+        }
+        let command = GatewayCommand::AnswerQuestion {
+            question_id: question_id.to_owned(),
+            answer: answer.to_owned(),
+        };
+        transaction.execute("INSERT INTO gateway_commands (id,task_id,command,created_at,processed_at) VALUES (?1,?2,?3,?4,NULL)", params![new_id("gateway_cmd"), task_id, serde_json::to_string(&command)?, timestamp])?;
+        transaction.commit()?;
+        drop(db);
+        self.append_event(
+            Some(&task.agent_id),
+            Some(task_id),
+            "task.resumed_with_answer",
+            serde_json::json!({"question_id": question_id}),
+        )?;
+        self.get_task(task_id)?
+            .ok_or_else(|| anyhow!("task disappeared after answering question"))
     }
 
     pub fn pending_gateway_commands(&self, task_id: &str) -> Result<Vec<PendingGatewayCommand>> {
@@ -1492,12 +1553,16 @@ pub(crate) fn validate_workspace(path: &str, configuration: &AgentConfiguration)
         bail!("workspace is not a directory");
     }
     let grants = if configuration.allowed_workspaces.is_empty() {
-        vec![configuration.workspace.clone().unwrap_or_else(|| {
-            std::env::current_dir()
-                .unwrap_or_default()
-                .display()
-                .to_string()
-        })]
+        // With no explicit grants, a task may use only the workspace the user
+        // explicitly submitted. Falling back to the gateway process cwd makes
+        // behavior depend on which UI launched the daemon (desktop, Ink, or a
+        // shell in a nested directory), and can strand tasks in the queue.
+        vec![
+            configuration
+                .workspace
+                .clone()
+                .unwrap_or_else(|| path.to_owned()),
+        ]
     } else {
         configuration.allowed_workspaces.clone()
     };
@@ -1517,12 +1582,23 @@ fn valid_task_transition(from: TaskStatus, to: TaskStatus) -> bool {
         return true;
     }
     match from {
-        Queued => matches!(to, Running | Cancelled),
+        // A queued task can fail before its worker starts (e.g. an unavailable
+        // workspace or an unspawnable worker executable). Make that terminal
+        // instead of retrying the same impossible task forever.
+        Queued => matches!(to, Running | Failed | Cancelled),
         Running => matches!(
             to,
-            WaitingForApproval | Paused | Completed | Failed | Cancelled | Interrupted
+            WaitingForApproval
+                | WaitingForInput
+                | Paused
+                | Completed
+                | Failed
+                | Cancelled
+                | Interrupted
         ),
-        WaitingForApproval => matches!(to, Running | Paused | Cancelled | Interrupted),
+        WaitingForApproval | WaitingForInput => {
+            matches!(to, Running | Paused | Cancelled | Interrupted)
+        }
         Paused => matches!(to, Queued | Cancelled),
         Interrupted => matches!(to, Queued | Cancelled),
         Failed => matches!(to, Queued),
@@ -1907,6 +1983,64 @@ mod tests {
     }
 
     #[test]
+    fn queued_task_can_be_marked_failed_when_worker_cannot_start() {
+        let store = RuntimeStore::in_memory();
+        let agent = store
+            .create_agent(
+                "A",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let task = store
+            .create_task(&agent.id, "Do work", None, None, false, None)
+            .unwrap();
+
+        let failed = store
+            .transition_task(
+                &task.id,
+                TaskStatus::Failed,
+                Some("worker could not start".into()),
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(failed.status, TaskStatus::Failed);
+        assert_eq!(failed.error.as_deref(), Some("worker could not start"));
+    }
+
+    #[test]
+    fn task_workspace_is_its_own_default_grant_when_agent_has_no_workspace() {
+        let directory = tempfile::tempdir().unwrap();
+        let workspace = directory.path().join("task-workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        let store = RuntimeStore::in_memory();
+        let agent = store
+            .create_agent(
+                "A",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+
+        let task = store
+            .create_task(
+                &agent.id,
+                "Work in the explicitly selected folder",
+                None,
+                Some(workspace.to_string_lossy().into_owned()),
+                false,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(task.status, TaskStatus::Queued);
+        assert_eq!(task.workspace.as_deref(), Some(workspace.to_str().unwrap()));
+    }
+
+    #[test]
     fn teammate_task_history_is_isolated_by_agent() {
         let store = RuntimeStore::in_memory();
         let first = store
@@ -2050,6 +2184,60 @@ mod tests {
             .unwrap();
         assert!(store.pending_gateway_commands(&task.id).unwrap().is_empty());
         assert!(store.resolve_approval(&approval.id, false).is_err());
+    }
+
+    #[test]
+    fn teammate_question_answers_resume_the_waiting_worker_once() {
+        let store = RuntimeStore::in_memory();
+        let agent = store
+            .create_agent(
+                "Question asker",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let task = store
+            .create_task(&agent.id, "Ask me something", None, None, false, None)
+            .unwrap();
+        store
+            .transition_task(&task.id, TaskStatus::Running, None, None)
+            .unwrap();
+        store
+            .transition_task(
+                &task.id,
+                TaskStatus::WaitingForInput,
+                None,
+                Some(serde_json::json!({
+                    "question_id": "question-1", "prompt": "Choose one", "choices": ["A", "B"]
+                })),
+            )
+            .unwrap();
+
+        assert!(
+            store
+                .answer_task_question(&task.id, "stale-question", "A")
+                .is_err()
+        );
+        let resumed = store
+            .answer_task_question(&task.id, "question-1", "B")
+            .unwrap();
+        assert_eq!(resumed.status, TaskStatus::Running);
+        assert!(resumed.checkpoint.is_none());
+        let commands = store.pending_gateway_commands(&task.id).unwrap();
+        assert_eq!(commands.len(), 1);
+        assert_eq!(
+            commands[0].command,
+            GatewayCommand::AnswerQuestion {
+                question_id: "question-1".into(),
+                answer: "B".into(),
+            }
+        );
+        assert!(
+            store
+                .answer_task_question(&task.id, "question-1", "A")
+                .is_err()
+        );
     }
 
     #[test]

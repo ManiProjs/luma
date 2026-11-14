@@ -177,6 +177,7 @@ impl DashboardServer {
             .route("/api/agents/{id}/status", post(api_set_agent_status))
             .route("/api/tasks", get(api_tasks).post(api_create_task))
             .route("/api/tasks/{id}/cancel", post(api_cancel_task))
+            .route("/api/tasks/{id}/answer", post(api_answer_task_question))
             .route("/api/tasks/{id}/retry", post(api_retry_task))
             .route("/api/approvals", get(api_approvals))
             .route("/api/approvals/{id}", post(api_resolve_approval))
@@ -808,6 +809,12 @@ struct ResolveApprovalRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct AnswerTaskQuestionRequest {
+    question_id: String,
+    answer: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct EventsQuery {
     after_sequence: Option<i64>,
     agent_id: Option<String>,
@@ -1047,7 +1054,8 @@ async fn api_cancel_task(
         }
         Ok(Some(task))
             if task.status == TaskStatus::Running
-                || task.status == TaskStatus::WaitingForApproval =>
+                || task.status == TaskStatus::WaitingForApproval
+                || task.status == TaskStatus::WaitingForInput =>
         {
             if let Err(error) = state.runtime.enqueue_gateway_cancel(&id) {
                 return (
@@ -1076,6 +1084,26 @@ async fn api_cancel_task(
             .into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_answer_task_question(
+    State(state): State<Arc<DashboardServer>>,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<AnswerTaskQuestionRequest>,
+) -> impl IntoResponse {
+    match state
+        .runtime
+        .answer_task_question(&id, &request.question_id, &request.answer)
+    {
+        Ok(task) => Json(task).into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
             Json(ApiError {
                 error: error.to_string(),
             }),

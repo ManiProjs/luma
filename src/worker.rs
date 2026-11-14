@@ -30,6 +30,7 @@ use crate::{
 #[serde(tag = "type", rename_all = "snake_case")]
 enum WorkerCommand {
     Confirm { allowed: bool },
+    AnswerQuestion { question_id: String, answer: String },
     Cancel,
 }
 
@@ -37,8 +38,17 @@ enum WorkerCommand {
 #[serde(tag = "type", content = "data", rename_all = "snake_case")]
 enum WorkerOutput {
     Event(AgentEvent),
-    Ready { task_id: String },
-    Error { message: String },
+    Ready {
+        task_id: String,
+    },
+    Error {
+        message: String,
+    },
+    /// Signals that the worker no longer needs commands on stdin. Tokio's
+    /// stdin reader uses a blocking thread that cannot be cancelled merely
+    /// by dropping its future, so the parent must close the pipe at this point
+    /// before waiting for the child process to exit.
+    Done,
 }
 
 /// Entry point for the hidden worker subcommand.
@@ -203,10 +213,8 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(128);
     let (input_tx, input_rx) = mpsc::channel::<String>(1);
     let (confirmation_tx, confirmation_rx) = mpsc::channel::<Confirmation>(8);
-    // Durable Teammate question routing is intentionally not implemented yet.
-    // Drop the sender so an accidental ask_question fails promptly instead of hanging.
     let (question_tx, question_rx) = mpsc::channel::<crate::agent::QuestionAnswer>(1);
-    drop(question_tx);
+    let worker_question_tx = question_tx.clone();
     let shutdown = CancellationToken::new();
     let request_cancel = RequestCancellation::new(shutdown.clone());
     let worker_request_cancel = request_cancel.clone();
@@ -265,6 +273,9 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
                         WorkerCommand::Confirm { allowed } => {
                             let confirmation = if allowed { Confirmation::Allow } else { Confirmation::Deny };
                             let _ = confirmation_tx.send(confirmation).await;
+                        }
+                        WorkerCommand::AnswerQuestion { question_id, answer } => {
+                            let _ = worker_question_tx.send(crate::agent::QuestionAnswer { question_id, answer }).await;
                         }
                         WorkerCommand::Cancel => {
                             cancelled = true;
@@ -327,6 +338,7 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
             }
         }
     }
+    write_worker_output(&mut stdout, WorkerOutput::Done).await?;
     result
 }
 
@@ -462,7 +474,7 @@ impl RuntimeSupervisor {
                         if let Err(error) = self.run_one(&task.id, &shutdown).await {
                             tracing::error!(task_id = %task.id, %error, "background task failed");
                             if let Ok(Some(current)) = self.store.get_task(&task.id) {
-                                if matches!(current.status, TaskStatus::Queued | TaskStatus::Running | TaskStatus::WaitingForApproval) {
+                                if matches!(current.status, TaskStatus::Queued | TaskStatus::Running | TaskStatus::WaitingForApproval | TaskStatus::WaitingForInput) {
                                     let _ = self.store.transition_task(&task.id, TaskStatus::Failed, Some(error.to_string()), None);
                                 }
                             }
@@ -529,10 +541,12 @@ impl RuntimeSupervisor {
             .kill_on_drop(true)
             .spawn()
             .context("starting isolated task worker")?;
-        let mut child_stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| anyhow!("worker stdin unavailable"))?;
+        let mut child_stdin = Some(
+            child
+                .stdin
+                .take()
+                .ok_or_else(|| anyhow!("worker stdin unavailable"))?,
+        );
         let child_stdout = child
             .stdout
             .take()
@@ -547,19 +561,22 @@ impl RuntimeSupervisor {
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => {
-                    child_stdin.write_all(br#"{"type":"cancel"}"#).await.ok();
-                    child_stdin.write_all(b"\n").await.ok();
-                    child_stdin.flush().await.ok();
+                    if let Some(stdin) = child_stdin.as_mut() {
+                        stdin.write_all(br#"{"type":"cancel"}"#).await.ok();
+                        stdin.write_all(b"\n").await.ok();
+                        stdin.flush().await.ok();
+                    }
                     cancelled = true;
                     break;
                 }
-                _ = command_interval.tick() => {
+                _ = command_interval.tick(), if child_stdin.is_some() => {
+                    let Some(stdin) = child_stdin.as_mut() else { continue; };
                     for command in self.store.pending_gateway_commands(task_id)? {
                         match command.command {
                             crate::runtime::GatewayCommand::Cancel => {
-                                child_stdin.write_all(br#"{"type":"cancel"}"#).await?;
-                                child_stdin.write_all(b"\n").await?;
-                                child_stdin.flush().await?;
+                                stdin.write_all(br#"{"type":"cancel"}"#).await?;
+                                stdin.write_all(b"\n").await?;
+                                stdin.flush().await?;
                                 self.store.mark_gateway_command_processed(&command.id)?;
                                 cancelled = true;
                                 pending_approval_id = None;
@@ -568,22 +585,34 @@ impl RuntimeSupervisor {
                                 if pending_approval_id.as_deref() == Some(approval_id.as_str()) =>
                             {
                                 let payload = serde_json::json!({"type":"confirm","allowed":allowed});
-                                child_stdin.write_all(serde_json::to_string(&payload)?.as_bytes()).await?;
-                                child_stdin.write_all(b"\n").await?;
-                                child_stdin.flush().await?;
+                                stdin.write_all(serde_json::to_string(&payload)?.as_bytes()).await?;
+                                stdin.write_all(b"\n").await?;
+                                stdin.flush().await?;
                                 self.store.mark_gateway_command_processed(&command.id)?;
                                 pending_approval_id = None;
                                 let _ = self.store.transition_task(task_id, TaskStatus::Running, None, None);
                                 let _ = self.store.set_agent_status(&agent.id, AgentStatus::Active);
                             }
                             crate::runtime::GatewayCommand::Confirm { .. } => {}
+                            crate::runtime::GatewayCommand::AnswerQuestion { question_id, answer } => {
+                                let payload = serde_json::json!({"type":"answer_question","question_id":question_id,"answer":answer});
+                                stdin.write_all(serde_json::to_string(&payload)?.as_bytes()).await?;
+                                stdin.write_all(b"\n").await?;
+                                stdin.flush().await?;
+                                self.store.mark_gateway_command_processed(&command.id)?;
+                                let _ = self.store.set_agent_status(&agent.id, AgentStatus::Active);
+                            }
                         }
                     }
                 }
                 read = reader.read_line(&mut line) => {
                     if read? == 0 { break; }
                     if let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) {
-                        if value.get("type").and_then(|v| v.as_str()) == Some("event") {
+                        if value.get("type").and_then(|v| v.as_str()) == Some("done") {
+                            // Close the pipe so Tokio's non-cancellable stdin
+                            // blocking read can finish and let the worker exit.
+                            child_stdin.take();
+                        } else if value.get("type").and_then(|v| v.as_str()) == Some("event") {
                             if let Ok(event) = serde_json::from_value::<AgentEvent>(value["data"].clone()) {
                                 match &event {
                                     AgentEvent::Status { state } if *state == crate::event::AgentStatus::Waiting => {
@@ -600,6 +629,11 @@ impl RuntimeSupervisor {
                                         let approval = self.store.create_approval(&agent.id, task_id, name, input)?;
                                         pending_approval_id = Some(approval.id);
                                     }
+                                    AgentEvent::QuestionRequired { question_id, prompt, choices } => {
+                                        let checkpoint = serde_json::json!({"question_id":question_id,"prompt":prompt,"choices":choices});
+                                        let _ = self.store.transition_task(task_id, TaskStatus::WaitingForInput, None, Some(checkpoint));
+                                        let _ = self.store.set_agent_status(&agent.id, AgentStatus::Waiting);
+                                    }
                                     AgentEvent::Error(message) => failure = Some(message.clone()),
                                     AgentEvent::Finished => {
                                         if !cancelled { terminal_status = if failure.is_some() { TaskStatus::Failed } else { TaskStatus::Completed }; }
@@ -614,6 +648,8 @@ impl RuntimeSupervisor {
                 }
             }
         }
+        // Also close stdin when the gateway itself is shutting down.
+        child_stdin.take();
         let status =
             match tokio::time::timeout(std::time::Duration::from_secs(5), child.wait()).await {
                 Ok(status) => status?,
@@ -648,3 +684,14 @@ impl RuntimeSupervisor {
 }
 
 use std::path::PathBuf;
+
+#[cfg(test)]
+mod tests {
+    use super::WorkerOutput;
+
+    #[test]
+    fn worker_done_message_has_a_stable_supervisor_protocol_tag() {
+        let value = serde_json::to_value(WorkerOutput::Done).unwrap();
+        assert_eq!(value, serde_json::json!({ "type": "done" }));
+    }
+}

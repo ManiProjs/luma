@@ -19,6 +19,13 @@ declare global {
       listWorkspaceFiles(): Promise<import("./App").WorkspaceNode[]>;
       getGitChanges(): Promise<{ branch: string; files: import("./App").GitChange[] }>;
       getGitDiff(path: string): Promise<string>;
+      stageWorkspaceFile(path: string): Promise<{ ok: boolean }>;
+      revertWorkspaceFile(path: string): Promise<{ ok: boolean }>;
+      openWorkspaceTerminal(): Promise<{ ok: boolean }>;
+      startTerminal(cols: number, rows: number): Promise<{ id: string }>;
+      writeTerminal(id: string, data: string): Promise<{ ok: boolean }>;
+      resizeTerminal(id: string, cols: number, rows: number): Promise<{ ok: boolean }>;
+      closeTerminal(id: string): Promise<{ ok: boolean }>;
       readWorkspaceFile(path: string): Promise<string>;
       chooseChatAttachments(): Promise<ChatAttachment[]>;
       writeWorkspaceFile(path: string, content: string): Promise<{ ok: boolean }>;
@@ -31,6 +38,7 @@ declare global {
       getRuntimeEvents(agentId: string): Promise<RuntimeEvent[]>;
       createTask(input: { agentId: string; request: string; workspace?: string }): Promise<TaskRecord>;
       cancelTask(id: string): Promise<TaskRecord>;
+      answerTaskQuestion(id: string, questionId: string, answer: string): Promise<TaskRecord>;
       retryTask(id: string): Promise<TaskRecord>;
       renameTask(id: string, title: string): Promise<TaskRecord>;
       deleteTask(id: string): Promise<boolean>;
@@ -92,6 +100,14 @@ declare global {
       getStatus(): Promise<{
         connected: boolean;
       }>;
+      retryConnection(): Promise<{ ok: boolean }>;
+      getCoreBinary(): Promise<{ mode: "bundled" | "path" | "custom"; customPath: string | null; binary: string; environmentOverride: boolean }>;
+      chooseCoreBinary(): Promise<string | null>;
+      setCoreBinary(settings: { mode: "bundled" | "path" | "custom"; customPath: string | null }): Promise<{ mode: "bundled" | "path" | "custom"; customPath: string | null; binary: string; environmentOverride: boolean }>;
+      getGatewayInfo(): Promise<{ directory: string; endpoint: string; runtimeDatabase: string; logFile: string }>;
+      gatewayCommand(command: "status" | "start" | "stop" | "restart"): Promise<string>;
+      getGatewayLogs(lines?: number): Promise<string>;
+      openGatewayLog(): Promise<{ ok: boolean }>;
 
       getSession(): Promise<{ ok: boolean }>;
       getHistory(): Promise<ChatSummary[]>;
@@ -104,6 +120,9 @@ declare global {
       onOpenWorkspace(callback: () => void): () => void;
       onToggleSidebar(callback: () => void): () => void;
       onWorkspaceChanged(callback: (path: string) => void): () => void;
+      onTitlebarStatus(callback: (status: { text: string; color: string } | null) => void): () => void;
+      onTerminalData(callback: (event: { id: string; data: string }) => void): () => void;
+      onTerminalExit(callback: (event: { id: string; code: number | null; signal: NodeJS.Signals | null }) => void): () => void;
 
       onEvent(callback: (event: LumaAgentEvent) => void): () => void;
     };

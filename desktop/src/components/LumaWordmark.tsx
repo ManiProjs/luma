@@ -1,13 +1,17 @@
-export function LumaMark({ size = 14 }: { size?: number }) {
+export function LumaMark({ size = 18 }: { size?: number }) {
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 24 24"
-      fill="currentColor"
+      viewBox="0 0 256 256"
+      fill="none"
+      style={{ isolation: "isolate", flex: "none" }}
       aria-hidden="true"
     >
-      <path d="M5 3.5h4.5v13h9.5V21H5z" />
+      <rect width="256" height="256" rx="58" fill="#0F0F0E" />
+      <rect x="0.5" y="0.5" width="255" height="255" rx="57.5" fill="none" stroke="#FFFFFF" strokeOpacity="0.14" />
+      <circle cx="100" cy="128" r="64" fill="#5B7DF5" />
+      <circle cx="156" cy="128" r="64" fill="#F58A47" style={{ mixBlendMode: "screen" }} />
     </svg>
   );
 }

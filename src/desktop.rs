@@ -375,6 +375,7 @@ impl DesktopServer {
                         .ok_or_else(|| anyhow::anyhow!("task not found: {id}"))?;
                     if task.status == TaskStatus::Running
                         || task.status == TaskStatus::WaitingForApproval
+                        || task.status == TaskStatus::WaitingForInput
                     {
                         self.runtime.enqueue_gateway_cancel(&id)?;
                         ServerEvent::TaskSaved { request_id, task }
@@ -393,6 +394,17 @@ impl DesktopServer {
                         anyhow::bail!("task is already in a terminal state")
                     }
                 }
+                ClientMessage::TaskAnswerQuestion {
+                    request_id,
+                    id,
+                    question_id,
+                    answer,
+                } => ServerEvent::TaskSaved {
+                    request_id,
+                    task: self
+                        .runtime
+                        .answer_task_question(&id, &question_id, &answer)?,
+                },
                 ClientMessage::TaskRetry { request_id, id } => {
                     let task = self
                         .runtime

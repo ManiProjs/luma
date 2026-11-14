@@ -963,6 +963,10 @@ body { font-size: 13px; line-height: 1.58; letter-spacing: -.006em; }
 /* Luma management console: operational navigation, not an IDE in a browser. */
 .management-shell { display: flex; width: 100%; height: 100%; overflow: hidden; background: var(--luma-bg); color: var(--luma-text); }
 .management-sidebar { display: flex; width: 224px; flex: 0 0 224px; flex-direction: column; border-right: 1px solid var(--luma-border); background: var(--luma-surface); }
+.management-sidebar-resize { position: relative; z-index: 3; flex: 0 0 4px; margin-left: -2px; cursor: col-resize; touch-action: none; }
+.management-sidebar-resize::after { position: absolute; inset: 0 1px; content: ""; background: transparent; transition: background-color 120ms ease; }
+.management-sidebar-resize:hover::after, .management-sidebar-resize:focus-visible::after, .management-sidebar-resize[data-dragging="true"]::after { background: var(--luma-accent); }
+.management-sidebar-resize:focus-visible { outline: none; }
 .management-brand { display: flex; align-items: center; gap: 10px; padding: 20px 18px 26px; }
 .management-brand-mark { display: grid; width: 29px; height: 29px; place-items: center; border: 1px solid var(--luma-border-strong); border-radius: 6px; color: var(--luma-accent); font-size: 15px; font-weight: 700; }
 .management-brand strong, .management-brand small { display: block; }
@@ -1010,7 +1014,7 @@ body { font-size: 13px; line-height: 1.58; letter-spacing: -.006em; }
 .management-agent-row small, .management-task-row small { margin-top: 3px; color: var(--luma-text-muted); font-size: 9px; }
 .management-pill { flex: none; padding: 3px 6px; border: 1px solid var(--luma-border); border-radius: 3px; color: var(--luma-text-muted); font-size: 8px; text-transform: capitalize; }
 .management-pill.active, .management-pill.running, .management-pill.completed { color: var(--luma-success); }
-.management-pill.waiting, .management-pill.waiting_for_approval, .management-pill.queued { color: var(--luma-warning); }
+.management-pill.waiting, .management-pill.waiting_for_approval, .management-pill.waiting_for_input, .management-pill.queued { color: var(--luma-warning); }
 .management-row-actions { display: flex; align-items: center; gap: 6px; }
 .management-approval-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; padding: 12px 0; border-top: 1px solid var(--luma-border); }
 .management-approval-row strong { font-size: 11px; }
@@ -1039,6 +1043,15 @@ body { font-size: 13px; line-height: 1.58; letter-spacing: -.006em; }
 .teammates-chat-reply-content { min-width: 0; flex: 1; }
 .teammates-chat-reply-bubble { display: inline-block; max-width: 100%; border: 1px solid var(--luma-border); border-radius: 3px 12px 12px 12px; background: var(--luma-surface); padding: 9px 12px; }
 .teammates-chat-user small { color: var(--luma-text-muted); }
+.teammate-task-question { display: grid; gap: 10px; margin-top: 12px; border: 1px solid color-mix(in srgb, var(--luma-warning) 38%, var(--luma-border)); border-radius: 8px; background: color-mix(in srgb, var(--luma-warning) 5%, var(--luma-surface)); padding: 12px; }
+.teammate-task-question > strong { color: var(--luma-warning); font-size: 11px; }
+.teammate-task-question > p { font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+.teammate-task-question > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.teammate-task-question button { border: 1px solid var(--luma-border-strong); border-radius: 6px; padding: 6px 9px; color: var(--luma-text-secondary); font-size: 11px; }
+.teammate-task-question button:disabled { opacity: .45; }
+.teammate-task-question form { display: flex; gap: 8px; }
+.teammate-task-question input { min-width: 0; flex: 1; border: 1px solid var(--luma-border); border-radius: 6px; background: var(--luma-bg); padding: 7px 9px; color: var(--luma-text); font: inherit; font-size: 11px; }
+.teammate-task-question form button { background: var(--luma-accent); color: #111; font-weight: 600; }
 
 @media (max-width: 760px) {
   .management-sidebar { width: 176px; flex-basis: 176px; }
@@ -1047,7 +1060,8 @@ body { font-size: 13px; line-height: 1.58; letter-spacing: -.006em; }
   .management-overview-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 520px) {
-  .management-sidebar { width: 54px; flex-basis: 54px; }
+  .management-sidebar { width: 54px !important; flex-basis: 54px !important; }
+  .management-sidebar-resize { display: none; }
   .management-brand { justify-content: center; padding-inline: 0; }
   .management-brand > div, .management-nav-label { display: none; }
   .management-sidebar nav { padding: 0 7px; }

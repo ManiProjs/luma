@@ -11,7 +11,10 @@ use std::{
     process::{Command, Stdio},
     time::Duration,
 };
-use tokio::{io::AsyncWriteExt, time::sleep};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    time::sleep,
+};
 use tokio_util::sync::CancellationToken;
 
 use crate::{config, runtime::RuntimeStore, worker::RuntimeSupervisor};
@@ -40,6 +43,54 @@ pub async fn ensure_running() -> Result<()> {
     }
 
     bail!("Luma gateway did not become ready; inspect the Luma log for startup errors")
+}
+
+/// Gateway management commands used by the Ink CLI and desktop shell.
+pub async fn run_command(args: &[String]) -> Result<()> {
+    match args {
+        [] => run().await,
+        [command] if command == "status" => {
+            println!(
+                "{}",
+                if is_running().await {
+                    "running"
+                } else {
+                    "stopped"
+                }
+            );
+            Ok(())
+        }
+        [command] if command == "start" => {
+            ensure_running().await?;
+            println!("Luma gateway started.");
+            Ok(())
+        }
+        [command] if command == "stop" => stop().await,
+        [command] if command == "restart" => {
+            stop().await?;
+            ensure_running().await?;
+            println!("Luma gateway restarted.");
+            Ok(())
+        }
+        _ => bail!("usage: luma-core gateway [status|start|stop|restart]"),
+    }
+}
+
+/// Stop the detached gateway through its owner-only local control socket.
+pub async fn stop() -> Result<()> {
+    if !is_running().await {
+        println!("Luma gateway is already stopped.");
+        return Ok(());
+    }
+    send_stop_request().await?;
+    for _ in 0..80 {
+        if !is_running().await {
+            println!("Luma gateway stopped.");
+            return Ok(());
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    bail!("Luma gateway did not stop within 8 seconds")
 }
 
 pub async fn run() -> Result<()> {
@@ -80,7 +131,7 @@ fn socket_path() -> std::path::PathBuf {
 }
 
 #[cfg(unix)]
-async fn is_running() -> bool {
+pub async fn is_running() -> bool {
     use tokio::{io::AsyncReadExt, net::UnixStream};
 
     let Ok(mut stream) = UnixStream::connect(socket_path()).await else {
@@ -91,6 +142,31 @@ async fn is_running() -> bool {
         .await
         .is_ok_and(|result| result.is_ok())
         && response == HANDSHAKE
+}
+
+#[cfg(unix)]
+async fn send_stop_request() -> Result<()> {
+    use tokio::net::UnixStream;
+    let mut stream = UnixStream::connect(socket_path())
+        .await
+        .context("connecting to the Luma gateway control socket")?;
+    stream.write_all(b"LUMA_GATEWAY_STOP\n").await?;
+    stream.flush().await?;
+    let mut handshake = vec![0; HANDSHAKE.len()];
+    tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut handshake))
+        .await
+        .context("timed out waiting for gateway control handshake")??;
+    if handshake != HANDSHAKE {
+        bail!("invalid response from Luma gateway control socket");
+    }
+    let mut response = [0; 9];
+    tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut response))
+        .await
+        .context("timed out waiting for gateway shutdown acknowledgement")??;
+    if &response != b"STOPPING\n" {
+        bail!("gateway did not acknowledge shutdown");
+    }
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -132,12 +208,22 @@ async fn run_unix() -> Result<()> {
     let mut interrupt = signal(SignalKind::interrupt())?;
     loop {
         tokio::select! {
+            _ = shutdown.cancelled() => break,
             _ = terminate.recv() => break,
             _ = interrupt.recv() => break,
             accepted = listener.accept() => {
                 match accepted {
                     Ok((mut stream, _)) => {
-                        let _ = stream.write_all(HANDSHAKE).await;
+                        let shutdown = shutdown.clone();
+                        tokio::spawn(async move {
+                            if stream.write_all(HANDSHAKE).await.is_err() { return; }
+                            let mut command = [0; 64];
+                            let read = tokio::time::timeout(Duration::from_millis(250), stream.read(&mut command)).await;
+                            if matches!(read, Ok(Ok(length)) if &command[..length] == b"LUMA_GATEWAY_STOP\n") {
+                                let _ = stream.write_all(b"STOPPING\n").await;
+                                shutdown.cancel();
+                            }
+                        });
                     }
                     Err(error) => tracing::warn!(%error, "gateway health-check connection failed"),
                 }
@@ -160,7 +246,41 @@ async fn run_unix() -> Result<()> {
 const GATEWAY_PORT: u16 = 39_271;
 
 #[cfg(not(unix))]
-async fn is_running() -> bool {
+fn tcp_control_token() -> Result<String> {
+    use std::io::Write;
+    let directory = config::config_dir();
+    std::fs::create_dir_all(&directory)?;
+    let path = directory.join("gateway.token");
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            let token = uuid::Uuid::new_v4().to_string();
+            file.write_all(token.as_bytes())?;
+            file.sync_all()?;
+            Ok(token)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let token = std::fs::read_to_string(path)?.trim().to_owned();
+            if token.len() != 36
+                || !token
+                    .bytes()
+                    .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+            {
+                bail!(
+                    "invalid Luma gateway control token; remove gateway.token and restart the gateway"
+                )
+            }
+            Ok(token)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(not(unix))]
+pub async fn is_running() -> bool {
     use tokio::{io::AsyncReadExt, net::TcpStream};
     let Ok(mut stream) = TcpStream::connect(("127.0.0.1", GATEWAY_PORT)).await else {
         return false;
@@ -173,19 +293,63 @@ async fn is_running() -> bool {
 }
 
 #[cfg(not(unix))]
+async fn send_stop_request() -> Result<()> {
+    use tokio::net::TcpStream;
+    let token = tcp_control_token()?;
+    let mut stream = TcpStream::connect(("127.0.0.1", GATEWAY_PORT))
+        .await
+        .context("connecting to the Luma gateway control port")?;
+    stream
+        .write_all(format!("LUMA_GATEWAY_STOP {token}\n").as_bytes())
+        .await?;
+    stream.flush().await?;
+    let mut handshake = vec![0; HANDSHAKE.len()];
+    tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut handshake))
+        .await
+        .context("timed out waiting for gateway control handshake")??;
+    if handshake != HANDSHAKE {
+        bail!("invalid response from Luma gateway control port");
+    }
+    let mut response = [0; 9];
+    tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut response))
+        .await
+        .context("timed out waiting for gateway shutdown acknowledgement")??;
+    if &response != b"STOPPING\n" {
+        bail!("gateway did not acknowledge shutdown");
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
 async fn run_tcp() -> Result<()> {
     use tokio::{net::TcpListener, signal};
-    let (shutdown, supervisor) = start_supervisor().await?;
+    let token = tcp_control_token()?;
     let listener = TcpListener::bind(("127.0.0.1", GATEWAY_PORT))
         .await
         .context("binding the local gateway port")?;
+    // Claim the singleton endpoint before starting the supervisor. Otherwise
+    // two simultaneous launches can both begin consuming queued tasks before
+    // one of them loses the bind race.
+    let (shutdown, supervisor) = start_supervisor().await?;
     tracing::info!(port = GATEWAY_PORT, "Luma gateway ready");
     loop {
         tokio::select! {
+            _ = shutdown.cancelled() => break,
             _ = signal::ctrl_c() => break,
             accepted = listener.accept() => {
                 if let Ok((mut stream, _)) = accepted {
-                    let _ = stream.write_all(HANDSHAKE).await;
+                    let shutdown = shutdown.clone();
+                    let token = token.clone();
+                    tokio::spawn(async move {
+                        if stream.write_all(HANDSHAKE).await.is_err() { return; }
+                        let expected = format!("LUMA_GATEWAY_STOP {token}\n");
+                        let mut command = vec![0; expected.len()];
+                        let read = tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut command)).await;
+                        if matches!(read, Ok(Ok(_)) if command == expected.as_bytes()) {
+                            let _ = stream.write_all(b"STOPPING\n").await;
+                            shutdown.cancel();
+                        }
+                    });
                 }
             }
         }

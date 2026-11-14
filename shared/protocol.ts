@@ -112,7 +112,7 @@ export type ChatArchive = {
 
 export type AgentKind = "code" | "teammates";
 export type AgentStatus = "created" | "idle" | "active" | "waiting" | "paused" | "recovering" | "stopped" | "error";
-export type TaskStatus = "queued" | "running" | "waiting_for_approval" | "paused" | "completed" | "failed" | "cancelled" | "interrupted";
+export type TaskStatus = "queued" | "running" | "waiting_for_approval" | "waiting_for_input" | "paused" | "completed" | "failed" | "cancelled" | "interrupted";
 export type MemoryScope = "user" | "agent" | "project" | "conversation" | "task";
 
 export type PermissionProfile = {
@@ -264,6 +264,7 @@ export type ClientMessage =
   | { type: "tasks_list"; data: { request_id: string; agent_id: string | null; limit: number | null } }
   | { type: "task_create"; data: { request_id: string; agent_id: string; request: string; title: string | null; workspace: string | null; recover_on_restart: boolean } }
   | { type: "task_cancel"; data: { request_id: string; id: string } }
+  | { type: "task_answer_question"; data: { request_id: string; id: string; question_id: string; answer: string } }
   | { type: "task_retry"; data: { request_id: string; id: string } }
   | { type: "task_rename"; data: { request_id: string; id: string; title: string } }
   | { type: "task_delete"; data: { request_id: string; id: string } }
@@ -539,7 +540,7 @@ function isAgentRecord(value: unknown): value is AgentRecord {
 function isTaskRecord(value: unknown): value is TaskRecord {
   return isRecord(value) && isString(value.id) && isString(value.agent_id)
     && isString(value.title) && isString(value.request)
-    && ["queued", "running", "waiting_for_approval", "paused", "completed", "failed", "cancelled", "interrupted"].includes(String(value.status))
+    && ["queued", "running", "waiting_for_approval", "waiting_for_input", "paused", "completed", "failed", "cancelled", "interrupted"].includes(String(value.status))
     && isNullableString(value.workspace) && (value.checkpoint === null || value.checkpoint !== undefined)
     && isNullableString(value.error) && isNumber(value.attempt)
     && typeof value.recover_on_restart === "boolean" && isNullableString(value.schedule_id)

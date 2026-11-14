@@ -183,6 +183,12 @@ pub enum ClientMessage {
         request_id: String,
         id: String,
     },
+    TaskAnswerQuestion {
+        request_id: String,
+        id: String,
+        question_id: String,
+        answer: String,
+    },
     TaskRetry {
         request_id: String,
         id: String,
@@ -334,6 +340,7 @@ impl ClientMessage {
             | Self::TasksList { request_id, .. }
             | Self::TaskCreate { request_id, .. }
             | Self::TaskCancel { request_id, .. }
+            | Self::TaskAnswerQuestion { request_id, .. }
             | Self::TaskRetry { request_id, .. }
             | Self::TaskRename { request_id, .. }
             | Self::TaskDelete { request_id, .. }
@@ -421,6 +428,7 @@ impl ClientMessage {
             | Self::TasksList { .. }
             | Self::TaskCreate { .. }
             | Self::TaskCancel { .. }
+            | Self::TaskAnswerQuestion { .. }
             | Self::TaskRetry { .. }
             | Self::TaskRename { .. }
             | Self::TaskDelete { .. }
