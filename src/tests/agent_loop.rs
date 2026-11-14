@@ -282,6 +282,7 @@ async fn ask_question_waits_for_matching_answer_and_records_observation() {
     let capture = model.clone();
     let react = crate::react::ReAct::new(model.clone(), &tools);
     let mut agent = Agent::new(model, react, tools, History::default(), String::new());
+    agent.set_force_react(true);
     let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(32);
     let (input_tx, input_rx) = mpsc::channel::<String>(2);
     let (_confirmation_tx, confirmation_rx) = mpsc::channel::<Confirmation>(2);
@@ -300,7 +301,12 @@ async fn ask_question_waits_for_matching_answer_and_records_observation() {
             )
             .await
     });
-    input_tx.send("/plan Choose a target".into()).await.unwrap();
+    // Ordinary Teammate messages must still dispatch interactive tools; this
+    // must not depend on the Code-only workspace detector or /plan command.
+    input_tx
+        .send("Help me choose a target.".into())
+        .await
+        .unwrap();
 
     let question = tokio::time::timeout(std::time::Duration::from_secs(2), async {
         loop {

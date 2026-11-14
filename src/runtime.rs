@@ -160,6 +160,13 @@ impl PermissionProfile {
         if !self.allow_network && requires_network {
             return PermissionDecision::Deny;
         }
+        // These two tools are confined to the current teammate's own memory
+        // and its explicitly inherited shared scopes; they never access the
+        // filesystem, shell, or network and should not interrupt every task
+        // with an approval prompt.
+        if matches!(tool, "save_memory" | "recall_memory") {
+            return PermissionDecision::Allow;
+        }
         if tool == "http_request" && mutating && self.require_approval_for_mutations {
             return PermissionDecision::RequireApproval;
         }
@@ -387,6 +394,11 @@ impl RuntimeStore {
         store.migrate().unwrap();
         store.ensure_global_agent().unwrap();
         store
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_in_memory_for_tests() -> Self {
+        Self::in_memory()
     }
 
     fn ensure_global_agent(&self) -> Result<()> {
@@ -2446,6 +2458,15 @@ mod tests {
         let mut profile = PermissionProfile::default();
         profile.denied_tools.push("read_file".into());
         assert_eq!(profile.decide("read_file", false), PermissionDecision::Deny);
+        assert_eq!(
+            profile.decide_with_capabilities("save_memory", true, false, false),
+            PermissionDecision::Allow
+        );
+        profile.denied_tools.push("save_memory".into());
+        assert_eq!(
+            profile.decide_with_capabilities("save_memory", true, false, false),
+            PermissionDecision::Deny
+        );
         assert_eq!(
             profile.decide("write_file", true),
             PermissionDecision::RequireApproval

@@ -16,7 +16,7 @@
 .luma-mascot-dots i:nth-child(3) { animation-delay: .24s; }
 .luma-mascot-stage--working .luma-mascot-face { opacity: 0; transform: scale(.28) rotate(70deg); }
 .luma-mascot-stage--working .luma-mascot-dots { opacity: 1; transform: scale(1) rotate(0); }
-.luma-mascot-stage--thinking .luma-mascot-face { animation: luma-mascot-think 1.8s ease-in-out infinite; }
+.luma-mascot-stage--thinking .luma-mascot-face { animation: none; }
 .luma-mascot-stage--writing .luma-mascot-face { animation: luma-mascot-write .72s ease-in-out infinite alternate; }
 .luma-mascot-stage--writing .luma-mascot-writing-props { opacity: 1; transform: translateY(0) scale(1); }
 .luma-mascot-stage--writing .luma-mascot-pencil { animation: luma-mascot-pencil-write .34s ease-in-out infinite alternate; }
@@ -1975,6 +1975,10 @@ html[data-platform="linux"] .luma-workspace-picker {
   animation: luma-teammate-history-enter 210ms cubic-bezier(.2, .75, .25, 1) both;
 }
 
+.luma-teammate-inspector {
+  animation: luma-teammate-inspector-enter 190ms cubic-bezier(.2, .75, .25, 1) both;
+}
+
 .luma-teammate-history-item {
   border: 1px solid transparent;
   color: var(--luma-text-secondary);
@@ -1998,6 +2002,11 @@ html[data-platform="linux"] .luma-workspace-picker {
 
 @keyframes luma-teammate-history-enter {
   from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes luma-teammate-inspector-enter {
+  from { opacity: 0; transform: translateX(9px); }
   to { opacity: 1; transform: translateX(0); }
 }
 
@@ -2035,10 +2044,108 @@ html[data-platform="linux"] .luma-workspace-picker {
 
 @media (prefers-reduced-motion: reduce) {
   .luma-sidebar-slot,
-  .luma-sidebar-slot .luma-sidebar {
+  .luma-sidebar-slot .luma-sidebar,
+  .luma-teammate-inspector {
     transition: none !important;
     will-change: auto;
   }
+}
+
+/* Teammate settings are grouped into focused sections instead of one long
+   scrolling form. Keep the section switcher pinned while its content scrolls. */
+.luma-teammate-settings-nav {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  border-bottom: 1px solid var(--luma-border);
+  background: var(--luma-bg);
+  padding: 5px 0 7px;
+}
+.luma-teammate-settings-nav button {
+  min-height: 28px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 0 9px;
+  color: var(--luma-text-muted);
+  font-size: 10px;
+}
+.luma-teammate-settings-nav button[data-active="true"] {
+  border-color: var(--luma-border-strong);
+  background: var(--luma-surface);
+  color: var(--luma-text);
+}
+.luma-teammate-settings[data-settings-tab="identity"] [data-settings-section]:not([data-settings-section="identity"]),
+.luma-teammate-settings[data-settings-tab="behavior"] [data-settings-section]:not([data-settings-section="behavior"]),
+.luma-teammate-settings[data-settings-tab="capabilities"] [data-settings-section]:not([data-settings-section="capabilities"]),
+.luma-teammate-settings[data-settings-tab="memory"] [data-settings-section]:not([data-settings-section="memory"]),
+.luma-teammate-settings[data-settings-tab="schedules"] [data-settings-section]:not([data-settings-section="schedules"]),
+.luma-teammate-settings[data-settings-tab="advanced"] [data-settings-section]:not([data-settings-section="advanced"]) {
+  display: none !important;
+}
+
+.luma-teammate-history-list {
+  overflow: hidden;
+  animation: luma-teammate-history-expand 190ms cubic-bezier(.2, .75, .25, 1) both;
+}
+.luma-teammate-history-nav-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  border-radius: 4px;
+  padding: 5px 7px 5px 13px;
+  color: var(--luma-text-muted);
+  text-align: left;
+  font-size: 10px;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+.luma-teammate-history-nav-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.luma-teammate-history-nav-item small { flex: none; font-size: 9px; opacity: .7; }
+.luma-teammate-history-nav-item:hover,
+.luma-teammate-history-nav-item.is-selected { background: var(--luma-surface-hover); color: var(--luma-text); }
+@keyframes luma-teammate-history-expand {
+  from { opacity: 0; transform: translateY(-5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.luma-teammate-slash-menu button,
+.luma-mention-menu button { cursor: pointer; }
+.luma-teammate-slash-menu button.is-active,
+.luma-mention-menu button.is-active {
+  background: var(--luma-accent-soft);
+  color: var(--luma-text);
+}
+
+/* A readable middle ground: larger than the ultra-compact pass, without
+   returning to the old oversized composer. The text stays vertically centered. */
+.luma-prompt-input {
+  min-height: 24px !important;
+  height: 24px;
+  font-size: 14px !important;
+  line-height: 20px !important;
+  padding: 2px 3px !important;
+}
+.luma-teammate-composer-row { min-height: 28px !important; }
+.luma-teammate-composer-row .luma-prompt-input {
+  min-height: 24px !important;
+  height: 24px;
+  line-height: 20px !important;
+  font-size: 14px !important;
+}
+.luma-teammate-composer-row > button,
+.luma-teammate-composer-row .luma-model-inline,
+.luma-teammate-composer-row .luma-composer-quick-settings > button {
+  align-self: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luma-teammate-history-list,
+  .luma-teammate-inspector { animation: none !important; }
 }
 
 /* Native desktop pass: use OS chrome and a document-like workspace, not web cards. */
@@ -2427,4 +2534,316 @@ html[data-reduced-motion="true"] *::after {
 
 .luma-command-menu code {
   color: #78AFFF;
+}
+
+/* One shared, borderless prompt field is used by both Code and Teammates. */
+.luma-prompt-input {
+  display: block;
+  width: 0;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 28px;
+  max-height: 112px;
+  flex: 1 1 0%;
+  align-self: center;
+  resize: none;
+  overflow-y: auto;
+  margin: 0;
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 4px 2px;
+  color: var(--luma-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+}
+.luma-prompt-input:focus,
+.luma-prompt-input:focus-visible {
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+.luma-prompt-input::placeholder { color: var(--luma-text-muted); opacity: 1; }
+.luma-prompt-input:disabled { opacity: .5; }
+.luma-composer { min-height: 0; padding: 5px 8px; gap: 6px; border-radius: 7px; }
+.luma-composer > button:first-child,
+.luma-composer > button[aria-label="Stop"],
+.luma-composer > button[aria-label="Send"] { width: 28px; height: 28px; }
+.luma-composer-shell { padding-top: 7px; padding-bottom: 8px; }
+.luma-teammate-composer { padding: 4px 7px; }
+.luma-teammate-composer-row { min-height: 30px; gap: 6px; }
+.luma-composer-model-button {
+  display: inline-flex;
+  height: 26px;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  border-radius: 4px;
+  padding: 0 7px;
+  color: var(--luma-text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+.luma-composer-model-button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-composer-model-picker { position: relative; flex: none; }
+.luma-composer-model-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 50;
+  display: grid;
+  min-width: 156px;
+  gap: 2px;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 6px;
+  background: var(--luma-surface);
+  padding: 5px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 18%);
+}
+.luma-composer-model-menu button { border-radius: 4px; padding: 7px 8px; color: var(--luma-text-secondary); font-size: 11px; text-align: left; }
+.luma-composer-model-menu button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-composer-quick-settings { position: relative; flex: none; }
+.luma-composer-quick-settings > button {
+  display: inline-flex;
+  width: 27px;
+  height: 27px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--luma-text-muted);
+  font-size: 17px;
+  line-height: 1;
+}
+.luma-composer-quick-settings > button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-composer-quick-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 50;
+  display: grid;
+  min-width: 210px;
+  gap: 2px;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 6px;
+  background: var(--luma-surface);
+  padding: 6px;
+  box-shadow: 0 10px 28px rgb(0 0 0 / 18%);
+}
+.luma-composer-quick-menu label,
+.luma-composer-quick-menu > button {
+  display: flex;
+  min-height: 29px;
+  align-items: center;
+  gap: 8px;
+  border-radius: 4px;
+  padding: 4px 7px;
+  color: var(--luma-text-secondary);
+  font-size: 11px;
+  text-align: left;
+}
+.luma-composer-quick-menu label:hover,
+.luma-composer-quick-menu > button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-composer-quick-menu input { width: 13px; height: 13px; margin: 0; }
+.luma-composer-quick-menu > button { border-top: 1px solid var(--luma-border); border-radius: 0; margin-top: 3px; padding-top: 7px; }
+
+@media (max-width: 620px) {
+  .luma-composer-model-button { max-width: 54px; overflow: hidden; padding-inline: 4px; }
+}
+
+/* Compact workspace density: keep the hierarchy, remove excess chrome. */
+.luma-sidebar-brand { min-height: 42px; padding-block: 7px; }
+.luma-primary-switcher { margin: 5px 9px 8px; padding: 2px; gap: 2px; }
+.luma-primary-switcher > button { min-height: 29px; gap: 6px; font-size: 11px; }
+.luma-sidebar-projects { padding-inline: 5px; }
+.luma-sidebar-projects .luma-section-heading { min-height: 25px; }
+.luma-sidebar-projects button, .luma-sidebar-history-list button { line-height: 1.35; }
+.luma-new-chat { padding: 0 10px 9px; }
+.luma-new-chat > button:first-child { height: 33px; border-radius: 6px; padding-inline: 9px; font-size: 11px; }
+.luma-sidebar-search { min-height: 29px; margin-top: 4px; padding-inline: 8px; font-size: 11px; }
+.luma-sidebar-history-list { padding-inline: 5px; }
+.luma-sidebar-footer { padding: 7px 9px; }
+.luma-sidebar-account { min-height: 38px; padding: 5px 7px; }
+.luma-topbar, .luma-conversation-header, .luma-teammate-header { min-height: 42px; height: 42px; }
+.luma-topbar { padding-inline: 12px; }
+.luma-conversation-header { padding-inline: 14px; }
+.luma-code-inspector, .luma-teammate-inspector { width: 260px; }
+.luma-inspector-header { min-height: 34px; }
+.luma-inspector-tabs button, .luma-teammate-inspector-tabs button { min-height: 29px; padding-inline: 9px; font-size: 10px; }
+.luma-inspector-summary { min-height: 42px; padding: 6px 9px; }
+.luma-inspector-actions { gap: 5px; padding: 5px 8px; }
+.luma-inspector-actions button { min-height: 26px; padding-inline: 7px; font-size: 10px; }
+.luma-inspector-change-list button, .luma-inspector-file-tree button { min-height: 25px; padding-block: 3px; font-size: 10px; }
+.luma-inspector-diff-header { min-height: 30px; padding-inline: 8px; }
+.luma-inspector-diff { padding: 7px; font-size: 10px; line-height: 1.45; }
+.luma-teammate-sidebar-heading { min-height: 30px; }
+.luma-teammate-nav-item { padding: 6px 8px; font-size: 11px; }
+.luma-teammate-header { min-height: 42px; padding-block: 5px; padding-inline: 14px; }
+.luma-teammate-inspector section { padding: 9px; }
+.luma-modal-content { width: min(680px, calc(100vw - 32px)); height: min(530px, calc(100vh - 32px)); }
+.luma-modal-content input:not([type="checkbox"]):not([type="radio"]),
+.luma-modal-content select { min-height: 29px; }
+.luma-settings-close { width: 26px; height: 26px; }
+.luma-create-column { padding: 16px 18px 18px; }
+.luma-create-configuration { gap: 12px; }
+.luma-create-section-heading { margin-bottom: 12px; }
+.luma-create-footer { padding-block: 10px; }
+.luma-create-footer button { height: 31px; }
+.luma-btn-primary, .luma-btn-secondary, .luma-btn-ghost { min-height: 27px; }
+.luma-composer-shell { padding-top: 5px; padding-bottom: 6px; }
+
+/* The composer should occupy only one compact toolbar row when empty. */
+.luma-composer-shell {
+  padding: 4px 10px 5px !important;
+  border-top: 0;
+}
+.luma-composer-shell > .luma-composer {
+  min-height: 0 !important;
+  max-width: 760px;
+  padding: 3px 5px !important;
+  gap: 4px !important;
+  border-radius: 6px;
+}
+.luma-prompt-input {
+  min-height: 20px !important;
+  max-height: 76px !important;
+  padding: 1px 2px !important;
+  font-size: 12px;
+  line-height: 18px;
+}
+.luma-composer-shell > .luma-composer > button:first-child,
+.luma-composer-shell > .luma-composer > button[aria-label="Stop"],
+.luma-composer-shell > .luma-composer > button[aria-label="Send"] {
+  width: 23px !important;
+  height: 23px !important;
+  flex: 0 0 23px;
+}
+.luma-composer-shell > .luma-composer > button svg { width: 14px; height: 14px; }
+.luma-composer-model-button,
+.luma-composer-quick-settings > button {
+  height: 22px !important;
+  min-height: 22px;
+  padding-inline: 5px;
+  font-size: 10px;
+}
+.luma-composer-quick-settings > button { width: 22px; padding: 0; }
+.luma-composer-shell > .luma-composer + * { margin-top: 3px; }
+.luma-teammate-composer { padding: 2px 5px !important; }
+.luma-teammate-composer-row { min-height: 24px !important; gap: 4px !important; }
+.luma-teammate-composer-row > button,
+.luma-teammate-composer-row .luma-teammate-stop,
+.luma-teammate-composer-row .luma-teammate-send {
+  width: 22px !important;
+  height: 22px !important;
+  flex: 0 0 22px;
+}
+.luma-teammate-composer-row .luma-prompt-input {
+  min-height: 20px !important;
+  max-height: 68px !important;
+}
+
+@media (max-width: 900px) {
+  .luma-code-inspector, .luma-teammate-inspector { width: 220px; }
+}
+
+/* Keep the Teammates composer on the same centered rail as the conversation. */
+.luma-teammate-composer {
+  box-sizing: border-box;
+  width: 100%;
+  align-self: stretch;
+  margin-inline: auto;
+}
+.luma-teammate-composer-row {
+  box-sizing: border-box;
+  width: 100%;
+  align-items: center;
+}
+.luma-teammate-composer-row .luma-prompt-input {
+  width: 0;
+  min-width: 0;
+  flex: 1 1 0%;
+  align-self: center;
+  min-height: 20px !important;
+  height: 20px;
+  padding-block: 1px !important;
+  line-height: 18px;
+}
+.luma-teammate-composer-row > button,
+.luma-teammate-composer-row > .relative,
+.luma-teammate-composer-row > .luma-composer-model-picker,
+.luma-teammate-composer-row > .luma-composer-quick-settings {
+  align-self: center;
+}
+
+/* A more deliberate teammate-creation workspace: compact identity rail,
+   spacious behavior fields, and a persistent action footer. */
+.luma-create-dialog {
+  width: min(760px, calc(100vw - 40px));
+  max-width: 760px;
+  max-height: min(760px, 88vh);
+  border-radius: 9px;
+}
+.luma-create-header {
+  min-height: 76px;
+  padding: 14px 20px;
+}
+.luma-create-header .luma-kicker {
+  font-size: 9px;
+  letter-spacing: .11em;
+}
+.luma-create-header h3 { font-size: 17px; line-height: 1.25; }
+.luma-create-body {
+  grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.luma-create-column { padding: 20px 21px; }
+.luma-create-identity {
+  border-right: 1px solid var(--luma-border);
+  background: var(--luma-surface);
+}
+.luma-create-configuration { gap: 14px; }
+.luma-create-section-heading { gap: 9px; margin-bottom: 15px; }
+.luma-create-section-heading > span { color: var(--luma-text-muted); font-size: 9px; }
+.luma-create-section-heading h4 { font-size: 12px; }
+.luma-create-section-heading p { font-size: 10px; }
+.luma-create-field { font-size: 10px; }
+.luma-create-field .luma-input {
+  min-height: 34px;
+  border-radius: 5px;
+  padding: 7px 9px;
+  font-size: 11px;
+}
+.luma-create-field textarea.luma-input { min-height: 78px; line-height: 1.5; }
+.luma-create-identity > .luma-create-field + .luma-create-field { margin-top: 12px; }
+.luma-create-mascot { margin-top: 19px; }
+.luma-create-mascot .mascot-customizer { gap: 9px; margin-top: 7px; }
+.luma-create-mascot .mascot-customizer-preview { min-height: 66px; }
+.luma-create-mascot .mascot-customizer-preview svg { width: 54px; height: 54px; }
+.luma-create-mascot .mascot-shape-grid { gap: 5px; }
+.luma-create-mascot .mascot-shape-grid button { min-height: 48px; }
+.luma-create-context {
+  gap: 9px;
+  margin: 0;
+  border-radius: 5px;
+  padding: 9px 10px;
+}
+.luma-create-context strong { font-size: 10px; }
+.luma-create-context small { font-size: 9px; }
+.luma-create-security { gap: 8px; padding-top: 10px; }
+.luma-create-security p { font-size: 9px; }
+.luma-create-footer {
+  min-height: 54px;
+  padding: 9px 20px;
+}
+.luma-create-footer button { height: 31px; min-height: 31px; }
+
+@media (max-width: 680px) {
+  .luma-create-dialog { width: calc(100vw - 24px); max-height: 92vh; }
+  .luma-create-body { grid-template-columns: minmax(0, 1fr); }
+  .luma-create-column { padding: 16px; }
+  .luma-create-identity { border-right: 0; border-bottom: 1px solid var(--luma-border); }
+  .luma-create-footer { flex-direction: row; align-items: center; }
 }

@@ -31,6 +31,12 @@ pub struct PluginToolManifest {
     pub requires_network: bool,
     #[serde(default)]
     pub input_schema: Option<serde_json::Value>,
+    /// Per-tool execution timeout in seconds (1–300). Defaults to 30.
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
+    /// Maximum stdout response size in bytes (1 KiB–4 MiB). Defaults to 1 MB.
+    #[serde(default)]
+    pub max_output_bytes: Option<usize>,
 }
 
 fn default_requires_network() -> bool {
@@ -83,6 +89,24 @@ impl PluginManifest {
             }
             if tool.description.trim().is_empty() {
                 bail!("plugin tool '{}' must have a description", tool.name);
+            }
+            if tool
+                .timeout_seconds
+                .is_some_and(|value| !(1..=300).contains(&value))
+            {
+                bail!(
+                    "plugin tool '{}' timeout_seconds must be between 1 and 300",
+                    tool.name
+                );
+            }
+            if tool
+                .max_output_bytes
+                .is_some_and(|value| !(1_024..=4 * 1024 * 1024).contains(&value))
+            {
+                bail!(
+                    "plugin tool '{}' max_output_bytes must be between 1024 and 4194304",
+                    tool.name
+                );
             }
         }
         Ok(())
@@ -146,6 +170,49 @@ description = "Run something"
         )
         .unwrap();
         manifest.id = "../outside".into();
+        assert!(manifest.validate().is_err());
+    }
+
+    #[test]
+    fn accepts_legacy_manifests_without_execution_limits() {
+        let manifest: PluginManifest = toml::from_str(
+            r#"
+schema_version = 1
+id = "legacy-plugin"
+name = "Legacy"
+version = "1.0.0"
+command = "runner"
+[[tools]]
+name = "run"
+description = "Run something"
+"#,
+        )
+        .unwrap();
+        manifest.validate().unwrap();
+        assert_eq!(manifest.tools[0].timeout_seconds, None);
+        assert_eq!(manifest.tools[0].max_output_bytes, None);
+        assert!(manifest.tools[0].requires_network);
+    }
+
+    #[test]
+    fn rejects_out_of_range_execution_limits() {
+        let mut manifest: PluginManifest = toml::from_str(
+            r#"
+schema_version = 1
+id = "bounded-plugin"
+name = "Bounded"
+version = "1.0.0"
+command = "runner"
+[[tools]]
+name = "run"
+description = "Run something"
+timeout_seconds = 301
+"#,
+        )
+        .unwrap();
+        assert!(manifest.validate().is_err());
+        manifest.tools[0].timeout_seconds = None;
+        manifest.tools[0].max_output_bytes = Some(1_023);
         assert!(manifest.validate().is_err());
     }
 }

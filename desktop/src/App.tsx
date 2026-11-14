@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useFocusTrap } from "./hooks/useFocusTrap";
 
@@ -89,6 +89,19 @@ const SLASH_COMMANDS = [
   { command: "/init", description: "Initialize workspace instructions" },
   { command: "/model", description: "Change the default model" },
   { command: "/model session", description: "Change the model for this session only" },
+];
+
+const TEAMMATE_SLASH_COMMANDS = [
+  { command: "/help", description: "Show Teammates commands" },
+  { command: "/new", description: "Start a new task in this teammate's history" },
+  { command: "/history", description: "Show this teammate's full history" },
+  { command: "/settings", description: "Open teammate settings" },
+  { command: "/memory", description: "Open teammate memory" },
+  { command: "/schedule", description: "Manage recurring work" },
+  { command: "/status", description: "Show teammate status" },
+  { command: "/pause", description: "Pause this teammate" },
+  { command: "/resume", description: "Resume this teammate" },
+  { command: "/stop", description: "Stop the active task" },
 ];
 
 function ChevronIcon({ open }: { open: boolean }) {
@@ -214,6 +227,7 @@ function TeammateModelDropdown({ agent, onChanged }: { agent: AgentRecord; onCha
   const [provider, setProvider] = useState<SetupProvider | null>(null);
   const [models, setModels] = useState<SetupModel[]>([]);
   const [search, setSearch] = useState("");
+  const [activeModelIndex, setActiveModelIndex] = useState(0);
   const [selectedLabel, setSelectedLabel] = useState(agent.configuration.model ?? "");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -310,13 +324,25 @@ function TeammateModelDropdown({ agent, onChanged }: { agent: AgentRecord; onCha
 
   const filtered = models.filter((model) => `${model.name} ${model.id}`.toLowerCase().includes(search.toLowerCase()));
   return <div className="relative shrink-0">
-    <button ref={triggerRef} type="button" aria-haspopup="listbox" aria-expanded={open} onClick={() => void showModels()} disabled={loading} className="luma-model-inline max-w-[150px]" title={`Current model: ${currentLabel}. Change model`}>
+    <button ref={triggerRef} type="button" aria-haspopup="listbox" aria-expanded={open} onKeyDown={(event) => {
+      if (["ArrowDown", "Enter", " "].includes(event.key)) { event.preventDefault(); if (!open) void showModels(); }
+    }} onClick={() => void showModels()} disabled={loading} className="luma-model-inline max-w-[150px]" title={`Current model: ${currentLabel}. Change model`}>
       <span className="max-w-[120px] truncate">{currentLabel}</span><span aria-hidden="true">⌄</span>
     </button>
     {open && menuPosition && createPortal(<div ref={menuRef} style={{ position: "fixed", top: menuPosition.top, left: menuPosition.left, width: 256, maxHeight: "min(340px, calc(100vh - 24px))", zIndex: 9999 }} className="overflow-hidden rounded-md border border-[var(--luma-border-strong)] bg-[var(--luma-surface)] shadow-xl">
-      <div className="border-b border-[var(--luma-border)] p-2"><input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Filter models…" aria-label="Filter teammate models" className="luma-input h-7 w-full text-[11px]" /></div>
-      <div className="max-h-56 overflow-y-auto p-1" role="listbox" aria-label="Available models">
-        {loading ? <p className="px-2 py-3 text-[10px] text-[var(--luma-text-muted)]">Loading models…</p> : filtered.map((model) => <button key={model.id} type="button" role="option" aria-selected={model.id === agent.configuration.model} onClick={() => void chooseModel(model)} className="block w-full rounded px-2 py-1.5 text-left hover:bg-[var(--luma-surface-hover)]"><span className="block truncate text-[11px] text-[var(--luma-text)]">{model.name}</span>{model.id !== model.name && <span className="block truncate text-[9px] text-[var(--luma-text-muted)]">{model.id}</span>}</button>)}
+      <div className="border-b border-[var(--luma-border)] p-2"><input autoFocus value={search} onChange={(event) => { setSearch(event.target.value); setActiveModelIndex(0); }} aria-activedescendant={filtered[activeModelIndex] ? `teammate-model-option-${activeModelIndex}` : undefined} onKeyDown={(event) => {
+        if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key) && filtered.length) {
+          event.preventDefault();
+          const direction = ["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1;
+          const next = (activeModelIndex + direction + filtered.length) % filtered.length;
+          setActiveModelIndex(next);
+          document.getElementById(`teammate-model-option-${next}`)?.scrollIntoView({ block: "nearest" });
+        }
+        else if (event.key === "Enter" && filtered[activeModelIndex]) { event.preventDefault(); void chooseModel(filtered[activeModelIndex]); }
+        else if (event.key === "Escape") { event.preventDefault(); setOpen(false); triggerRef.current?.focus(); }
+      }} placeholder="Filter models…" aria-label="Filter teammate models" aria-controls="teammate-model-options" className="luma-input h-7 w-full text-[11px]" /></div>
+      <div id="teammate-model-options" className="max-h-56 overflow-y-auto p-1" role="listbox" aria-label="Available models">
+        {loading ? <p className="px-2 py-3 text-[10px] text-[var(--luma-text-muted)]">Loading models…</p> : filtered.map((model, index) => <button id={`teammate-model-option-${index}`} key={model.id} type="button" role="option" aria-selected={index === activeModelIndex} onMouseEnter={() => setActiveModelIndex(index)} onClick={() => void chooseModel(model)} className={`block w-full rounded px-2 py-1.5 text-left ${index === activeModelIndex ? "bg-[var(--luma-accent-soft)]" : "hover:bg-[var(--luma-surface-hover)]"}`}><span className="block truncate text-[11px] text-[var(--luma-text)]">{model.name}</span>{model.id !== model.name && <span className="block truncate text-[9px] text-[var(--luma-text-muted)]">{model.id}</span>}</button>)}
         {!loading && filtered.length === 0 && <p className="px-2 py-3 text-[10px] text-[var(--luma-text-muted)]">No matching models.</p>}
       </div>
       {error && <p role="alert" className="border-t border-[var(--luma-border)] px-2 py-2 text-[10px] text-[var(--luma-danger)]">{error}</p>}
@@ -1508,17 +1534,19 @@ function Sidebar({ mode, onOpenChat, onOpenTeammates, onProjectFolderChange, tea
                       type="button"
                       onClick={() => handleRenameProject(project.id, project.name)}
                       aria-label={`Rename project ${project.name}`}
+                      title={`Rename ${project.name}`}
                       className="px-1 text-[11px] text-[var(--luma-text-muted)] hover:text-[var(--luma-text-secondary)] focus:text-[var(--luma-text-secondary)]"
                     >
-                      Rename
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 5 4 4M4 20l4-.8L19 8a2.1 2.1 0 0 0-3-3L5 16z" /></svg>
                     </button>
                     <button
                       type="button"
                       onClick={() => handleDeleteProject(project.id, project.name)}
                       aria-label={`Delete project ${project.name}`}
+                      title={`Delete ${project.name}`}
                       className="px-1 text-[11px] text-[var(--luma-text-muted)] hover:text-[var(--luma-danger)] focus:text-[var(--luma-danger)]"
                     >
-                      Delete
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3" /></svg>
                     </button>
                   </div>
                 </div>
@@ -2103,24 +2131,57 @@ function ConfirmationCard({
 
 function QuestionCard({ question, onAnswer }: { question: { prompt: string; choices: string[] }; onAnswer: (answer: string) => void }) {
   const [answer, setAnswer] = useState("");
+  const [selectedChoice, setSelectedChoice] = useState(0);
+  const handleChoiceKeys = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!question.choices.length) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.currentTarget.parentElement?.querySelector<HTMLInputElement>("input")?.focus();
+      return;
+    }
+    if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key)) {
+      event.preventDefault();
+      const direction = ["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1;
+      const next = (selectedChoice + direction + question.choices.length) % question.choices.length;
+      setSelectedChoice(next);
+      (event.currentTarget.querySelectorAll("button")[next] as HTMLButtonElement | undefined)?.focus();
+    }
+  };
   return <form className="rounded-lg border border-[var(--luma-border-strong)] bg-[var(--luma-surface-raised)] p-3" onSubmit={(event) => { event.preventDefault(); onAnswer(answer); }}>
     <div className="text-[13px] font-medium">Luma needs your input</div>
     <p className="mt-1 whitespace-pre-wrap text-[12px] leading-5 text-[var(--luma-text-secondary)]">{question.prompt}</p>
-    {question.choices.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{question.choices.map((choice) => <button key={choice} type="button" onClick={() => onAnswer(choice)} className="rounded-md border border-[var(--luma-border-strong)] px-2.5 py-1.5 text-[11px] text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)]">{choice}</button>)}</div>}
+    {question.choices.length > 0 && <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Suggested answers" onKeyDown={handleChoiceKeys}>{question.choices.map((choice, index) => <button key={choice} type="button" tabIndex={index === selectedChoice ? 0 : -1} onFocus={() => setSelectedChoice(index)} onClick={() => onAnswer(choice)} className="rounded-md border border-[var(--luma-border-strong)] px-2.5 py-1.5 text-[11px] text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)]">{choice}</button>)}</div>}
     <div className="mt-3 flex gap-2"><input autoFocus value={answer} onChange={(event) => setAnswer(event.target.value)} aria-label="Your answer" placeholder="Type your answer…" className="luma-input min-w-0 flex-1" /><button type="submit" disabled={!answer.trim()} className="rounded-md bg-[var(--luma-accent)] px-3 py-1.5 text-[11px] font-medium text-black disabled:opacity-40">Send</button></div>
   </form>;
 }
 
 function TaskQuestionCard({ task, busy, onAnswer }: { task: TaskRecord; busy: boolean; onAnswer: (taskId: string, questionId: string, answer: string) => Promise<void> }) {
   const [answer, setAnswer] = useState("");
+  const [selectedChoice, setSelectedChoice] = useState(0);
   if (task.status !== "waiting_for_input" || !task.checkpoint || typeof task.checkpoint !== "object") return null;
   const question = task.checkpoint as { question_id?: unknown; prompt?: unknown; choices?: unknown };
   if (typeof question.question_id !== "string" || typeof question.prompt !== "string" || !Array.isArray(question.choices) || !question.choices.every((choice) => typeof choice === "string")) return null;
+  const choices = question.choices as string[];
   const submit = (value: string) => { if (!busy && value.trim()) void onAnswer(task.id, question.question_id as string, value.trim()); };
+  const handleChoiceKeys = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!choices.length) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.currentTarget.parentElement?.querySelector<HTMLInputElement>("input")?.focus();
+      return;
+    }
+    if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key)) {
+      event.preventDefault();
+      const direction = ["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1;
+      const next = (selectedChoice + direction + choices.length) % choices.length;
+      setSelectedChoice(next);
+      (event.currentTarget.querySelectorAll("button")[next] as HTMLButtonElement | undefined)?.focus();
+    }
+  };
   return <div className="mt-3 rounded-lg border border-[var(--luma-warning)]/35 bg-[var(--luma-warning)]/5 p-3">
     <div className="text-[11px] font-semibold text-[var(--luma-warning)]">Luma needs your input</div>
     <p className="mt-1 whitespace-pre-wrap text-[12px] leading-5">{question.prompt}</p>
-    {question.choices.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{question.choices.map((choice) => <button key={choice} type="button" disabled={busy} onClick={() => submit(choice)} className="rounded-md border border-[var(--luma-border-strong)] px-2.5 py-1.5 text-[11px] hover:bg-[var(--luma-surface-hover)] disabled:opacity-50">{choice}</button>)}</div>}
+    {choices.length > 0 && <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Suggested answers" onKeyDown={handleChoiceKeys}>{choices.map((choice, index) => <button key={choice} type="button" tabIndex={index === selectedChoice ? 0 : -1} disabled={busy} onFocus={() => setSelectedChoice(index)} onClick={() => submit(choice)} className="rounded-md border border-[var(--luma-border-strong)] px-2.5 py-1.5 text-[11px] hover:bg-[var(--luma-surface-hover)] disabled:opacity-50">{choice}</button>)}</div>}
     <form className="mt-3 flex gap-2" onSubmit={(event) => { event.preventDefault(); submit(answer); }}><input value={answer} onChange={(event) => setAnswer(event.target.value)} maxLength={8000} placeholder="Type your answer…" className="luma-input min-w-0 flex-1" /><button type="submit" disabled={busy || !answer.trim()} className="luma-btn-primary h-8 px-3 text-[11px] disabled:opacity-40">Answer</button></form>
   </div>;
 }
@@ -2150,6 +2211,118 @@ function resizePrompt(textarea: HTMLTextAreaElement | null, minHeight: number, m
   textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
 }
 
+function PromptInput({ inputRef, value, onChange, onKeyDown, placeholder, disabled = false, maxHeight = 112 }: {
+  inputRef: RefObject<HTMLTextAreaElement | null>;
+  value: string;
+  onChange: (value: string) => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  placeholder: string;
+  disabled?: boolean;
+  maxHeight?: number;
+}) {
+  useEffect(() => resizePrompt(inputRef.current, 24, maxHeight), [inputRef, maxHeight, value]);
+  return <textarea
+    ref={inputRef}
+    value={value}
+    onChange={(event) => onChange(event.target.value)}
+    onKeyDown={onKeyDown}
+    placeholder={placeholder}
+    disabled={disabled}
+    rows={1}
+    className="luma-prompt-input"
+  />;
+}
+
+function ComposerQuickSettings({ sendWithEnter, onSendWithEnterChange, autoScrollToLatest, onAutoScrollToLatestChange, showToolActivity, onShowToolActivityChange, onOpenSettings, showCodeOptions = true }: {
+  sendWithEnter: boolean;
+  onSendWithEnterChange: (value: boolean) => void;
+  autoScrollToLatest: boolean;
+  onAutoScrollToLatestChange: (value: boolean) => void;
+  showToolActivity: boolean;
+  onShowToolActivityChange: (value: boolean) => void;
+  onOpenSettings: () => void;
+  showCodeOptions?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    menuRef.current?.querySelector<HTMLElement>("input, button")?.focus();
+  }, [open]);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => { if (!menuRef.current?.contains(event.target as Node)) setOpen(false); };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", key); };
+  }, [open]);
+  return <div className="luma-composer-quick-settings" ref={menuRef}>
+    <button ref={triggerRef} type="button" aria-label="Prompt settings" title="Quick settings" aria-expanded={open} onKeyDown={(event) => {
+      if (["ArrowDown", "Enter", " "].includes(event.key)) { event.preventDefault(); setActiveIndex(0); setOpen(true); }
+    }} onClick={() => setOpen((value) => !value)}>···</button>
+    {open && <div autoFocus tabIndex={-1} className="luma-composer-quick-menu" role="menu" aria-label="Prompt settings" onKeyDown={(event) => {
+      const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("input, button"));
+      if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key) && items.length) {
+        event.preventDefault();
+        const direction = ["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1;
+        const next = (activeIndex + direction + items.length) % items.length;
+        setActiveIndex(next); items[next].focus();
+      } else if (event.key === "Enter" && items[activeIndex] instanceof HTMLInputElement) {
+        const target = items[activeIndex] as HTMLInputElement;
+        event.preventDefault();
+        target.click();
+      } else if (event.key === "Escape") { event.preventDefault(); setOpen(false); triggerRef.current?.focus(); }
+    }}>
+      <label><input type="checkbox" checked={sendWithEnter} onChange={(event) => onSendWithEnterChange(event.target.checked)} /> Enter to send</label>
+      {showCodeOptions && <>
+        <label><input type="checkbox" checked={autoScrollToLatest} onChange={(event) => onAutoScrollToLatestChange(event.target.checked)} /> Auto-scroll to latest</label>
+        <label><input type="checkbox" checked={showToolActivity} onChange={(event) => onShowToolActivityChange(event.target.checked)} /> Show tool activity</label>
+      </>}
+      <button type="button" onClick={() => { setOpen(false); onOpenSettings(); }}>Open settings…</button>
+    </div>}
+  </div>;
+}
+
+function CodeModelPicker({ onChangeModel }: { onChangeModel: (scope: "global" | "session") => void }) {
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[activeIndex]?.focus();
+  }, [activeIndex, open]);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: PointerEvent) => { if (!rootRef.current?.contains(event.target as Node)) setOpen(false); };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", close);
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", key); };
+  }, [open]);
+  return <div className="luma-composer-model-picker" ref={rootRef}>
+    <button type="button" className="luma-composer-model-button" aria-haspopup="menu" aria-expanded={open} onKeyDown={(event) => {
+      if (["ArrowDown", "Enter", " "].includes(event.key)) { event.preventDefault(); setActiveIndex(0); setOpen(true); }
+    }} onClick={() => setOpen((value) => !value)}>Model <span aria-hidden="true">⌄</span></button>
+    {open && <div ref={menuRef} className="luma-composer-model-menu" role="menu" onKeyDown={(event) => {
+      if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key)) {
+        event.preventDefault();
+        const direction = ["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1;
+        const next = (activeIndex + direction + 2) % 2;
+        setActiveIndex(next);
+        event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')[next]?.focus();
+      }
+      else if (event.key === "Escape") { event.preventDefault(); setOpen(false); rootRef.current?.querySelector("button")?.focus(); }
+    }}>
+      <button type="button" role="menuitem" tabIndex={activeIndex === 0 ? 0 : -1} onFocus={() => setActiveIndex(0)} onClick={() => { setOpen(false); onChangeModel("global"); }}>Default model</button>
+      <button type="button" role="menuitem" tabIndex={activeIndex === 1 ? 0 : -1} onFocus={() => setActiveIndex(1)} onClick={() => { setOpen(false); onChangeModel("session"); }}>This conversation</button>
+    </div>}
+  </div>;
+}
+
 function Composer({
   thinking,
   preparing,
@@ -2162,6 +2335,12 @@ function Composer({
   onChange,
   onChangeModel,
   sendWithEnter,
+  onSendWithEnterChange,
+  autoScrollToLatest,
+  onAutoScrollToLatestChange,
+  showToolActivity,
+  onShowToolActivityChange,
+  onOpenSettings,
 }: {
   thinking: boolean;
   preparing: boolean;
@@ -2174,21 +2353,26 @@ function Composer({
   onChange: (value: string) => void;
   onChangeModel: (scope: "global" | "session") => void;
   sendWithEnter: boolean;
+  onSendWithEnterChange: (value: boolean) => void;
+  autoScrollToLatest: boolean;
+  onAutoScrollToLatestChange: (value: boolean) => void;
+  showToolActivity: boolean;
+  onShowToolActivityChange: (value: boolean) => void;
+  onOpenSettings: () => void;
 }) {
   const [selectedCommand, setSelectedCommand] = useState(0);
+  const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState("");
   const [attaching, setAttaching] = useState(false);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const matches = useMemo(() => {
-    if (!value.startsWith("/")) return [];
+    if (suggestionsDismissed || !value.startsWith("/")) return [];
     const query = value.toLowerCase();
     return SLASH_COMMANDS.filter((item) => item.command.startsWith(query));
-  }, [value]);
+  }, [suggestionsDismissed, value]);
 
   useEffect(() => setSelectedCommand(0), [value]);
-  useEffect(() => resizePrompt(promptRef.current, 40, 128), [value]);
-
   function chooseCommand(command: string) {
     onChange(`${command} `);
   }
@@ -2264,26 +2448,31 @@ function Composer({
         className="luma-composer
           mx-auto flex max-w-[860px]
           items-end gap-2
-          rounded-xl
+          rounded-lg
           border border-[var(--luma-border-strong)]
           bg-[var(--luma-surface-raised)]
-          px-3.5 py-3
+          px-2.5 py-1.5
           shadow-sm transition-colors
           focus-within:border-[var(--luma-accent)]
         "
       >
         <button type="button" onClick={() => void attachFiles()} disabled={thinking || preparing || attaching} aria-label="Attach files" title="Attach text files" className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)] hover:text-[var(--luma-text)] disabled:opacity-40"><PlusIcon /></button>
-        <textarea
-          ref={promptRef}
+        <PromptInput
+          inputRef={promptRef}
           value={value}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(nextValue) => { setSuggestionsDismissed(false); onChange(nextValue); }}
           onKeyDown={(event) => {
-            if (matches.length > 0 && event.key === "ArrowDown") {
+            if (event.key === "Escape" && matches.length > 0) {
+              event.preventDefault();
+              setSuggestionsDismissed(true);
+              return;
+            }
+            if (matches.length > 0 && ["ArrowDown", "ArrowRight"].includes(event.key)) {
               event.preventDefault();
               setSelectedCommand((current) => (current + 1) % matches.length);
               return;
             }
-            if (matches.length > 0 && event.key === "ArrowUp") {
+            if (matches.length > 0 && ["ArrowUp", "ArrowLeft"].includes(event.key)) {
               event.preventDefault();
               setSelectedCommand((current) => (current - 1 + matches.length) % matches.length);
               return;
@@ -2305,23 +2494,13 @@ function Composer({
               submit();
             }
           }}
-          rows={1}
           placeholder={preparing ? "Preparing a new conversation…" : thinking ? "Luma is working..." : "Ask Luma anything..."}
           disabled={thinking || preparing}
-          className="
-            luma-code-prompt
-            min-h-[40px] max-h-32 flex-1
-            resize-none
-            bg-transparent
-            py-1
-            text-[13px]
-            leading-5
-            text-[var(--luma-text)]
-            outline-none
-            placeholder:text-[var(--luma-text-muted)]
-            disabled:opacity-50
-          "
+          maxHeight={112}
         />
+
+        <CodeModelPicker onChangeModel={onChangeModel} />
+        <ComposerQuickSettings sendWithEnter={sendWithEnter} onSendWithEnterChange={onSendWithEnterChange} autoScrollToLatest={autoScrollToLatest} onAutoScrollToLatestChange={onAutoScrollToLatestChange} showToolActivity={showToolActivity} onShowToolActivityChange={onShowToolActivityChange} onOpenSettings={onOpenSettings} />
 
         {thinking ? (
           <button
@@ -2360,15 +2539,12 @@ function Composer({
         )}
       </div>
 
-      <div className="mx-auto mt-2 flex max-w-[860px] items-center justify-between px-1 text-[11px] text-[var(--luma-text-muted)]">
-        <span>{sendWithEnter ? "Enter to send · Shift+Enter for a new line" : "Enter for a new line · Use Send to submit"}</span>
-        <span className="hidden sm:inline">Luma can make mistakes. Review important changes.</span>
-      </div>
+      <div className="mx-auto mt-1 max-w-[860px] px-1 text-[10px] text-[var(--luma-text-muted)]">{sendWithEnter ? "Enter to send · Shift+Enter for a new line" : "Enter for a new line · Use Send to submit"}</div>
     </div>
   );
 }
 
-function AgentView({ onChangeModel, sendWithEnter, autoScrollToLatest, showToolActivity, workspacePath, onToggleInspector, inspectorVisible, onOpenEditor, handoffPrompt, onHandoffConsumed, titlebarStatus }: { onChangeModel: (scope: "global" | "session") => void; sendWithEnter: boolean; autoScrollToLatest: boolean; showToolActivity: boolean; workspacePath: string; onToggleInspector: () => void; inspectorVisible: boolean; onOpenEditor: () => void; handoffPrompt: string; onHandoffConsumed: () => void; titlebarStatus: TitlebarStatus | null }) {
+function AgentView({ onChangeModel, sendWithEnter, onSendWithEnterChange, autoScrollToLatest, onAutoScrollToLatestChange, showToolActivity, onShowToolActivityChange, onOpenSettings, workspacePath, onToggleInspector, inspectorVisible, onOpenEditor, handoffPrompt, onHandoffConsumed, titlebarStatus }: { onChangeModel: (scope: "global" | "session") => void; sendWithEnter: boolean; onSendWithEnterChange: (value: boolean) => void; autoScrollToLatest: boolean; onAutoScrollToLatestChange: (value: boolean) => void; showToolActivity: boolean; onShowToolActivityChange: (value: boolean) => void; onOpenSettings: () => void; workspacePath: string; onToggleInspector: () => void; inspectorVisible: boolean; onOpenEditor: () => void; handoffPrompt: string; onHandoffConsumed: () => void; titlebarStatus: TitlebarStatus | null }) {
   const [draft, setDraft] = useState("");
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [toolGroupExpansion, setToolGroupExpansion] = useState<Record<string, boolean>>({});
@@ -2597,6 +2773,12 @@ function AgentView({ onChangeModel, sendWithEnter, autoScrollToLatest, showToolA
         onChange={setDraft}
         onChangeModel={onChangeModel}
         sendWithEnter={sendWithEnter}
+        onSendWithEnterChange={onSendWithEnterChange}
+        autoScrollToLatest={autoScrollToLatest}
+        onAutoScrollToLatestChange={onAutoScrollToLatestChange}
+        showToolActivity={showToolActivity}
+        onShowToolActivityChange={onShowToolActivityChange}
+        onOpenSettings={onOpenSettings}
       />
     </div>
   );
@@ -3367,7 +3549,7 @@ function CodeInspector({ workspacePath, onOpenFile }: {
   );
 }
 
-function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWithEnter, titlebarStatus }: { onSidebarChange: (sidebar: React.ReactNode) => void; onOpenFile: (path: string) => void; onHandoffToCode: (prompt: string) => void; sendWithEnter: boolean; titlebarStatus: TitlebarStatus | null }) {
+function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWithEnter, onSendWithEnterChange, autoScrollToLatest, onAutoScrollToLatestChange, showToolActivity, onShowToolActivityChange, onOpenSettings, titlebarStatus }: { onSidebarChange: (sidebar: React.ReactNode) => void; onOpenFile: (path: string) => void; onHandoffToCode: (prompt: string) => void; sendWithEnter: boolean; onSendWithEnterChange: (value: boolean) => void; autoScrollToLatest: boolean; onAutoScrollToLatestChange: (value: boolean) => void; showToolActivity: boolean; onShowToolActivityChange: (value: boolean) => void; onOpenSettings: () => void; titlebarStatus: TitlebarStatus | null }) {
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeEvent[]>([]);
@@ -3379,6 +3561,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [memoryRevision, setMemoryRevision] = useState(0);
   const [selectedAgentId, setSelectedAgentId] = useState<string>("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [settingsSection, setSettingsSection] = useState<"identity" | "behavior" | "capabilities" | "memory" | "schedules" | "advanced">("identity");
   const [sendingMessage, setSendingMessage] = useState(false);
   const [submittingTaskId, setSubmittingTaskId] = useState<string | null>(null);
   const [stoppingTaskId, setStoppingTaskId] = useState<string | null>(null);
@@ -3403,7 +3586,12 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [agentDescriptionDraft, setAgentDescriptionDraft] = useState("");
   const [configurationDraft, setConfigurationDraft] = useState("");
   const [chatPrompt, setChatPrompt] = useState("");
+  const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
+  const [teammateNotice, setTeammateNotice] = useState("");
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
+  const [activeSlashIndex, setActiveSlashIndex] = useState(0);
   const chatPromptRef = useRef<HTMLTextAreaElement>(null);
+  const teammateHistoryRef = useRef<HTMLDivElement>(null);
   const [chatAttachments, setChatAttachments] = useState<ChatAttachment[]>([]);
   const [activeTab, setActiveTab] = useState<"chat" | "settings">("chat");
   const [inspectorTab, setInspectorTab] = useState<"tasks" | "notes" | "files">("tasks");
@@ -3414,8 +3602,6 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const refreshing = useRef(false);
-
-  useEffect(() => resizePrompt(chatPromptRef.current, 34, 88), [chatPrompt]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -3473,6 +3659,17 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   }, [refresh]);
 
   useEffect(() => {
+    if (!selectedAgentId) return;
+    let disposed = false;
+    void window.luma.getTasks(selectedAgentId).then((nextTasks) => {
+      if (!disposed) setTasks(nextTasks);
+    }).catch((reason) => {
+      if (!disposed) setError(reason instanceof Error ? reason.message : String(reason));
+    });
+    return () => { disposed = true; };
+  }, [selectedAgentId]);
+
+  useEffect(() => {
     let disposed = false;
     void window.luma.getWorkspace().then((workspace) => {
       if (!disposed) setWorkspacePath(workspace.path);
@@ -3486,16 +3683,20 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
     const scopeId = memoryScope === "agent" ? selectedAgentId : memoryScope === "user" ? "default" : workspacePath;
     if (!scopeId) { setMemoryEntries([]); return; }
     let disposed = false;
-    void window.luma.getMemory(memoryScope, scopeId).then((entries) => {
-      if (!disposed) setMemoryEntries(entries);
-    }).catch((reason) => {
-      if (!disposed) setError(reason instanceof Error ? reason.message : String(reason));
-    });
-    return () => { disposed = true; };
+    const loadMemory = () => {
+      void window.luma.getMemory(memoryScope, scopeId).then((entries) => {
+        if (!disposed) setMemoryEntries(entries);
+      }).catch((reason) => {
+        if (!disposed) setError(reason instanceof Error ? reason.message : String(reason));
+      });
+    };
+    loadMemory();
+    const timer = window.setInterval(loadMemory, 5000);
+    return () => { disposed = true; window.clearInterval(timer); };
   }, [memoryScope, selectedAgentId, workspacePath, memoryRevision]);
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
-  const agentTasks = tasks.filter((task) => task.agent_id === selectedAgentId && !task.schedule_id);
+  const agentTasks = useMemo(() => tasks.filter((task) => task.agent_id === selectedAgentId && !task.schedule_id), [tasks, selectedAgentId]);
   const inspectorActiveTasks = agentTasks.filter((task) => ["queued", "running", "waiting_for_approval", "waiting_for_input", "paused"].includes(task.status));
   const inspectorCompletedTasks = agentTasks.filter((task) => ["completed", "failed", "cancelled", "interrupted"].includes(task.status)).sort((left, right) => right.created_at - left.created_at).slice(0, 6);
   const agentApprovals = approvals.filter((approval) => approval.agent_id === selectedAgentId);
@@ -3503,12 +3704,75 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
     ? selectedTaskId === "__new__" ? [] : agentTasks.filter((task) => task.id === selectedTaskId)
     : agentTasks;
   const mentionQuery = chatPrompt.match(/(?:^|\s)@([^\s]*)$/)?.[1];
-  const mentionMatches = mentionQuery === undefined ? [] : agents
+  const mentionMatches = suggestionsDismissed || mentionQuery === undefined ? [] : agents
     .filter((agent) => agent.id !== selectedAgentId)
     .filter((agent) => `${agent.name} ${agent.description ?? ""}`.toLowerCase().includes(mentionQuery.toLowerCase()));
+  const teammateSlashMatches = !suggestionsDismissed && chatPrompt.startsWith("/")
+    ? TEAMMATE_SLASH_COMMANDS.filter((item) => item.command.startsWith(chatPrompt.toLowerCase()))
+    : [];
   const hasMentionRoute = routeTeammateMentions(chatPrompt, agents).destinations.length > 0;
   const activeComposerTask = visibleAgentTasks.find((task) => ["queued", "running", "waiting_for_approval", "waiting_for_input", "paused"].includes(task.status));
   const activeComposerTaskId = activeComposerTask?.id ?? submittingTaskId;
+
+  function chooseMention(agent: AgentRecord) {
+    setChatPrompt((value) => value.replace(/(?:^|\s)@[^\s]*$/, (match) => `${match.startsWith(" ") ? " " : ""}@${agent.name} `));
+    setActiveMentionIndex(0);
+    chatPromptRef.current?.focus();
+  }
+
+  async function runTeammateCommand(rawCommand: string) {
+    const command = rawCommand.trim().toLowerCase();
+    setChatPrompt("");
+    setTeammateNotice("");
+    if (command === "/help") {
+      setTeammateNotice(TEAMMATE_SLASH_COMMANDS.map((item) => `${item.command} — ${item.description}`).join("\n"));
+    } else if (command === "/new" || command === "/clear") {
+      setSelectedTaskId("__new__"); setChatAttachments([]); setActiveTab("chat");
+    } else if (command === "/history") {
+      setSelectedTaskId(null); setActiveTab("chat");
+    } else if (command === "/settings") {
+      setSettingsSection("identity"); setActiveTab("settings");
+    } else if (command === "/memory") {
+      setSettingsSection("memory"); setActiveTab("settings");
+    } else if (command === "/schedule") {
+      setSettingsSection("schedules"); setActiveTab("settings");
+    } else if (command === "/status") {
+      setTeammateNotice(`${selectedAgent?.name ?? "Teammate"} · ${selectedAgent?.status ?? "unknown"} · ${agentTasks.length} saved tasks · ${inspectorActiveTasks.length} active`);
+    } else if (command === "/pause" && selectedAgent) {
+      await perform(() => window.luma.setAgentStatus(selectedAgent.id, "paused"));
+    } else if (command === "/resume" && selectedAgent) {
+      await perform(() => window.luma.setAgentStatus(selectedAgent.id, "idle"));
+    } else if (command === "/stop" && activeComposerTaskId) {
+      await perform(() => window.luma.cancelTask(activeComposerTaskId));
+    } else {
+      setTeammateNotice(`Unknown Teammates command: ${rawCommand}. Type /help to see available commands.`);
+    }
+  }
+
+  useEffect(() => {
+    const history = teammateHistoryRef.current;
+    if (activeTab !== "chat" || !selectedAgentId || !history) return;
+    let frame = 0;
+    const scrollToLatest = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = window.requestAnimationFrame(() => {
+          history.scrollTop = history.scrollHeight;
+        });
+      });
+    };
+    // Always start a selected teammate/task at the latest message. Keep following
+    // streamed content only while the user's auto-scroll preference is enabled.
+    scrollToLatest();
+    const observer = new MutationObserver(() => {
+      if (autoScrollToLatest) scrollToLatest();
+    });
+    observer.observe(history, { childList: true, characterData: true, subtree: true });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [activeTab, selectedAgentId, selectedTaskId, autoScrollToLatest]);
 
   useEffect(() => {
     if (inspectorTab !== "files") return;
@@ -3572,7 +3836,9 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
     const timeline = taskTimeline(task.id);
     const last = timeline[timeline.length - 1];
     if (last?.kind === "tools" && last.tools.some((tool) => tool.durationMs === undefined)) return "working";
-    return last?.kind === "text" ? "writing" : "thinking";
+    // Thinking is a still, attentive state. Only show motion when the
+    // teammate is visibly producing text or actively using a tool.
+    return last?.kind === "text" ? "writing" : "idle";
   };
 
   useEffect(() => {
@@ -3587,16 +3853,21 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
         {agents.length === 0 && <p className="px-1 py-3 text-[11px] text-[var(--luma-text-muted)]">No teammates yet. Add one to give it a persistent identity and workspace.</p>}
         <div className="mt-3 space-y-1">
           {agents.filter((agent) => `${agent.name} ${agent.description ?? ""}`.toLowerCase().includes(teammateSearch.trim().toLowerCase())).map((agent) => (
-            <button key={agent.id} type="button" aria-current={selectedAgentId === agent.id ? "page" : undefined} onClick={() => { setSelectedTaskId(null); setSelectedAgentId(agent.id); setActiveTab("chat"); }} className={`luma-teammate-nav-item w-full rounded-md px-2.5 py-2 text-left transition-colors ${selectedAgentId === agent.id ? "is-selected" : ""}`}>
-              <div className="flex items-center gap-2"><MascotAvatar seed={agent.name} mascot={agent.configuration.mascot} size={30} active={agent.status === "active"} activity={agent.status === "active" ? "working" : "idle"} /><span className={`h-1.5 w-1.5 rounded-full ${agent.status === "active" ? "bg-[var(--luma-success)]" : agent.status === "waiting" ? "bg-[var(--luma-warning)]" : "bg-[var(--luma-text-muted)]"}`} /><span className="min-w-0 flex-1 truncate text-[12px] font-medium">{agent.name}</span></div>
+            <button key={agent.id} type="button" aria-current={selectedAgentId === agent.id ? "page" : undefined} onClick={() => { setSelectedTaskId(null); setSelectedAgentId(agent.id); setActiveTab("chat"); setTeammateNotice(""); }} className={`luma-teammate-nav-item w-full rounded-md px-2.5 py-2 text-left transition-colors ${selectedAgentId === agent.id ? "is-selected" : ""}`}>
+              <div className="flex items-center gap-2"><MascotAvatar seed={agent.name} mascot={agent.configuration.mascot} size={30} active={false} activity="idle" /><span className={`h-1.5 w-1.5 rounded-full ${agent.status === "active" ? "bg-[var(--luma-success)]" : agent.status === "waiting" ? "bg-[var(--luma-warning)]" : "bg-[var(--luma-text-muted)]"}`} /><span className="min-w-0 flex-1 truncate text-[12px] font-medium">{agent.name}</span></div>
               <div className="mt-1 pl-10 text-[10px] text-[var(--luma-text-muted)]">{agent.description || (agent.id === "agent_global" ? "Global teammate" : agent.status === "active" ? "Working now" : agent.status === "waiting" ? "Needs your attention" : "Ready when needed")}</div>
             </button>
           ))}
+          {selectedAgent && <div key={selectedAgent.id} className="luma-teammate-history-list">
+            <div className="flex items-center justify-between px-2 pb-1 pt-2"><span className="luma-kicker">HISTORY</span><button type="button" onClick={() => { setSelectedTaskId(null); setActiveTab("chat"); }} className="text-[10px] text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]">All</button></div>
+            {agentTasks.slice().sort((left, right) => right.created_at - left.created_at).slice(0, 30).map((task) => <button key={task.id} type="button" className={`luma-teammate-history-nav-item ${selectedTaskId === task.id ? "is-selected" : ""}`} onClick={() => { setSelectedTaskId(task.id); setActiveTab("chat"); }}><span>{task.title || task.request}</span><small>{new Date(task.created_at * 1000).toLocaleDateString()}</small></button>)}
+            {agentTasks.length === 0 && <p className="px-2 py-2 text-[10px] text-[var(--luma-text-muted)]">No history yet.</p>}
+          </div>}
         </div>
       </div>,
     );
     return () => onSidebarChange(null);
-  }, [agents, busy, onSidebarChange, selectedAgentId, selectedTaskId, teammateSearch, teammateSearchOpen]);
+  }, [agents, agentTasks, busy, onSidebarChange, selectedAgentId, selectedTaskId, teammateSearch, teammateSearchOpen]);
 
   useEffect(() => {
     if (!selectedAgent) return;
@@ -3655,7 +3926,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
         <div className="flex min-h-0 flex-1">
           <div className="luma-teammates-content flex min-h-0 flex-1 flex-col">
             {selectedAgent && <div className="luma-teammate-header flex shrink-0 items-center gap-3 px-6 py-2">
-              <MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={32} active={selectedAgent.status === "active"} activity={sendingMessage ? "working" : activeComposerTask ? taskMascotActivity(activeComposerTask) : "idle"} />
+              <MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={32} active={false} activity={sendingMessage ? "idle" : activeComposerTask ? taskMascotActivity(activeComposerTask) : "idle"} />
               <div className="min-w-0"><div className="text-[13px] font-semibold">{selectedAgent.name}</div><div className="truncate text-[11px] text-[var(--luma-text-muted)]">{selectedAgent.description || "Personal teammate"}</div></div>
               <span className="luma-activity-pill" data-status-color={titlebarStatus?.color ?? (selectedAgent.status === "active" ? "blue" : selectedAgent.status === "waiting" ? "amber" : selectedAgent.status === "stopped" ? "red" : "green")}><i />{titlebarStatus?.text ?? (selectedAgent.status === "active" ? "Working" : selectedAgent.status === "waiting" ? "Needs you" : selectedAgent.status === "paused" ? "Paused" : selectedAgent.status === "stopped" ? "Stopped" : "Ready")}</span>
               <div className="ml-auto flex items-center gap-1">
@@ -3663,17 +3934,18 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                 <button type="button" className="luma-inspector-icon-button" onClick={() => setInspectorVisible((visible) => !visible)} aria-label={inspectorVisible ? "Hide tasks" : "Show tasks"} title={inspectorVisible ? "Hide tasks" : "Show tasks"}><PanelCloseIcon /></button>
               </div>
             </div>}
-          <div className="min-h-0 flex-1 overflow-auto p-4">
+          <div className="min-h-0 flex-1 overflow-hidden p-4">
             {!selectedAgent ? <div className="flex h-full items-center justify-center text-[12px] text-[var(--luma-text-muted)]">Select a teammate to start chatting.</div> : activeTab === "chat" ? (
               <div className="mx-auto flex h-full w-full max-w-[720px] flex-col">
-                <div key={selectedAgent.id} className="luma-teammate-history-transition min-h-0 flex-1 space-y-5 overflow-auto pb-5">
-                  {visibleAgentTasks.length === 0 ? <div className="flex h-full flex-col items-center justify-center text-center"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={96} active /><h3 className="mt-4 text-[16px] font-semibold">{selectedTaskId === "__new__" ? `New chat with ${selectedAgent.name}` : `Chat with ${selectedAgent.name}`}</h3><p className="mt-1 max-w-sm text-[12px] leading-6 text-[var(--luma-text-muted)]">Start a conversation. This chat has its own history.</p></div> : visibleAgentTasks.slice().reverse().map((task) => {
+                <div ref={teammateHistoryRef} key={selectedAgent.id} className="luma-teammate-history-transition min-h-0 flex-1 space-y-5 overflow-auto pb-5">
+                  {teammateNotice && <div role="status" className="whitespace-pre-wrap rounded-md border border-[var(--luma-border)] px-3 py-2 text-[11px] leading-5 text-[var(--luma-text-secondary)]">{teammateNotice}</div>}
+                  {visibleAgentTasks.length === 0 ? <div className="flex h-full flex-col items-center justify-center text-center"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={96} active={false} activity="idle" /><h3 className="mt-4 text-[16px] font-semibold">{selectedTaskId === "__new__" ? `New chat with ${selectedAgent.name}` : `Chat with ${selectedAgent.name}`}</h3><p className="mt-1 max-w-sm text-[12px] leading-6 text-[var(--luma-text-muted)]">Start a conversation. This chat has its own history.</p></div> : visibleAgentTasks.slice().reverse().map((task) => {
                     const timeline = taskTimeline(task.id);
                     const hasAnswer = timeline.some((segment) => segment.kind === "text");
                     const activity = taskMascotActivity(task);
                     return <article key={task.id} className="space-y-3">
                       <div className="luma-teammate-user-row flex w-full justify-end"><div className="luma-teammate-user-message px-3 py-2"><div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">You</div><p className="whitespace-pre-wrap break-words text-[12px] leading-6">{task.request}</p></div></div>
-                      <div className="luma-teammate-assistant-message flex items-start gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={42} active={task.status === "running"} activity={activity} /><div className="min-w-0 flex-1 pt-0.5"><div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">{selectedAgent.name}<span className="font-normal normal-case tracking-normal">{task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : task.status === "waiting_for_approval" ? "· needs approval" : task.status === "waiting_for_input" ? "· needs your answer" : ""}</span></div><div className="luma-teammate-assistant-bubble space-y-2">
+                      <div className="luma-teammate-assistant-message flex items-start gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={42} active={false} activity={activity} /><div className="min-w-0 flex-1 pt-0.5"><div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">{selectedAgent.name}<span className="font-normal normal-case tracking-normal">{task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : task.status === "waiting_for_approval" ? "· needs approval" : task.status === "waiting_for_input" ? "· needs your answer" : ""}</span></div><div className="luma-teammate-assistant-bubble space-y-2">
                         {timeline.map((segment) => segment.kind === "tools" ? (
                           <details key={segment.id} className="luma-task-tool-group rounded-md border border-[var(--luma-border)] px-2 py-1.5">
                             <summary className="cursor-pointer select-none text-[10px] text-[var(--luma-text-muted)]">{toolActivityLabel(segment.tools)}</summary>
@@ -3695,6 +3967,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                   event.preventDefault();
                   const text = chatPrompt.trim() || (chatAttachments.length ? "Please inspect the attached files." : "");
                   if (!text || busy) return;
+                  if (chatAttachments.length === 0 && TEAMMATE_SLASH_COMMANDS.some((item) => item.command === text.toLowerCase())) { void runTeammateCommand(text); return; }
                   const routing = routeTeammateMentions(text, agents);
                   const mentionedAgents = routing.destinations;
                   const destinations = mentionedAgents.length ? mentionedAgents : [selectedAgent];
@@ -3713,19 +3986,43 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                     }
                     const created = createdTasks[0];
                     if (mentionedAgents.length) setSelectedAgentId(destinations[0].id);
-                    setSelectedTaskId(created.id);
+                    setSelectedTaskId(null);
                     setSubmittingTaskId(created.id);
                     setChatPrompt("");
                     setChatAttachments([]);
+                    setTeammateNotice("");
                   }).finally(() => setSendingMessage(false));
                 }}>
                   {chatAttachments.length > 0 && <div className="mb-2 flex flex-wrap gap-1.5">{chatAttachments.map((attachment, index) => <span key={`${attachment.name}-${index}`} className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-[var(--luma-border)] px-2 py-1 text-[10px] text-[var(--luma-text-secondary)]"><span className="max-w-56 truncate">{attachment.name}</span><button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setChatAttachments((items) => items.filter((_, itemIndex) => itemIndex !== index))} className="text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]">×</button></span>)}</div>}
-                  {mentionMatches.length > 0 && <div className="luma-mention-menu"><p>Route this task to a teammate</p>{mentionMatches.map((agent) => <button key={agent.id} type="button" onClick={() => { setChatPrompt((value) => value.replace(/(?:^|\s)@[^\s]*$/, (match) => `${match.startsWith(" ") ? " " : ""}@${agent.name} `)); chatPromptRef.current?.focus(); }}>{agent.name}<span>{agent.description || "Teammate"}</span></button>)}</div>}
+                  {teammateSlashMatches.length > 0 && <div className="luma-command-menu luma-teammate-slash-menu" role="listbox" aria-label="Teammates commands">{teammateSlashMatches.map((item, index) => <button key={item.command} type="button" role="option" aria-selected={index === activeSlashIndex} className={index === activeSlashIndex ? "is-active" : ""} onMouseDown={(event) => event.preventDefault()} onClick={() => setChatPrompt(`${item.command} `)}><code>{item.command}</code><span>{item.description}</span></button>)}</div>}
+                  {mentionMatches.length > 0 && <div className="luma-mention-menu" role="listbox" aria-label="Assign task to teammate"><p>Assign this task to a teammate</p>{mentionMatches.map((agent, index) => <button key={agent.id} type="button" role="option" aria-selected={index === activeMentionIndex} className={index === activeMentionIndex ? "is-active" : ""} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActiveMentionIndex(index)} onClick={() => chooseMention(agent)}>{agent.name}<span>{agent.description || "Teammate"}</span></button>)}</div>}
                   <div className="luma-teammate-composer-row flex items-center gap-2">
                     <button type="button" aria-label="Attach files" title="Attach text files" disabled={busy || (!hasMentionRoute && (selectedAgent.status === "stopped" || selectedAgent.status === "paused"))} onClick={() => void attachChatFiles()} className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)] hover:text-[var(--luma-text)] disabled:opacity-40"><PlusIcon /></button>
                     <button type="button" aria-label="Route to a teammate" title="Route this task to another teammate" disabled={busy} onClick={() => { setChatPrompt((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}@`); chatPromptRef.current?.focus(); }} className="luma-mention-button">@</button>
-                    <textarea ref={chatPromptRef} value={chatPrompt} onChange={(event) => setChatPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && sendWithEnter) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message ${selectedAgent.name}; use @ to route a task…`} rows={1} className="luma-teammate-prompt luma-input min-h-[34px] min-w-0 flex-1 self-center resize-none border-0 bg-transparent px-0 py-0 text-[13px] leading-5 focus:ring-0" />
-                    <TeammateModelDropdown agent={selectedAgent} onChanged={() => void refresh()} />
+                    <PromptInput inputRef={chatPromptRef} value={chatPrompt} onChange={(value) => { setChatPrompt(value); setSuggestionsDismissed(false); setActiveMentionIndex(0); setActiveSlashIndex(0); }} onKeyDown={(event) => {
+                      const move = (count: number, current: number, setter: (value: number) => void) => {
+                        if (!["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key) || count === 0) return false;
+                        event.preventDefault(); const direction = ["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1;
+                        setter((current + direction + count) % count); return true;
+                      };
+                      if (teammateSlashMatches.length && move(teammateSlashMatches.length, activeSlashIndex, setActiveSlashIndex)) return;
+                      if (mentionMatches.length && move(mentionMatches.length, activeMentionIndex, setActiveMentionIndex)) return;
+                      if (event.key === "Escape" && (teammateSlashMatches.length || mentionMatches.length)) {
+                        event.preventDefault();
+                        setSuggestionsDismissed(true);
+                        return;
+                      }
+                      if (event.key === "Enter" && !event.shiftKey && sendWithEnter) {
+                        event.preventDefault();
+                        const exactCommand = TEAMMATE_SLASH_COMMANDS.find((item) => item.command === chatPrompt.trim().toLowerCase());
+                        if (exactCommand) { void runTeammateCommand(exactCommand.command); return; }
+                        if (mentionMatches.length && mentionQuery !== undefined) { chooseMention(mentionMatches[activeMentionIndex] ?? mentionMatches[0]); return; }
+                        if (teammateSlashMatches.length && chatPrompt.trim() !== teammateSlashMatches[activeSlashIndex]?.command) { setChatPrompt(`${teammateSlashMatches[activeSlashIndex]?.command ?? teammateSlashMatches[0].command} `); return; }
+                        event.currentTarget.form?.requestSubmit();
+                      }
+                    }} placeholder={`Message ${selectedAgent.name}; use @ to assign…`} maxHeight={88} />
+                    <TeammateModelDropdown key={selectedAgent.id} agent={selectedAgent} onChanged={() => void refresh()} />
+                    <ComposerQuickSettings sendWithEnter={sendWithEnter} onSendWithEnterChange={onSendWithEnterChange} autoScrollToLatest={autoScrollToLatest} onAutoScrollToLatestChange={onAutoScrollToLatestChange} showToolActivity={showToolActivity} onShowToolActivityChange={onShowToolActivityChange} onOpenSettings={onOpenSettings} showCodeOptions={false} />
                     {activeComposerTaskId && !hasMentionRoute ? <button type="button" aria-label="Stop current task" title="Stop current task" disabled={busy || stoppingTaskId === activeComposerTaskId || cancellingTasks.includes(activeComposerTaskId)} onClick={() => {
                       const taskId = activeComposerTaskId;
                       setStoppingTaskId(taskId);
@@ -3739,7 +4036,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                 </form>
               </div>
             ) : (
-              <div className="space-y-5">
+              <div className="luma-teammate-settings space-y-5" data-settings-tab={settingsSection}>
                 <section>
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
@@ -3754,7 +4051,11 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                   </div>
                 </section>
 
-                <section className="rounded-lg border border-[var(--luma-border)] p-3">
+                <nav className="luma-teammate-settings-nav" aria-label="Teammate settings sections">
+                  {(["identity", "behavior", "capabilities", "memory", "schedules", "advanced"] as const).map((section) => <button key={section} type="button" aria-pressed={settingsSection === section} data-active={settingsSection === section} onClick={() => setSettingsSection(section)}>{section[0].toUpperCase() + section.slice(1)}</button>)}
+                </nav>
+
+                <section data-settings-section="identity" className="rounded-lg border border-[var(--luma-border)] p-3">
                   <div className="mb-2 luma-kicker">Identity & personality</div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <label className="text-[10px] text-[var(--luma-text-muted)]">Name<input value={agentNameDraft} onChange={(event) => setAgentNameDraft(event.target.value)} maxLength={120} className="luma-input mt-1 h-8 w-full text-[11px]" /></label>
@@ -3762,31 +4063,35 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                   </div>
                   <button type="button" disabled={busy || !agentNameDraft.trim()} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, name: agentNameDraft.trim(), description: agentDescriptionDraft.trim() || null }); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save identity</button>
                   <MascotCustomizer value={mascotDraft} seed={selectedAgent.name} onChange={setMascotDraft} />
-                  <textarea value={personalityDraft} onChange={(event) => setPersonalityDraft(event.target.value)} rows={4} className="luma-input w-full resize-y text-[11px]" placeholder="How should this teammate behave?" />
-                  {selectedAgent.id !== "agent_global" && <label className="mt-3 flex items-start gap-2 text-[11px] text-[var(--luma-text-secondary)]"><input type="checkbox" checked={selectedAgent.configuration.use_global_context} onChange={(event) => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, use_global_context: event.target.checked, ...(event.target.checked ? { skills: [] } : {}) } }); })} className="mt-0.5 accent-[var(--luma-accent)]" /><span>Use the global skills, memory, connectors, etc.</span></label>}
-                  <label className="mt-3 flex items-start gap-2 text-[11px] text-[var(--luma-text-secondary)]"><input type="checkbox" checked={selectedAgent.configuration.network_access ?? true} onChange={(event) => { const enabled = event.target.checked; void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, network_access: enabled, permissions: { ...selectedAgent.configuration.permissions, allow_network: enabled } } }); }); }} className="mt-0.5 accent-[var(--luma-accent)]" /><span><strong>Internet access</strong><small className="mt-0.5 block text-[var(--luma-text-muted)]">Allow web search and fetching public webpages. Requests that can change external data still require approval.</small></span></label>
-                  {!selectedAgent.configuration.use_global_context && <input value={skillsDraft} onChange={(event) => setSkillsDraft(event.target.value)} className="luma-input mt-2 h-8 w-full text-[11px]" placeholder="Skills: research, code-review" />}
-                  <button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, mascot: mascotDraft, system_prompt: personalityDraft, skills: selectedAgent.configuration.use_global_context ? [] : [...new Set(skillsDraft.split(",").map((skill) => skill.trim()).filter(Boolean))] } }); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save changes</button>
                 </section>
 
-                <details className="rounded-lg border border-[var(--luma-border)] p-3">
-                  <summary className="cursor-pointer text-[12px] font-semibold">Advanced agent configuration</summary>
+                <section data-settings-section="behavior" className="rounded-lg border border-[var(--luma-border)] p-3">
+                  <h4 className="mb-2 luma-kicker">Behavior & instructions</h4>
+                  <p className="mb-2 text-[10px] leading-relaxed text-[var(--luma-text-muted)]">Define how this teammate approaches tasks, communicates, and makes decisions.</p>
+                  <textarea value={personalityDraft} onChange={(event) => setPersonalityDraft(event.target.value)} rows={8} className="luma-input w-full resize-y text-[11px]" placeholder="How should this teammate behave?" />
+                  <button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, system_prompt: personalityDraft } }); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save instructions</button>
+                </section>
+
+                <section data-settings-section="capabilities" className="rounded-lg border border-[var(--luma-border)] p-3">
+                  <h4 className="mb-3 luma-kicker">Capabilities & access</h4>
+                  {selectedAgent.id !== "agent_global" && <label className="flex items-start gap-2 text-[11px] text-[var(--luma-text-secondary)]"><input type="checkbox" checked={selectedAgent.configuration.use_global_context} onChange={(event) => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, use_global_context: event.target.checked, ...(event.target.checked ? { skills: [] } : {}) } }); })} className="mt-0.5 accent-[var(--luma-accent)]" /><span><strong>Use the global skills, memory, connectors, etc.</strong><small className="mt-0.5 block text-[var(--luma-text-muted)]">Share the global teammate's connected tools and shared context.</small></span></label>}
+                  <label className="mt-3 flex items-start gap-2 text-[11px] text-[var(--luma-text-secondary)]"><input type="checkbox" checked={selectedAgent.configuration.network_access ?? true} onChange={(event) => { const enabled = event.target.checked; void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, network_access: enabled, permissions: { ...selectedAgent.configuration.permissions, allow_network: enabled } } }); }); }} className="mt-0.5 accent-[var(--luma-accent)]" /><span><strong>Internet access</strong><small className="mt-0.5 block text-[var(--luma-text-muted)]">Allow web search and fetching public webpages. External changes still require approval.</small></span></label>
+                  {!selectedAgent.configuration.use_global_context && <label className="mt-3 block text-[11px] text-[var(--luma-text-muted)]">Assigned skills<input value={skillsDraft} onChange={(event) => setSkillsDraft(event.target.value)} className="luma-input mt-1 h-8 w-full text-[11px]" placeholder="research, writing, planning" /></label>}
+                  <button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, skills: selectedAgent.configuration.use_global_context ? [] : [...new Set(skillsDraft.split(",").map((skill) => skill.trim()).filter(Boolean))] } }); })} className="mt-3 text-[11px] text-[var(--luma-accent)] hover:underline">Save capabilities</button>
+                  {approvals.filter((approval) => approval.agent_id === selectedAgent.id).length > 0 && <div className="mt-4 border-t border-[var(--luma-border)] pt-3"><h4 className="mb-2 luma-kicker">Needs your approval</h4><div className="space-y-2">{approvals.filter((approval) => approval.agent_id === selectedAgent.id).map((approval) => <div key={approval.id} className="rounded-md border border-[var(--luma-warning)]/30 p-3"><div className="text-[11px] font-medium">{approval.tool}</div><pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-muted)]">{approval.arguments}</pre><div className="mt-2 flex justify-end gap-2"><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, false))} className="luma-btn-ghost h-7 px-2 text-[10px]">Deny</button><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, true))} className="luma-btn-primary h-7 px-2.5 text-[10px]">Approve</button></div></div>)}</div></div>}
+                </section>
+
+                <section data-settings-section="advanced" className="rounded-lg border border-[var(--luma-border)] p-3">
+                  <h4 className="mb-2 luma-kicker">Advanced agent configuration</h4>
                   <p className="mt-2 text-[10px] leading-5 text-[var(--luma-text-muted)]">Edit the complete AgentConfiguration object, including provider overrides, endpoint, allowed workspaces, enabled tools, permissions, network policy, and recovery behavior. Keep max_concurrent_tasks at 1 while the runtime uses a shared workspace worker.</p>
                   <textarea spellCheck={false} value={configurationDraft} onChange={(event) => setConfigurationDraft(event.target.value)} rows={18} className="luma-input mt-2 w-full resize-y font-mono text-[10px] leading-5" />
                   <div className="mt-2 flex justify-end"><button type="button" disabled={busy || !configurationDraft.trim()} onClick={() => void perform(async () => { let configuration: AgentConfiguration; try { configuration = JSON.parse(configurationDraft) as AgentConfiguration; } catch (reason) { throw new Error(`Invalid JSON: ${reason instanceof Error ? reason.message : String(reason)}`); } if (!configuration || typeof configuration !== "object" || !configuration.permissions || !Array.isArray(configuration.skills) || !Array.isArray(configuration.allowed_workspaces) || !Array.isArray(configuration.enabled_tools)) throw new Error("Configuration must include permissions, skills, allowed_workspaces, and enabled_tools."); await window.luma.updateAgent({ id: selectedAgent.id, configuration }); setConfigurationDraft(JSON.stringify(configuration, null, 2)); })} className="luma-btn-primary h-7 px-3 text-[10px]">Save full configuration</button></div>
-                </details>
+                </section>
 
-                {approvals.filter((approval) => approval.agent_id === selectedAgent.id).length > 0 && <section>
-                  <h4 className="mb-2 luma-kicker">Needs your approval</h4>
-                  <div className="space-y-2">{approvals.filter((approval) => approval.agent_id === selectedAgent.id).map((approval) => <div key={approval.id} className="rounded-md border border-[var(--luma-warning)]/30 bg-[var(--luma-warning)]/5 p-3">
-                    <div className="text-[11px] font-medium">{approval.tool}</div><pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-muted)]">{approval.arguments}</pre>
-                    <div className="mt-2 flex justify-end gap-2"><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, false))} className="luma-btn-ghost h-7 px-2 text-[10px]">Deny</button><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, true))} className="luma-btn-primary h-7 px-2.5 text-[10px]">Approve</button></div>
-                  </div>)}</div>
-                </section>}
-
-                <section className="grid gap-3 md:grid-cols-2">
-                  <div className="rounded-lg border border-[var(--luma-border)] p-3">
+                <section data-settings-section="memory" className="rounded-lg border border-[var(--luma-border)] p-3">
+                  <div>
                     <h4 className="mb-2 luma-kicker">Agent memory</h4>
+                    <p className="mb-2 text-[10px] leading-relaxed text-[var(--luma-text-muted)]">This teammate can learn useful preferences and project decisions automatically, and recall them in future tasks.</p>
                     <select value={memoryScope} onChange={(event) => setMemoryScope(event.target.value as MemoryScope)} className="luma-input mb-2 h-8 w-full text-[11px]">
                       <option value="agent">This agent</option><option value="user">Shared user memory</option><option value="project">This workspace</option>
                     </select>
@@ -3794,7 +4099,9 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                     <button type="button" disabled={busy || !memoryContent.trim() || (memoryScope === "project" && !workspacePath)} onClick={() => void perform(async () => { const scopeId = memoryScope === "agent" ? selectedAgent.id : memoryScope === "user" ? "default" : workspacePath; await window.luma.addMemory(memoryScope, scopeId, memoryContent.trim()); setMemoryContent(""); setMemoryRevision((revision) => revision + 1); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save memory</button>
                     <div className="mt-2 max-h-32 space-y-1 overflow-auto">{memoryEntries.map((entry) => <div key={entry.id} className="flex items-start gap-2 border-t border-[var(--luma-border)] py-1.5"><p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-secondary)]">{entry.content}</p><button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.deleteMemory(entry.id); setMemoryRevision((revision) => revision + 1); })} className="text-[10px] text-[var(--luma-danger)] hover:underline">Delete</button></div>)}</div>
                   </div>
-                  <div className="rounded-lg border border-[var(--luma-border)] p-3">
+                </section>
+                <section data-settings-section="schedules" className="rounded-lg border border-[var(--luma-border)] p-3">
+                  <div>
                     <h4 className="mb-2 luma-kicker">Recurring work</h4>
                     <input value={scheduleTitle} onChange={(event) => setScheduleTitle(event.target.value)} maxLength={120} placeholder="Schedule name" className="luma-input mb-2 h-8 w-full text-[11px]" />
                     <textarea value={schedulePrompt} onChange={(event) => setSchedulePrompt(event.target.value)} rows={2} placeholder="What should this teammate repeat?" className="luma-input w-full resize-y text-[11px]" />
@@ -3869,7 +4176,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
               catch (reason) { setError(reason instanceof Error ? `Teammate created, but initial memory could not be saved: ${reason.message}` : "Teammate created, but initial memory could not be saved."); }
             }
           }); }}>
-            <header className="luma-create-header flex items-start justify-between border-b border-[var(--luma-border)] px-6 py-5"><div><div className="luma-kicker mb-2">TEAMMATES / NEW</div><h3 id="create-teammate-title" className="text-[19px] font-semibold tracking-tight">Create a teammate</h3><p className="mt-1.5 text-[12px] text-[var(--luma-text-muted)]">Give a new agent a name, a personality and a place to work.</p></div><button type="button" aria-label="Close dialog" onClick={() => setCreateOpen(false)} className="luma-create-close" disabled={busy}>×</button></header>
+            <header className="luma-create-header flex items-center justify-between border-b border-[var(--luma-border)] px-6 py-4"><div><div className="luma-kicker mb-1">TEAMMATES <span aria-hidden="true">/</span> CREATE</div><h3 id="create-teammate-title" className="text-[18px] font-semibold tracking-tight">Create a teammate</h3><p className="mt-1 text-[11px] text-[var(--luma-text-muted)]">Define who they are, then choose how they work.</p></div><button type="button" aria-label="Close dialog" onClick={() => setCreateOpen(false)} className="luma-create-close" disabled={busy}>×</button></header>
             <div className="luma-create-body min-h-0 flex-1 overflow-auto">
               <div className="luma-create-column luma-create-identity">
                 <div className="luma-create-section-heading"><span>01</span><div><h4>Identity</h4><p>Start with the basics and make them recognizable.</p></div></div>
@@ -4429,9 +4736,9 @@ export default function App() {
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg>
           </button>}
           <div key={`${mode}:${workspacePath}`} className="luma-view-transition h-full min-w-0">
-          {mode === "teammates" && <TeammatesPanel onSidebarChange={setTeammatesSidebar} onOpenFile={(path) => { setSelectedFile(path); setMode("ide"); }} onHandoffToCode={(prompt) => { setCodeHandoffPrompt(prompt); setMode("agent"); }} sendWithEnter={sendWithEnter} titlebarStatus={titlebarStatus} />}
+          {mode === "teammates" && <TeammatesPanel onSidebarChange={setTeammatesSidebar} onOpenFile={(path) => { setSelectedFile(path); setMode("ide"); }} onHandoffToCode={(prompt) => { setCodeHandoffPrompt(prompt); setMode("agent"); }} sendWithEnter={sendWithEnter} onSendWithEnterChange={setSendWithEnter} autoScrollToLatest={autoScrollToLatest} onAutoScrollToLatestChange={setAutoScrollToLatest} showToolActivity={showToolActivity} onShowToolActivityChange={setShowToolActivity} onOpenSettings={() => { setSettingsSection("behavior"); setSettingsOpen(true); }} titlebarStatus={titlebarStatus} />}
           {mode === "agent" && <div className="luma-code-workspace flex h-full min-w-0">
-            <div className="min-w-0 flex-1"><AgentView onChangeModel={setModelPickerScope} sendWithEnter={sendWithEnter} autoScrollToLatest={autoScrollToLatest} showToolActivity={showToolActivity} workspacePath={workspacePath} onToggleInspector={() => setCodeInspectorVisible((visible) => !visible)} inspectorVisible={codeInspectorVisible} onOpenEditor={() => setMode("ide")} handoffPrompt={codeHandoffPrompt} onHandoffConsumed={() => setCodeHandoffPrompt("")} titlebarStatus={titlebarStatus} /></div>
+            <div className="min-w-0 flex-1"><AgentView onChangeModel={setModelPickerScope} sendWithEnter={sendWithEnter} onSendWithEnterChange={setSendWithEnter} autoScrollToLatest={autoScrollToLatest} onAutoScrollToLatestChange={setAutoScrollToLatest} showToolActivity={showToolActivity} onShowToolActivityChange={setShowToolActivity} onOpenSettings={() => { setSettingsSection("behavior"); setSettingsOpen(true); }} workspacePath={workspacePath} onToggleInspector={() => setCodeInspectorVisible((visible) => !visible)} inspectorVisible={codeInspectorVisible} onOpenEditor={() => setMode("ide")} handoffPrompt={codeHandoffPrompt} onHandoffConsumed={() => setCodeHandoffPrompt("")} titlebarStatus={titlebarStatus} /></div>
             {codeInspectorVisible && <CodeInspector workspacePath={workspacePath} onOpenFile={(path) => { setSelectedFile(path); setMode("ide"); }} />}
           </div>}
 

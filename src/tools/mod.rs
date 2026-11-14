@@ -5,6 +5,7 @@ pub mod code_intelligence;
 pub mod developer;
 pub mod filesystem;
 pub mod git;
+pub mod memory;
 pub mod shell;
 pub mod skills;
 pub mod titlebar;
@@ -137,6 +138,8 @@ impl ToolRegistry {
         self.tools.retain(|name, _| {
             name == "ask_question"
                 || name == "set_titlebar_status"
+                || name == "recall_memory"
+                || name == "save_memory"
                 || allowed.iter().any(|item| item == name)
         });
     }
@@ -172,6 +175,7 @@ impl ToolRegistry {
                         | "inspect_project"
                         | "list_skills"
                         | "load_skill"
+                        | "recall_memory"
                 )
         })
     }

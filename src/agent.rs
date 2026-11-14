@@ -52,6 +52,18 @@ fn checkpoint_now() -> u64 {
         .as_secs()
 }
 
+fn restore_agent_history(context: &mut Context, history: &History) {
+    for message in &history.messages {
+        let role = match message.role.as_str() {
+            "user" => MessageRole::User,
+            "assistant" => MessageRole::Assistant,
+            "system" => MessageRole::System,
+            _ => continue,
+        };
+        context.add(role, message.content.clone());
+    }
+}
+
 fn preview_file_change(name: &str, input: &str) -> Result<(String, String)> {
     let value: serde_json::Value = serde_json::from_str(input)?;
     let path = value
@@ -274,6 +286,50 @@ mod change_preview_tests {
     use super::*;
 
     #[test]
+    fn protocol_guard_detects_provider_tool_markup_and_action_json() {
+        assert!(crate::react::is_internal_action_response(
+            "ernie:tool_call<invoke name=\"list_directory\"></invoke>"
+        ));
+        assert!(crate::react::is_internal_action_response(
+            r#"{"type":"tool","name":"ask_question","input":{}}"#
+        ));
+        assert!(!crate::react::is_internal_action_response(
+            "Here is the answer in ordinary prose."
+        ));
+        assert!(!crate::react::is_internal_action_response(
+            r#"{"result":"ordinary JSON requested by the user"}"#
+        ));
+    }
+
+    #[test]
+    fn teammate_history_is_restored_into_the_live_context_in_order() {
+        let history = History {
+            messages: vec![
+                HistoryMessage {
+                    role: "user".into(),
+                    content: "Earlier request".into(),
+                },
+                HistoryMessage {
+                    role: "assistant".into(),
+                    content: "Earlier answer".into(),
+                },
+                HistoryMessage {
+                    role: "tool".into(),
+                    content: "Internal tool output".into(),
+                },
+            ],
+        };
+        let mut context = Context::new();
+        context.add(MessageRole::System, "workspace context");
+        restore_agent_history(&mut context, &history);
+        let messages = context.messages();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].role, MessageRole::System);
+        assert_eq!(messages[1].content, "Earlier request");
+        assert_eq!(messages[2].content, "Earlier answer");
+    }
+
+    #[test]
     fn preview_shows_added_and_removed_lines() {
         let diff = unified_preview("sample.txt", "before\nkeep\n", "after\nkeep\n");
         assert!(diff.contains("--- a/sample.txt"));
@@ -407,6 +463,7 @@ pub struct Agent<M, P> {
     permission_profile: PermissionProfile,
     workspace_root: Option<PathBuf>,
     question_channel_closed: bool,
+    force_react: bool,
 }
 
 impl<M, P> Agent<M, P>
@@ -416,11 +473,6 @@ where
 {
     pub fn new(model: M, react: P, tools: ToolRegistry, history: History, galaxy: String) -> Self {
         let mut context = Context::new();
-
-        context.add(
-            MessageRole::System,
-            include_str!("../skills/ask-question/SKILL.md").to_owned(),
-        );
 
         if !galaxy.trim().is_empty() {
             context.add(
@@ -433,6 +485,11 @@ where
                 ),
             );
         }
+        // Task workers rebuild the teammate's transcript from its persisted
+        // tasks. Restore it into the live model context as well as the
+        // persistence accumulator; otherwise each task looks like a fresh
+        // conversation to the model despite the UI showing shared history.
+        restore_agent_history(&mut context, &history);
 
         Self {
             model,
@@ -448,7 +505,15 @@ where
             permission_profile: PermissionProfile::default(),
             workspace_root: None,
             question_channel_closed: false,
+            force_react: false,
         }
+    }
+
+    /// Keep Teammate requests inside the tool-aware loop even when they do not
+    /// look like workspace work. This is required for interactions such as
+    /// ask_question and personal-agent tools.
+    pub fn set_force_react(&mut self, enabled: bool) {
+        self.force_react = enabled;
     }
 
     pub fn set_permission_profile(&mut self, profile: PermissionProfile) {
@@ -625,7 +690,7 @@ where
 
         self.begin_request(&input)?;
 
-        if self.plan_only || self.needs_workspace(&input) {
+        if self.force_react || self.plan_only || self.needs_workspace(&input) {
             self.run_agent_loop(tx, cancel, confirmation_rx, question_rx)
                 .await?;
         } else {
@@ -700,7 +765,17 @@ where
         tx: &Sender<AgentEvent>,
         cancel: &CancellationToken,
     ) -> Result<()> {
-        match self.generate_answer(tx, cancel).await {
+        self.run_conversation_with_protocol_guard(tx, cancel, false)
+            .await
+    }
+
+    async fn run_conversation_with_protocol_guard(
+        &mut self,
+        tx: &Sender<AgentEvent>,
+        cancel: &CancellationToken,
+        guard_protocol: bool,
+    ) -> Result<()> {
+        match self.generate_answer(tx, cancel, guard_protocol).await {
             Ok(response) if !cancel.is_cancelled() => self.store_assistant_response(&response)?,
             Ok(_) => {}
 
@@ -716,6 +791,7 @@ where
         &self,
         tx: &Sender<AgentEvent>,
         cancel: &CancellationToken,
+        guard_protocol: bool,
     ) -> Result<String> {
         tx.send(AgentEvent::Status {
             state: AgentStatus::Talking,
@@ -753,11 +829,25 @@ where
                     let chunk = chunk?;
 
                     response.push_str(&chunk);
-
-                    tx.send(AgentEvent::TextDelta(chunk))
-                        .await?;
+                    if !guard_protocol {
+                        tx.send(AgentEvent::TextDelta(chunk)).await?;
+                    }
                 }
             }
+        }
+
+        if guard_protocol {
+            let safe_response = if crate::react::is_internal_action_response(&response) {
+                "I couldn't safely interpret the requested action. Please try asking again."
+                    .to_owned()
+            } else {
+                response.clone()
+            };
+            if !safe_response.is_empty() {
+                tx.send(AgentEvent::TextDelta(safe_response.clone()))
+                    .await?;
+            }
+            response = safe_response;
         }
 
         if let Some(usage) = self.model.usage() {
@@ -779,13 +869,13 @@ where
 
     fn answer_system_prompt(&self) -> String {
         "\
-You are Luma, an AI coding agent.
+You are Luma, an AI assistant.
 
-Be concise, technical, and practical.
+Be concise, practical, and focused on the user's actual request. Follow the role and task instructions in the system context.
 
-Use workspace observations when answering workspace questions.
-Never invent files, commands, project structure, dependencies,
-or test results.
+Use available observations when answering questions about external information,
+workspaces, or completed actions. Never invent facts, files, commands,
+project structure, dependencies, or test results.
 "
         .into()
     }
@@ -827,11 +917,12 @@ or test results.
                     // user request. Fall back to the normal answer path so
                     // the model can still respond using the conversation
                     // context gathered so far.
-                    tx.send(AgentEvent::SystemMessage(format!(
-                        "The ReAct step hit a problem ({error}). Continuing with a direct response instead."
-                    )))
-                    .await?;
-                    self.run_conversation(tx, cancel).await?;
+                    tracing::warn!(error = %error, "ReAct action selection failed; falling back to a direct response");
+                    tx.send(AgentEvent::SystemMessage(
+                        "The agent had trouble selecting an action. Continuing with a direct response instead.".into(),
+                    )).await?;
+                    self.run_conversation_with_protocol_guard(tx, cancel, true)
+                        .await?;
                     return Ok(());
                 }
             };
@@ -938,7 +1029,8 @@ or test results.
             // Don't waste another react request after the final allowed
             // iteration.
             if step + 1 == MAX_STEPS {
-                self.run_conversation(tx, cancel).await?;
+                self.run_conversation_with_protocol_guard(tx, cancel, true)
+                    .await?;
                 return Ok(());
             }
         }

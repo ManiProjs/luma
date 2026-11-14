@@ -43,6 +43,13 @@ pub struct ReAct<M> {
     model: M,
     tools: Vec<String>,
     tool_metadata: Vec<crate::tools::ToolMetadata>,
+    persona: AgentPersona,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentPersona {
+    Code,
+    Teammate,
 }
 
 #[async_trait::async_trait]
@@ -68,6 +75,17 @@ where
             model,
             tools: tools.names(),
             tool_metadata: tools.metadata(),
+            persona: AgentPersona::Code,
+        }
+    }
+
+    /// Construct the action selector for a user-serving personal assistant.
+    pub fn new_teammate(model: M, tools: &ToolRegistry) -> Self {
+        Self {
+            model,
+            tools: tools.names(),
+            tool_metadata: tools.metadata(),
+            persona: AgentPersona::Teammate,
         }
     }
 
@@ -87,8 +105,30 @@ where
                 .join("\n")
         };
 
+        let persona = match self.persona {
+            AgentPersona::Code => {
+                "You are Luma Code, an AI coding agent. Help the user understand, build, debug, and maintain software. Prioritize correctness, inspect before editing, and verify changes."
+            }
+            AgentPersona::Teammate => {
+                "You are a Luma Teammate: a capable personal assistant and member of a user-serving workforce. Your job is to help the user with their life, work, and responsibilities—not to assume every task is software development. You can research, reason, plan, organize, draft and revise writing, analyze information, coordinate work, track ongoing responsibilities, and collaborate with other teammates when those capabilities are available. Do not write or modify code, inspect repositories, or perform software-engineering work unless the user explicitly asks for it. If a request is ambiguous, choose the useful non-coding interpretation or ask one focused question. Act in the user's interests, be honest about what you have and have not done, and seek approval for consequential external actions."
+            }
+        };
+        let persona_rules = match self.persona {
+            AgentPersona::Code => "",
+            AgentPersona::Teammate => {
+                "\nTEAMMATE TASK BOUNDARIES:\n\n\
+                 The workspace and implementation rules below are relevant only when the user\n\
+                 explicitly asks you to do software-engineering work. For ordinary personal or\n\
+                 professional requests, do not inspect the current directory, browse repositories,\n\
+                 or use coding tools merely because they are available. Do not reinterpret general\n\
+                 words such as 'work', 'project', 'fix', or 'organize' as permission to inspect or\n\
+                 modify source code. If the user explicitly asks you to debug, write, change, or\n\
+                 review code, you may use the relevant coding tools for that request.\n"
+            }
+        };
+
         format!(
-            r#"You are Luma, a ReAct coding agent.
+            r#"{persona}
 
 Work in a ReAct cycle: use the conversation and previous tool observations,
 choose one useful action, then continue after observing its result. When the
@@ -176,9 +216,13 @@ If a required preference, decision, or missing detail cannot be safely inferred:
 → call ask_question with JSON input {{"prompt":"...","choices":["..."]}}.
 Use choices only when a small set of clear options helps; otherwise omit choices.
 Do not guess or ask questions that are not necessary to proceed.
+Never print the ask_question input JSON as an answer or explanation. It must be
+sent as the input of a tool action so Luma can render the interactive question.
 
 After an approved plan:
 → perform the required tool actions
+
+{persona_rules}
 
 EFFICIENCY:
 
@@ -214,58 +258,58 @@ Return JSON only."#,
 
         tracing::debug!(messages = request_messages.len(), "ReAct step started");
 
-        let mut stream = match self
-            .model
-            .stream(CompletionRequest {
-                messages: request_messages,
-            })
-            .await
-        {
-            Ok(stream) => stream,
-            Err(error) => {
-                tracing::error!(
-                    error = %error,
-                    "ReAct step failed"
-                );
+        for attempt in 0..2 {
+            let mut stream = match self
+                .model
+                .stream(CompletionRequest {
+                    messages: request_messages.clone(),
+                })
+                .await
+            {
+                Ok(stream) => stream,
+                Err(error) => {
+                    tracing::error!(error = %error, attempt, "ReAct step failed");
+                    return Err(error);
+                }
+            };
 
-                return Err(error);
+            let mut response = String::new();
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => return Err(anyhow!("ReAct step interrupted.")),
+                    chunk = stream.next() => {
+                        let Some(chunk) = chunk else { break; };
+                        response.push_str(&chunk?);
+                    }
+                }
             }
-        };
 
-        let mut response = String::new();
+            tracing::debug!(
+                response_bytes = response.len(),
+                attempt,
+                "ReAct response received"
+            );
+            let parsed = extract_json(&response).and_then(|json| {
+                let react_response: ReActResponse = serde_json::from_value(json)
+                    .map_err(|error| anyhow!("Invalid ReAct response schema: {error}"))?;
+                self.validate_response(&react_response)?;
+                Ok(react_response)
+            });
 
-        loop {
-            tokio::select! {
-                _ = cancel.cancelled() => {
-                    return Err(anyhow!("ReAct step interrupted."));
+            match parsed {
+                Ok(action) => return Ok(convert_response(action)),
+                Err(error) if attempt == 0 => {
+                    tracing::warn!(error = %error, "ReAct response did not satisfy the action protocol; retrying once");
+                    request_messages.push(Message {
+                        role: MessageRole::User,
+                        content: "Your previous response did not follow the required action protocol. Try again. Return exactly one JSON object with type tool, answer, or plan. Do not include prose, XML, Markdown, or provider-specific tool markup. If the request is conversational, return an answer object.".into(),
+                    });
                 }
-
-                chunk = stream.next() => {
-                    let Some(chunk) = chunk else {
-                        break;
-                    };
-
-                    response.push_str(&chunk?);
-                }
+                Err(error) => return Err(error),
             }
         }
 
-        tracing::debug!(response_bytes = response.len(), "ReAct response received");
-
-        let json = extract_json(&response)?;
-
-        let react_response: ReActResponse =
-            serde_json::from_value(json.clone()).map_err(|error| {
-                anyhow!(
-                    "Invalid ReAct response schema: {}\n\nResponse JSON:\n{}",
-                    error,
-                    serde_json::to_string_pretty(&json).unwrap_or_else(|_| json.to_string())
-                )
-            })?;
-
-        self.validate_response(&react_response)?;
-
-        Ok(convert_response(react_response))
+        Err(anyhow!("ReAct could not produce a valid action"))
     }
 
     fn validate_response(&self, response: &ReActResponse) -> Result<()> {
@@ -344,37 +388,152 @@ fn extract_json(text: &str) -> Result<Value> {
         return Err(anyhow!("ReAct returned an empty response"));
     }
 
+    // Some OpenAI-compatible reasoning models emit their native XML-style
+    // function-call envelope even though the ReAct contract asks for JSON.
+    // Normalize that envelope at the boundary so tool calls (especially
+    // ask_question) still enter the regular, validated interaction loop.
+    if let Some(tool_call) = extract_xml_tool_call(clean) {
+        return Ok(tool_call);
+    }
+
     if let Ok(value) = serde_json::from_str::<Value>(clean) {
         return Ok(value);
     }
 
-    let Some(start) = clean.find('{') else {
-        return Err(anyhow!("ReAct returned invalid JSON:\n{}", clean));
-    };
+    // Scan balanced top-level objects instead of slicing from the first `{`
+    // to the last `}`. Models sometimes include braces in prose or emit a
+    // short preamble before their actual action object.
+    let bytes = clean.as_bytes();
+    let mut start = None;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut last_error = None;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if byte == b'\\' {
+                escaped = true;
+            } else if byte == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match byte {
+            b'"' if depth > 0 => in_string = true,
+            b'{' => {
+                if depth == 0 {
+                    start = Some(index);
+                }
+                depth += 1;
+            }
+            b'}' if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    if let Some(begin) = start {
+                        if let Ok(value) = serde_json::from_slice::<Value>(&bytes[begin..=index]) {
+                            return Ok(value);
+                        } else if let Err(error) =
+                            serde_json::from_slice::<Value>(&bytes[begin..=index])
+                        {
+                            last_error = Some(error);
+                        }
+                    }
+                    start = None;
+                }
+            }
+            _ => {}
+        }
+    }
+    Err(anyhow!(
+        "ReAct returned invalid JSON{}:\n{}",
+        last_error
+            .map(|error| format!(": {error}"))
+            .unwrap_or_default(),
+        clean
+    ))
+}
 
-    let Some(end) = clean.rfind('}') else {
-        return Err(anyhow!("ReAct returned invalid JSON:\n{}", clean));
-    };
-
-    if start > end {
-        return Err(anyhow!("ReAct returned invalid JSON:\n{}", clean));
+/// Detect model-internal action payloads in fallback text, including JSON
+/// preceded by a natural-language preamble and provider XML envelopes.
+pub(crate) fn is_internal_action_response(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("<invoke")
+        || lower.contains("</invoke>")
+        || lower.contains("<ernie:tool_call")
+        || lower.contains("</ernie:tool_call>")
+        || lower.contains("<tool_call")
+        || lower.contains("<function_call")
+    {
+        return true;
     }
 
-    let candidate = &clean[start..=end];
+    extract_json(text)
+        .ok()
+        .and_then(|value| value.get("type").and_then(Value::as_str).map(str::to_owned))
+        .is_some_and(|kind| matches!(kind.as_str(), "tool" | "plan" | "answer"))
+}
 
-    serde_json::from_str::<Value>(candidate).map_err(|error| {
-        anyhow!(
-            "ReAct returned invalid JSON: {}\n\nResponse:\n{}",
-            error,
-            clean
-        )
-    })
+fn extract_xml_tool_call(text: &str) -> Option<Value> {
+    let invoke_start = text.find("<invoke ")?;
+    let invoke_end = text[invoke_start..].find('>')? + invoke_start;
+    let opening = &text[invoke_start..=invoke_end];
+    let name_start = opening.find("name=")? + 5;
+    let quote = opening.as_bytes().get(name_start).copied()?;
+    if quote != b'"' && quote != b'\'' {
+        return None;
+    }
+    let name_value_start = name_start + 1;
+    let name_end = opening[name_value_start..].find(quote as char)? + name_value_start;
+    let name = &opening[name_value_start..name_end];
+    if name.trim().is_empty() {
+        return None;
+    }
+
+    let body_end = text[invoke_end + 1..].find("</invoke>")? + invoke_end + 1;
+    let body = &text[invoke_end + 1..body_end];
+    let mut input = serde_json::Map::new();
+    let mut remaining = body;
+    while let Some(parameter_start) = remaining.find("<parameter ") {
+        remaining = &remaining[parameter_start + 11..];
+        let tag_end = remaining.find('>')?;
+        let tag = &remaining[..tag_end];
+        let key_start = tag.find("name=")? + 5;
+        let key_quote = tag.as_bytes().get(key_start).copied()?;
+        if key_quote != b'"' && key_quote != b'\'' {
+            return None;
+        }
+        let key_value_start = key_start + 1;
+        let key_end = tag[key_value_start..].find(key_quote as char)? + key_value_start;
+        let key = xml_unescape(&tag[key_value_start..key_end]);
+        let value_start = tag_end + 1;
+        let close = remaining[value_start..].find("</parameter>")? + value_start;
+        let raw_value = xml_unescape(remaining[value_start..close].trim());
+        let value = serde_json::from_str::<Value>(&raw_value).unwrap_or(Value::String(raw_value));
+        input.insert(key, value);
+        remaining = &remaining[close + "</parameter>".len()..];
+    }
+    Some(serde_json::json!({"type":"tool", "name":name, "input":input}))
+}
+
+fn xml_unescape(value: &str) -> String {
+    value
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&amp;", "&")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::model::ModelStream;
+    use std::{
+        collections::VecDeque,
+        sync::{Arc, Mutex},
+    };
 
     // ── extract_json ────────────────────────────────────────────────────────
 
@@ -409,6 +568,26 @@ mod tests {
     }
 
     #[test]
+    fn parses_ernie_xml_tool_call_envelope() {
+        let value = extract_json(
+            "</ernie:tool_call><invoke name=\"list_directory\"><parameter name=\"depth\">2</parameter><parameter name=\"path\">.</parameter></invoke></ernie:tool_call>",
+        ).unwrap();
+        assert_eq!(value["type"], "tool");
+        assert_eq!(value["name"], "list_directory");
+        assert_eq!(value["input"]["depth"], 2);
+        assert_eq!(value["input"]["path"], ".");
+    }
+
+    #[test]
+    fn finds_balanced_json_without_merging_braces_from_prose() {
+        let value = extract_json(
+            "I considered {an incomplete example}. Actual action: {\"type\":\"answer\",\"content\":\"done\"}",
+        ).unwrap();
+        assert_eq!(value["type"], "answer");
+        assert_eq!(value["content"], "done");
+    }
+
+    #[test]
     fn rejects_empty_response() {
         assert!(extract_json("   ").is_err());
     }
@@ -421,6 +600,14 @@ mod tests {
     #[test]
     fn rejects_text_without_json() {
         assert!(extract_json("I have no idea what to do").is_err());
+    }
+
+    #[test]
+    fn detects_protocol_json_even_when_preceded_by_prose() {
+        assert!(is_internal_action_response(
+            "The action is: {\"type\":\"tool\",\"name\":\"ask_question\",\"input\":{}}"
+        ));
+        assert!(!is_internal_action_response("A normal answer."));
     }
 
     // ── validate_response ───────────────────────────────────────────────────
@@ -442,6 +629,53 @@ mod tests {
         async fn stream(&self, _request: CompletionRequest) -> Result<ModelStream> {
             unimplemented!("not needed for validation tests")
         }
+    }
+
+    #[derive(Clone)]
+    struct SequenceModel {
+        responses: Arc<Mutex<VecDeque<String>>>,
+        requests: Arc<Mutex<Vec<Vec<Message>>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl Model for SequenceModel {
+        async fn stream(&self, request: CompletionRequest) -> Result<ModelStream> {
+            self.requests.lock().unwrap().push(request.messages);
+            let response = self.responses.lock().unwrap().pop_front().unwrap();
+            Ok(Box::pin(futures_util::stream::iter([Ok(response)])))
+        }
+    }
+
+    #[tokio::test]
+    async fn retries_once_when_model_ignores_the_json_action_protocol() {
+        let model = SequenceModel {
+            responses: Arc::new(Mutex::new(VecDeque::from([
+                "I need to ask the user a question.".into(),
+                r#"{"type":"tool","name":"ask_question","input":{"prompt":"Which option?"}}"#
+                    .into(),
+            ]))),
+            requests: Arc::new(Mutex::new(Vec::new())),
+        };
+        let requests = model.requests.clone();
+        let mut registry = ToolRegistry::new();
+        registry.register(DummyTool {
+            name: "ask_question".into(),
+        });
+        let react = ReAct::new(model, &registry);
+        let action = react
+            .next_action(Vec::new(), CancellationToken::new())
+            .await
+            .unwrap();
+        assert!(matches!(action, ReActAction::Tool { name, .. } if name == "ask_question"));
+        let captured = requests.lock().unwrap();
+        assert_eq!(captured.len(), 2);
+        assert!(
+            captured[1]
+                .last()
+                .unwrap()
+                .content
+                .contains("did not follow the required action protocol")
+        );
     }
 
     struct DummyTool {
@@ -488,6 +722,23 @@ mod tests {
         assert!(prompt.contains("- read_file"));
         assert!(prompt.contains("Description:"));
         assert!(prompt.contains("Model guide:"));
+        assert!(prompt.contains("Luma Code"));
+    }
+
+    #[test]
+    fn teammate_prompt_prioritizes_user_work_and_disables_unsolicited_coding() {
+        let mut registry = ToolRegistry::new();
+        registry.register(DummyTool {
+            name: "web_search".into(),
+        });
+        let react = ReAct::new_teammate(MockModel, &registry);
+        let prompt = react.system_prompt();
+        assert!(prompt.contains("user-serving workforce"));
+        assert!(prompt.contains("research, reason, plan, organize"));
+        assert!(prompt.contains("unless the user explicitly asks for it"));
+        assert!(prompt.contains("collaborate with other teammates"));
+        assert!(prompt.contains("do not inspect the current directory"));
+        assert!(prompt.contains("Do not reinterpret general"));
     }
 
     #[test]

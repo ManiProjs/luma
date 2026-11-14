@@ -31,6 +31,8 @@ model_guide = "Use this for short text summaries. Pass the complete source text 
 read_only = true # Informational only; Luma still asks before external actions.
 requires_network = false
 input_schema = { type = "object", properties = { text = { type = "string" } }, required = ["text"] }
+timeout_seconds = 45
+max_output_bytes = 2000000
 ```
 
 `main.py` receives one JSON request on stdin and writes one JSON response to
@@ -53,11 +55,29 @@ else:
 print(json.dumps(result))
 ```
 
-The request contains `protocol`, `version`, `plugin`, `tool`, and `input`.
-Return either `{"output":"..."}`, `{"result": ...}`, or
-`{"ok":false,"error":"..."}`. Calls have a 30-second timeout and a 1 MiB
-response limit. Plugin environment values can refer to inherited variables as
+The request contains `protocol`, `version`, `plugin`, `tool`, and `input`, plus
+`context` (Luma version, OS, architecture, workspace and plugin directory) and
+`tool_metadata` (description and model guide). Existing plugins can ignore the
+additional fields. Return `{"output":"..."}`, `{"result": ...}`, or a
+`content` array such as `[{"type":"markdown","text":"**Done**"}]`.
+`content` is an array of objects with a string `text` field. `text` and
+`markdown` blocks are joined with blank lines; `code` blocks are wrapped in a
+fenced code block, and other block types are labeled. An empty content array
+returns an empty observation. Errors use `{"ok":false,"error":"..."}`.
+Calls default to a 30-second timeout and 1 MB response limit; each tool may
+override these with `timeout_seconds` (1–300) and `max_output_bytes` (1 KiB–4
+MiB). Plugin environment values can refer to inherited variables as
 `${VARIABLE}`; only a small base environment is inherited by the child.
+
+Luma validates `input_schema` before starting the plugin. The supported JSON
+Schema subset includes `type` (a type name or an array of type names),
+`required`, `properties`, `additionalProperties` (a boolean or schema),
+`items`, `enum`, `minLength`, `maxLength`, `minItems`, `maxItems`,
+`minProperties`, `maxProperties`, `minimum`, and `maximum`. Supported
+keywords with invalid values make the schema invalid. Unknown keywords are
+ignored so manifests can remain forward-compatible. The validator does not
+implement the complete JSON Schema specification (for example, references,
+composition, formats, and string patterns are not evaluated).
 
 ## Install and manage
 

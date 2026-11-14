@@ -108,6 +108,22 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     } else {
         tools::default_registry()
     };
+    let workspace_id = std::env::current_dir()?
+        .canonicalize()?
+        .display()
+        .to_string();
+    if agent_record.kind == crate::runtime::AgentKind::Teammates {
+        registry.register(tools::memory::SaveMemory::new(
+            store.clone(),
+            agent_record.id.clone(),
+        ));
+        registry.register(tools::memory::RecallMemory::new(
+            store.clone(),
+            agent_record.id.clone(),
+            workspace_id.clone(),
+            inherit_global,
+        ));
+    }
     // Native Luma plugins and MCP servers are global connectors. A Teammate
     // receives them only when it opts into the Global teammate's context.
     if inherit_global {
@@ -124,7 +140,11 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     }
     let model = DynamicModel::new(&model_config);
     let title_model = model.clone();
-    let react = ReAct::new(model.clone(), &registry);
+    let react = if agent_record.kind == crate::runtime::AgentKind::Teammates {
+        ReAct::new_teammate(model.clone(), &registry)
+    } else {
+        ReAct::new(model.clone(), &registry)
+    };
     let galaxy_path = std::env::current_dir()?.join("GALAXY.md");
     let galaxy = std::fs::read_to_string(&galaxy_path).unwrap_or_default();
     let mut history = History::default();
@@ -145,6 +165,7 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
         }
     }
     let mut agent = Agent::new(model, react, registry, history, galaxy);
+    agent.set_force_react(agent_record.kind == crate::runtime::AgentKind::Teammates);
     let mut permissions = agent_record.configuration.permissions.clone();
     if agent_record.kind == crate::runtime::AgentKind::Teammates {
         permissions.allow_network = agent_record.configuration.network_access.unwrap_or(true);
@@ -175,6 +196,20 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     if !agent_record.configuration.system_prompt.trim().is_empty() {
         agent.add_system_context(agent_record.configuration.system_prompt.clone());
     }
+    if agent_record.kind == crate::runtime::AgentKind::Teammates {
+        agent.add_system_context(
+            "# Long-term memory\n\n\
+             You have persistent memory across tasks. Before relying on past preferences, decisions,\n\
+             or project facts that are not present in this task, use recall_memory. When the user\n\
+             shares a stable preference, an important project decision, a reusable lesson, or other\n\
+             information that will materially help future tasks, save it with save_memory. Do this\n\
+             selectively: do not save temporary task details, speculative conclusions, secrets,\n\
+             credentials, or sensitive personal information. If a saved fact becomes outdated, save\n\
+             the corrected fact and make the change clear. Never claim to remember something unless\n\
+             it was saved or is present in the current conversation."
+                .to_owned(),
+        );
+    }
     // An agent's own skills remain its own even when it also opts into the
     // Global teammate's shared context.
     for skill_name in &agent_record.configuration.skills {
@@ -187,10 +222,6 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
             })?;
         agent.add_system_context(skill);
     }
-    let workspace_id = std::env::current_dir()?
-        .canonicalize()?
-        .display()
-        .to_string();
     let mut memory_scopes = vec![
         (MemoryScope::Project, workspace_id, "Project memory"),
         (MemoryScope::Agent, agent_record.id.clone(), "Agent memory"),
