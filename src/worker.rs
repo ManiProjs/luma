@@ -108,6 +108,22 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     } else {
         tools::default_registry()
     };
+    let mut permissions = agent_record.configuration.permissions.clone();
+    if agent_record.kind == crate::runtime::AgentKind::Teammates {
+        permissions.allow_network = agent_record.configuration.network_access.unwrap_or(true);
+        if permissions.allow_network {
+            for tool in ["web_search", "fetch_url"] {
+                if !permissions.denied_tools.iter().any(|item| item == tool)
+                    && !permissions.allowed_tools.iter().any(|item| item == tool)
+                {
+                    permissions.allowed_tools.push(tool.to_owned());
+                }
+            }
+        }
+    }
+    if let Some(ceiling) = task.permission_ceiling.as_ref() {
+        permissions = permissions.intersect(ceiling);
+    }
     let workspace_id = std::env::current_dir()?
         .canonicalize()?
         .display()
@@ -134,9 +150,69 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     // inheriting global context only adds shared defaults and connectors.
     let enabled_tools = agent_record.configuration.enabled_tools.as_slice();
     if !enabled_tools.is_empty() {
+        for name in registry.names().into_iter().chain(
+            [
+                "list_teammates",
+                "delegate_task",
+                "get_delegated_task",
+                "list_delegated_tasks",
+            ]
+            .into_iter()
+            .map(str::to_owned),
+        ) {
+            if !enabled_tools.iter().any(|enabled| enabled == &name)
+                && !matches!(
+                    name.as_str(),
+                    "ask_question"
+                        | "set_titlebar_status"
+                        | "recall_memory"
+                        | "save_memory"
+                        | "list_teammates"
+                        | "delegate_task"
+                        | "get_delegated_task"
+                        | "list_delegated_tasks"
+                )
+            {
+                permissions.denied_tools.push(name);
+            }
+        }
+        permissions.denied_tools.sort();
+        permissions.denied_tools.dedup();
+    }
+    if agent_record.kind == crate::runtime::AgentKind::Teammates {
+        registry.register(tools::delegation::ListTeammates::new(store.clone()));
+        registry.register(tools::delegation::DelegateTask::new(
+            store.clone(),
+            task.id.clone(),
+            agent_record.id.clone(),
+            permissions.clone(),
+        ));
+        registry.register(tools::delegation::GetDelegatedTask::new(
+            store.clone(),
+            agent_record.id.clone(),
+            task.conversation_id.clone(),
+        ));
+        registry.register(tools::delegation::ListDelegatedTasks::new(
+            store.clone(),
+            agent_record.id.clone(),
+            task.conversation_id.clone(),
+        ));
+    }
+    if !enabled_tools.is_empty() {
         // The runtime only exposes explicitly configured tools. Read-only
         // policy is enforced again inside Agent before invocation.
-        registry.retain(enabled_tools);
+        // Collaboration is a core Teammates capability rather than an
+        // optional connector. Keep its tools available even when the user
+        // explicitly selects a smaller tool set; delegate_task still passes
+        // through the ordinary mutation approval policy above.
+        let mut retained = enabled_tools.to_vec();
+        retained.extend([
+            "list_teammates".to_owned(),
+            "delegate_task".to_owned(),
+            "get_delegated_task".to_owned(),
+            "list_delegated_tasks".to_owned(),
+        ]);
+        registry.retain(&retained);
     }
     let model = DynamicModel::new(&model_config);
     let title_model = model.clone();
@@ -170,19 +246,6 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     }
     let mut agent = Agent::new(model, react, registry, history, galaxy);
     agent.set_force_react(agent_record.kind == crate::runtime::AgentKind::Teammates);
-    let mut permissions = agent_record.configuration.permissions.clone();
-    if agent_record.kind == crate::runtime::AgentKind::Teammates {
-        permissions.allow_network = agent_record.configuration.network_access.unwrap_or(true);
-        if permissions.allow_network {
-            for tool in ["web_search", "fetch_url"] {
-                if !permissions.denied_tools.iter().any(|item| item == tool)
-                    && !permissions.allowed_tools.iter().any(|item| item == tool)
-                {
-                    permissions.allowed_tools.push(tool.to_owned());
-                }
-            }
-        }
-    }
     agent.set_permission_profile(permissions);
     agent.set_workspace_root(&std::env::current_dir()?)?;
     if inherit_global {
@@ -211,6 +274,17 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
              credentials, or sensitive personal information. If a saved fact becomes outdated, save\n\
              the corrected fact and make the change clear. Never claim to remember something unless\n\
              it was saved or is present in the current conversation."
+                .to_owned(),
+        );
+        agent.add_system_context(
+            "# Teammate collaboration\n\n\
+             You can discover other Teammates with list_teammates and hand off independent,\n\
+             well-scoped subtasks with delegate_task. Include the necessary context and a clear\n\
+             deliverable; never delegate secrets or work that requires broader permissions.\n\
+             Delegation is asynchronous: finish your current task after queuing children. In a\n\
+             later turn in this same conversation, use list_delegated_tasks and get_delegated_task\n\
+             to collect their results. Do not claim delegated work is complete until its child\n\
+             task reports a completed status and you have reviewed its response."
                 .to_owned(),
         );
     }

@@ -51,3 +51,31 @@ Triggers are managed in Teammate Settings → Schedules. Paused or stopped
 Teammates do not receive new trigger work. Trigger prompts are background
 instructions, not approvals: tool permissions, workspace grants, network
 policy, and approval requirements continue to apply normally.
+
+## Delegation and handoffs
+
+Teammates can discover peers with `list_teammates`, queue independent work with
+`delegate_task`, list work delegated anywhere in the conversation with
+`list_delegated_tasks`, and inspect a child result with `get_delegated_task`. Delegation
+creates a durable child task assigned to the target Teammate; the parent keeps
+running and can continue its own work while the gateway later executes the
+child. Child tasks inherit the parent's conversation ID while retaining their
+own Teammate owner and task history. The parent conversation shows each direct
+handoff with its target and status; selecting one opens the target Teammate's
+child task. The returned child task ID is the handle used to retrieve its status,
+error, and recorded response. Child tasks appear in the target Teammate's
+history with a delegated marker. Because the gateway currently serializes task
+execution, child work starts after the parent task finishes. A later turn in
+the same conversation can list the earlier handoffs and collect their results;
+the parent is not automatically resumed when a child finishes.
+
+Delegation is bounded to depth 3, three direct children per task, and eight
+descendants per root task. Only Teammates can delegate to other Teammates;
+paused/stopped targets, self-delegation, cross-agent conversation IDs, and
+workspace access outside either agent's grants are rejected. A child's
+permission ceiling is the intersection of the parent's effective permissions
+and the target Teammate's own profile: denials are combined, approval
+requirements become stricter, and network access is never widened. The normal
+tool approval flow applies to `delegate_task` unless the parent has explicitly
+allowed it. Delegation queues work asynchronously rather than blocking the
+single-task supervisor, avoiding parent/child deadlocks.

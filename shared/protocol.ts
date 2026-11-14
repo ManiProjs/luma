@@ -155,6 +155,9 @@ export type AgentRecord = {
 export type TaskRecord = {
   id: string;
   conversation_id: string;
+  parent_task_id: string | null;
+  delegation_depth: number;
+  permission_ceiling: PermissionProfile | null;
   agent_id: string;
   title: string;
   request: string;
@@ -565,7 +568,17 @@ function isTaskRecord(value: unknown): value is TaskRecord {
     && isNullableString(value.workspace) && (value.checkpoint === null || value.checkpoint !== undefined)
     && isNullableString(value.error) && isNumber(value.attempt)
     && typeof value.recover_on_restart === "boolean" && isNullableString(value.schedule_id)
+    && isNullableString(value.parent_task_id) && isNumber(value.delegation_depth)
+    && (value.permission_ceiling === null || isPermissionProfile(value.permission_ceiling))
     && isNumber(value.created_at) && isNumber(value.updated_at);
+}
+
+function isPermissionProfile(value: unknown): value is PermissionProfile {
+  return isRecord(value) && Array.isArray(value.allowed_tools) && value.allowed_tools.every(isString)
+    && Array.isArray(value.denied_tools) && value.denied_tools.every(isString)
+    && typeof value.auto_approve_read_only === "boolean"
+    && typeof value.require_approval_for_mutations === "boolean"
+    && typeof value.allow_network === "boolean";
 }
 
 function isMemoryEntry(value: unknown): value is MemoryEntry {

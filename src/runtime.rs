@@ -13,7 +13,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 pub const GLOBAL_AGENT_ID: &str = "agent_global";
 
 fn now() -> i64 {
@@ -114,6 +114,31 @@ pub enum PermissionDecision {
 }
 
 impl PermissionProfile {
+    /// Return only capabilities present in both profiles. Denials are unioned,
+    /// approval requirements become stricter, and network access is an AND.
+    pub fn intersect(&self, other: &Self) -> Self {
+        let mut allowed_tools = self
+            .allowed_tools
+            .iter()
+            .filter(|tool| other.allowed_tools.contains(tool))
+            .cloned()
+            .collect::<Vec<_>>();
+        allowed_tools.sort();
+        allowed_tools.dedup();
+        let mut denied_tools = self.denied_tools.clone();
+        denied_tools.extend(other.denied_tools.iter().cloned());
+        denied_tools.sort();
+        denied_tools.dedup();
+        Self {
+            allowed_tools,
+            denied_tools,
+            auto_approve_read_only: self.auto_approve_read_only && other.auto_approve_read_only,
+            require_approval_for_mutations: self.require_approval_for_mutations
+                || other.require_approval_for_mutations,
+            allow_network: self.allow_network && other.allow_network,
+        }
+    }
+
     pub fn decide(&self, tool: &str, mutating: bool) -> PermissionDecision {
         let known_read_only = matches!(
             tool,
@@ -251,6 +276,9 @@ pub struct TaskRecord {
     pub conversation_id: String,
     /// Trigger that initiated this task, used to prevent event-trigger loops.
     pub origin_trigger_id: Option<String>,
+    pub parent_task_id: Option<String>,
+    pub delegation_depth: u32,
+    pub permission_ceiling: Option<PermissionProfile>,
     pub agent_id: String,
     pub title: String,
     pub request: String,
@@ -560,6 +588,17 @@ impl RuntimeStore {
                 COMMIT;",
             )?;
         }
+        if version < 5 {
+            db.execute_batch(
+                "BEGIN IMMEDIATE;
+                ALTER TABLE tasks ADD COLUMN parent_task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL;
+                ALTER TABLE tasks ADD COLUMN delegation_depth INTEGER NOT NULL DEFAULT 0;
+                ALTER TABLE tasks ADD COLUMN permission_ceiling TEXT;
+                CREATE INDEX tasks_parent_task ON tasks(parent_task_id, created_at);
+                PRAGMA user_version = 5;
+                COMMIT;",
+            )?;
+        }
         Ok(())
     }
 
@@ -857,6 +896,9 @@ impl RuntimeStore {
             id: new_id("task"),
             conversation_id: conversation_id.clone(),
             origin_trigger_id: None,
+            parent_task_id: None,
+            delegation_depth: 0,
+            permission_ceiling: None,
             agent_id: agent_id.into(),
             title: title.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| {
                 request
@@ -879,7 +921,7 @@ impl RuntimeStore {
             updated_at: timestamp,
         };
         let db = self.db()?;
-        db.execute("INSERT INTO tasks (id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id) VALUES (?1,?2,?3,?4,?5,?6,NULL,NULL,0,?7,?8,?9,?9,?10,NULL)", params![record.id, record.agent_id, record.title, record.request, serde_json::to_string(&record.status)?, record.workspace, recover_on_restart, record.schedule_id, timestamp, record.conversation_id])?;
+        db.execute("INSERT INTO tasks (id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling) VALUES (?1,?2,?3,?4,?5,?6,NULL,NULL,0,?7,?8,?9,?9,?10,NULL,NULL,0,NULL)", params![record.id, record.agent_id, record.title, record.request, serde_json::to_string(&record.status)?, record.workspace, recover_on_restart, record.schedule_id, timestamp, record.conversation_id])?;
         drop(db);
         self.append_event(
             Some(agent_id),
@@ -890,9 +932,235 @@ impl RuntimeStore {
         Ok(record)
     }
 
+    /// Queue a bounded child task for another Teammate. The child's effective
+    /// permissions are capped by the intersection of the parent's current
+    /// permissions and the target Teammate's own profile.
+    pub fn create_child_task(
+        &self,
+        parent_task_id: &str,
+        parent_agent_id: &str,
+        target_agent_id: &str,
+        prompt: &str,
+        parent_permissions: &PermissionProfile,
+    ) -> Result<TaskRecord> {
+        const MAX_DELEGATION_DEPTH: u32 = 3;
+        const MAX_CHILDREN_PER_TASK: i64 = 3;
+        const MAX_DESCENDANTS_PER_ROOT: i64 = 8;
+
+        let parent = self
+            .get_task(parent_task_id)?
+            .ok_or_else(|| anyhow!("parent task not found: {parent_task_id}"))?;
+        if parent.agent_id != parent_agent_id || parent.status != TaskStatus::Running {
+            bail!("delegation is allowed only from the current running task");
+        }
+        if parent_agent_id == target_agent_id {
+            bail!("a Teammate cannot delegate a child task to itself");
+        }
+        if parent.delegation_depth >= MAX_DELEGATION_DEPTH {
+            bail!("maximum delegation depth ({MAX_DELEGATION_DEPTH}) reached");
+        }
+        let parent_agent = self
+            .get_agent(parent_agent_id)?
+            .ok_or_else(|| anyhow!("parent Teammate no longer exists"))?;
+        if matches!(
+            parent_agent.status,
+            AgentStatus::Paused | AgentStatus::Stopped
+        ) {
+            bail!("a paused or stopped parent Teammate cannot delegate work");
+        }
+        let target = self
+            .get_agent(target_agent_id)?
+            .ok_or_else(|| anyhow!("target Teammate not found: {target_agent_id}"))?;
+        if parent_agent.kind != AgentKind::Teammates || target.kind != AgentKind::Teammates {
+            bail!("delegation targets must be Teammates");
+        }
+        if matches!(target.status, AgentStatus::Paused | AgentStatus::Stopped) {
+            bail!("target Teammate is paused or stopped");
+        }
+        let prompt = prompt.trim();
+        if prompt.is_empty() || prompt.len() > 20_000 {
+            bail!("delegated task prompt must contain 1–20000 characters");
+        }
+
+        let workspace = parent
+            .workspace
+            .clone()
+            .or(parent_agent.configuration.workspace.clone())
+            .unwrap_or(std::env::current_dir()?.display().to_string());
+        validate_workspace(&workspace, &parent_agent.configuration)?;
+        validate_workspace(&workspace, &target.configuration)?;
+        let mut target_permissions = target.configuration.permissions.clone();
+        target_permissions.allow_network = target.configuration.network_access.unwrap_or(true);
+        if target_permissions.allow_network {
+            for tool in ["web_search", "fetch_url"] {
+                if !target_permissions
+                    .denied_tools
+                    .iter()
+                    .any(|item| item == tool)
+                    && !target_permissions
+                        .allowed_tools
+                        .iter()
+                        .any(|item| item == tool)
+                {
+                    target_permissions.allowed_tools.push(tool.to_owned());
+                }
+            }
+        }
+        let permission_ceiling = parent_permissions.intersect(&target_permissions);
+        let timestamp = now();
+        let request = format!(
+            "This task was delegated by teammate {}. Complete only the assigned subtask and return a concise result to the parent.\n\n{}",
+            parent_agent.name, prompt
+        );
+        let title = prompt
+            .lines()
+            .next()
+            .unwrap_or("Delegated task")
+            .chars()
+            .take(100)
+            .collect::<String>();
+        let record = TaskRecord {
+            id: new_id("task"),
+            conversation_id: parent.conversation_id.clone(),
+            origin_trigger_id: parent.origin_trigger_id.clone(),
+            parent_task_id: Some(parent_task_id.into()),
+            delegation_depth: parent.delegation_depth + 1,
+            permission_ceiling: Some(permission_ceiling),
+            agent_id: target_agent_id.into(),
+            title,
+            request,
+            status: TaskStatus::Queued,
+            workspace: Some(workspace),
+            checkpoint: None,
+            error: None,
+            attempt: 0,
+            recover_on_restart: false,
+            schedule_id: None,
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+
+        // Serialize limit checks and insertion in one immediate transaction.
+        // Otherwise two callers could both observe the final available slot.
+        let mut db = self.db()?;
+        let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current_status: String = transaction.query_row(
+            "SELECT status FROM tasks WHERE id=?1 AND agent_id=?2",
+            params![parent_task_id, parent_agent_id],
+            |row| row.get(0),
+        )?;
+        let current_status: TaskStatus = serde_json::from_str(&current_status)?;
+        if current_status != TaskStatus::Running {
+            bail!("delegation is allowed only from the current running task");
+        }
+        let direct_children: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM tasks WHERE parent_task_id=?1",
+            [parent_task_id],
+            |row| row.get(0),
+        )?;
+        if direct_children >= MAX_CHILDREN_PER_TASK {
+            bail!("a task can delegate at most {MAX_CHILDREN_PER_TASK} direct child tasks");
+        }
+        let root_id: String = transaction.query_row(
+            "WITH RECURSIVE ancestors(id,parent_task_id) AS (
+                SELECT id,parent_task_id FROM tasks WHERE id=?1
+                UNION ALL
+                SELECT task.id,task.parent_task_id FROM tasks task JOIN ancestors ON task.id=ancestors.parent_task_id
+             ) SELECT id FROM ancestors WHERE parent_task_id IS NULL LIMIT 1",
+            [parent_task_id],
+            |row| row.get(0),
+        )?;
+        let descendants: i64 = transaction.query_row(
+            "WITH RECURSIVE descendants(id) AS (
+                SELECT id FROM tasks WHERE parent_task_id=?1
+                UNION ALL
+                SELECT task.id FROM tasks task JOIN descendants ON task.parent_task_id=descendants.id
+             ) SELECT COUNT(*) FROM descendants",
+            [&root_id],
+            |row| row.get(0),
+        )?;
+        if descendants >= MAX_DESCENDANTS_PER_ROOT {
+            bail!("a delegation tree can contain at most {MAX_DESCENDANTS_PER_ROOT} child tasks");
+        }
+        transaction.execute(
+            "INSERT INTO tasks (id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling) VALUES (?1,?2,?3,?4,?5,?6,NULL,NULL,0,0,NULL,?7,?7,?8,?9,?10,?11,?12)",
+            params![record.id, record.agent_id, record.title, record.request, serde_json::to_string(&record.status)?, record.workspace, timestamp, record.conversation_id, record.origin_trigger_id, record.parent_task_id, record.delegation_depth, serde_json::to_string(&record.permission_ceiling)?],
+        )?;
+        transaction.commit()?;
+        drop(db);
+        self.append_event(
+            Some(target_agent_id),
+            Some(&record.id),
+            "task.delegated",
+            serde_json::to_value(&record)?,
+        )?;
+        Ok(record)
+    }
+
+    pub fn list_child_tasks(&self, parent_task_id: &str) -> Result<Vec<TaskRecord>> {
+        let db = self.db()?;
+        let mut statement = db.prepare(
+            "SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling FROM tasks WHERE parent_task_id=?1 ORDER BY created_at ASC",
+        )?;
+        let rows = statement.query_map([parent_task_id], task_from_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn delegated_task(
+        &self,
+        parent_task_id: &str,
+        child_task_id: &str,
+    ) -> Result<Option<TaskRecord>> {
+        let child = self.get_task(child_task_id)?;
+        Ok(child.filter(|task| task.parent_task_id.as_deref() == Some(parent_task_id)))
+    }
+
+    pub fn list_conversation_child_tasks(
+        &self,
+        agent_id: &str,
+        conversation_id: &str,
+    ) -> Result<Vec<TaskRecord>> {
+        let db = self.db()?;
+        let mut statement = db.prepare(
+            "WITH RECURSIVE conversation_tasks(id) AS (
+                SELECT id FROM tasks WHERE agent_id=?1 AND conversation_id=?2
+                UNION
+                SELECT child.id FROM tasks child JOIN conversation_tasks parent ON child.parent_task_id=parent.id
+             )
+             SELECT child.id,child.agent_id,child.title,child.request,child.status,child.workspace,child.checkpoint,child.error,child.attempt,child.recover_on_restart,child.schedule_id,child.created_at,child.updated_at,child.conversation_id,child.origin_trigger_id,child.parent_task_id,child.delegation_depth,child.permission_ceiling
+             FROM tasks child JOIN conversation_tasks parent ON parent.id=child.parent_task_id ORDER BY child.created_at ASC",
+        )?;
+        let rows = statement.query_map(params![agent_id, conversation_id], task_from_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn conversation_child_task(
+        &self,
+        agent_id: &str,
+        conversation_id: &str,
+        child_task_id: &str,
+    ) -> Result<Option<TaskRecord>> {
+        let db = self.db()?;
+        db.query_row(
+            "WITH RECURSIVE conversation_tasks(id) AS (
+                SELECT id FROM tasks WHERE agent_id=?1 AND conversation_id=?2
+                UNION
+                SELECT child.id FROM tasks child JOIN conversation_tasks parent ON child.parent_task_id=parent.id
+             )
+             SELECT child.id,child.agent_id,child.title,child.request,child.status,child.workspace,child.checkpoint,child.error,child.attempt,child.recover_on_restart,child.schedule_id,child.created_at,child.updated_at,child.conversation_id,child.origin_trigger_id,child.parent_task_id,child.delegation_depth,child.permission_ceiling
+             FROM tasks child JOIN conversation_tasks parent ON parent.id=child.parent_task_id WHERE child.id=?3",
+            params![agent_id, conversation_id, child_task_id],
+            task_from_row,
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
     pub fn get_task(&self, id: &str) -> Result<Option<TaskRecord>> {
         let db = self.db()?;
-        db.query_row("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id FROM tasks WHERE id=?1", [id], task_from_row).optional().map_err(Into::into)
+        db.query_row("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling FROM tasks WHERE id=?1", [id], task_from_row).optional().map_err(Into::into)
     }
 
     pub fn rename_task(&self, id: &str, title: &str) -> Result<TaskRecord> {
@@ -952,9 +1220,9 @@ impl RuntimeStore {
         let db = self.db()?;
         let limit = limit.clamp(1, 500) as i64;
         let mut statement = if agent_id.is_some() {
-            db.prepare("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id FROM tasks WHERE agent_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2")?
+            db.prepare("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling FROM tasks WHERE agent_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2")?
         } else {
-            db.prepare("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id FROM tasks ORDER BY created_at DESC, rowid DESC LIMIT ?1")?
+            db.prepare("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling FROM tasks ORDER BY created_at DESC, rowid DESC LIMIT ?1")?
         };
         let rows = if let Some(agent_id) = agent_id {
             statement.query_map(params![agent_id, limit], task_from_row)?
@@ -1217,7 +1485,7 @@ impl RuntimeStore {
         let timestamp = now();
         let mut db = self.db()?;
         let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let task = transaction.query_row("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id FROM tasks WHERE id=?1", [task_id], task_from_row)?;
+        let task = transaction.query_row("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling FROM tasks WHERE id=?1", [task_id], task_from_row)?;
         if task.status != TaskStatus::WaitingForInput {
             bail!("the task is not waiting for an answer");
         }
@@ -1765,7 +2033,7 @@ impl RuntimeStore {
         );
         let title = format!("{} · event", trigger.title);
         transaction.execute(
-            "INSERT INTO tasks (id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id) VALUES (?1,?2,?3,?4,?5,?6,NULL,NULL,0,0,NULL,?7,?7,?8,?9)",
+            "INSERT INTO tasks (id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling) VALUES (?1,?2,?3,?4,?5,?6,NULL,NULL,0,0,NULL,?7,?7,?8,?9,NULL,0,NULL)",
             params![task_id, trigger.agent_id, title, request, serde_json::to_string(&TaskStatus::Queued)?, workspace, timestamp, conversation_id, trigger.id],
         )?;
         transaction.execute(
@@ -1773,7 +2041,7 @@ impl RuntimeStore {
             params![trigger.id, event.sequence, task_id, timestamp],
         )?;
         let task = transaction.query_row(
-            "SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id FROM tasks WHERE id=?1",
+            "SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling FROM tasks WHERE id=?1",
             [&task_id],
             task_from_row,
         )?;
@@ -1828,6 +2096,9 @@ impl RuntimeStore {
                 id: new_id("task"),
                 conversation_id: new_id("conversation"),
                 origin_trigger_id: None,
+                parent_task_id: None,
+                delegation_depth: 0,
+                permission_ceiling: None,
                 agent_id: schedule.agent_id.clone(),
                 title: if schedule.title.trim().is_empty() {
                     schedule
@@ -1853,7 +2124,7 @@ impl RuntimeStore {
                 updated_at: timestamp,
             };
             transaction.execute(
-                "INSERT INTO tasks (id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id) VALUES (?1,?2,?3,?4,?5,?6,NULL,NULL,0,0,?7,?8,?8,?9,NULL)",
+                "INSERT INTO tasks (id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling) VALUES (?1,?2,?3,?4,?5,?6,NULL,NULL,0,0,?7,?8,?8,?9,NULL,NULL,0,NULL)",
                 params![task.id, task.agent_id, task.title, task.request, serde_json::to_string(&task.status)?, task.workspace, task.schedule_id, timestamp, task.conversation_id],
             )?;
             let payload = serde_json::to_string(&task)?;
@@ -1993,6 +2264,12 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
         updated_at: row.get(12)?,
         conversation_id: row.get(13)?,
         origin_trigger_id: row.get(14)?,
+        parent_task_id: row.get(15)?,
+        delegation_depth: row.get::<_, i64>(16)?.max(0) as u32,
+        permission_ceiling: row
+            .get::<_, Option<String>>(17)?
+            .map(|value| serde_json::from_str(&value).map_err(to_sql_error))
+            .transpose()?,
     })
 }
 
@@ -2133,7 +2410,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
         assert!(table_exists);
         let conversation_column: bool = db
             .query_row(
@@ -2151,6 +2428,14 @@ mod tests {
             )
             .unwrap();
         assert!(trigger_table);
+        let parent_column: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tasks') WHERE name='parent_task_id')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(parent_column);
     }
 
     #[test]

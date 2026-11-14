@@ -647,7 +647,7 @@ impl DesktopServer {
                             "restart_reconciliation".into(),
                             "persistent_gateway".into(),
                         ],
-                        storage_schema: 4,
+                        storage_schema: 5,
                     }
                 }
                 _ => anyhow::bail!("not a runtime request"),

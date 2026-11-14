@@ -3642,7 +3642,9 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
       ]);
       const nextSelectedAgentId = selectedAgentId && nextAgents.some((agent) => agent.id === selectedAgentId)
         ? selectedAgentId : nextAgents.find((agent) => agent.kind === "teammates")?.id ?? nextAgents[0]?.id ?? "";
-      const nextTasks = await window.luma.getTasks(nextSelectedAgentId || undefined);
+      // Keep the complete task set so parent conversations can render durable
+      // child-task handoffs even though each child belongs to another Teammate.
+      const nextTasks = await window.luma.getTasks();
       const nextEventTriggers = await window.luma.getEventTriggers(nextSelectedAgentId || undefined);
       setAgents(nextAgents);
       setTasks(nextTasks);
@@ -3668,7 +3670,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   useEffect(() => {
     if (!selectedAgentId) return;
     let disposed = false;
-    void window.luma.getTasks(selectedAgentId).then((nextTasks) => {
+    void window.luma.getTasks().then((nextTasks) => {
       if (!disposed) setTasks(nextTasks);
     }).catch((reason) => {
       if (!disposed) setError(reason instanceof Error ? reason.message : String(reason));
@@ -3969,7 +3971,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                     const activity = taskMascotActivity(task);
                     return <article key={task.id} className="space-y-3">
                       <div className="luma-teammate-user-row flex w-full justify-end"><div className="luma-teammate-user-message px-3 py-2"><div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">You</div><p className="whitespace-pre-wrap break-words text-[12px] leading-6">{task.request}</p></div></div>
-                      <div className="luma-teammate-assistant-message flex items-start gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={42} active={false} activity={activity} /><div className="min-w-0 flex-1 pt-0.5"><div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">{selectedAgent.name}<span className="font-normal normal-case tracking-normal">{task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : task.status === "waiting_for_approval" ? "· needs approval" : task.status === "waiting_for_input" ? "· needs your answer" : ""}</span></div><div className="luma-teammate-assistant-bubble space-y-2">
+                      <div className="luma-teammate-assistant-message flex items-start gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={42} active={false} activity={activity} /><div className="min-w-0 flex-1 pt-0.5"><div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">{selectedAgent.name}<span className="font-normal normal-case tracking-normal">{task.parent_task_id ? "· delegated" : ""} {task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : task.status === "waiting_for_approval" ? "· needs approval" : task.status === "waiting_for_input" ? "· needs your answer" : ""}</span></div><div className="luma-teammate-assistant-bubble space-y-2">
                         {timeline.map((segment) => segment.kind === "tools" ? (
                           <details key={segment.id} className="luma-task-tool-group rounded-md border border-[var(--luma-border)] px-2 py-1.5">
                             <summary className="cursor-pointer select-none text-[10px] text-[var(--luma-text-muted)]">{toolActivityLabel(segment.tools)}</summary>
@@ -3980,6 +3982,20 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                         {!hasAnswer && timeline.length === 0 && task.status !== "waiting_for_input" && <div className="text-[11px] text-[var(--luma-text-muted)]">{task.status === "completed" ? "No text response was recorded for this task." : task.error ?? (task.status === "failed" ? "Task failed." : task.status === "cancelled" ? "Cancelled." : "Thinking…")}</div>}
                         {task.status === "failed" || task.status === "interrupted" ? <button type="button" disabled={busy} onClick={() => void perform(() => window.luma.retryTask(task.id))} className="mt-2 text-[10px] text-[var(--luma-accent)] hover:underline">Retry</button> : null}
                       </div></div></div>
+                      {tasks.filter((child) => child.parent_task_id === task.id).length > 0 && <div className="ml-12 space-y-1.5 border-l border-[var(--luma-border)] pl-3">
+                        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">Delegated work</div>
+                        {tasks.filter((child) => child.parent_task_id === task.id).map((child) => {
+                          const target = agents.find((agent) => agent.id === child.agent_id);
+                          return <button key={child.id} type="button" onClick={() => {
+                            setSelectedAgentId(child.agent_id);
+                            setSelectedTaskId(child.conversation_id);
+                            setActiveTab("chat");
+                          }} className="flex w-full items-center gap-2 rounded-md border border-[var(--luma-border)] px-2.5 py-2 text-left hover:bg-[var(--luma-surface-hover)]">
+                            <span className="min-w-0 flex-1 truncate text-[11px] text-[var(--luma-text-secondary)]">{target?.name ?? "Teammate"} · {child.title}</span>
+                            <span className="shrink-0 text-[10px] text-[var(--luma-text-muted)]">{child.status.replace(/_/g, " ")}</span>
+                          </button>;
+                        })}
+                      </div>}
                       <div className="flex justify-end"><button type="button" onClick={() => {
                         const response = timeline.filter((segment): segment is Extract<TeammateTimelineSegment, { kind: "text" }> => segment.kind === "text").map((segment) => segment.content).join("\n\n");
                         onHandoffToCode(`Continue this work in Code mode.\n\nOriginal task:\n${task.request}${response ? `\n\nTeammate response so far:\n${response}` : ""}\n\nReview the workspace and decide the next steps before making changes.`);

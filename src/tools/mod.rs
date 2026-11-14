@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 pub mod code_intelligence;
+pub mod delegation;
 pub mod developer;
 pub mod filesystem;
 pub mod git;
