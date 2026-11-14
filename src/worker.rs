@@ -235,10 +235,27 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
         ));
         memory_scopes.push((MemoryScope::User, "default".to_owned(), "User memory"));
     }
+    let mut relevant_memories = Vec::new();
     for (scope, scope_id, label) in memory_scopes {
-        for entry in store.list_memory(scope, &scope_id, None, 100)? {
-            agent.add_system_context(format!("{label} ({}): {}", entry.id, entry.content));
+        for entry in store.list_memory(scope, &scope_id, None, 500)? {
+            let score = crate::tools::memory::relevance_score(&task.request, &entry.content);
+            if score > 0 {
+                relevant_memories.push((score, entry.updated_at, label, entry));
+            }
         }
+    }
+    relevant_memories
+        .sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+    let mut seen_memory = std::collections::HashSet::new();
+    for (_, _, label, entry) in relevant_memories
+        .into_iter()
+        .filter(|(_, _, _, entry)| seen_memory.insert(entry.content.to_lowercase()))
+        .take(12)
+    {
+        agent.add_system_context(format!(
+            "Relevant {label} ({}): {}",
+            entry.id, entry.content
+        ));
     }
 
     let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(128);

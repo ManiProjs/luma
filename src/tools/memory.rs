@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
+use std::collections::HashSet;
 
 use crate::runtime::{GLOBAL_AGENT_ID, MemoryScope, RuntimeStore};
 
@@ -70,10 +71,14 @@ impl Tool for SaveMemory {
         if content.is_empty() || content.len() > 8_000 {
             bail!("save_memory: content must contain 1–8000 characters");
         }
-        let existing =
-            self.store
-                .list_memory(MemoryScope::Agent, &self.agent_id, Some(content), 5)?;
-        if let Some(entry) = existing.into_iter().find(|entry| entry.content == content) {
+        let existing = self
+            .store
+            .list_memory(MemoryScope::Agent, &self.agent_id, None, 500)?;
+        let normalized = normalize(content);
+        if let Some(entry) = existing
+            .into_iter()
+            .find(|entry| normalize(&entry.content) == normalized)
+        {
             return Ok(format!("Already remembered ({}).", entry.id));
         }
         let entry = self.store.add_memory(
@@ -117,12 +122,26 @@ impl Tool for RecallMemory {
             scopes.push((MemoryScope::Agent, GLOBAL_AGENT_ID, "Global teammate"));
             scopes.push((MemoryScope::User, "default", "shared user"));
         }
-        let mut matches = Vec::new();
+        let mut candidates = Vec::new();
         for (scope, scope_id, label) in scopes {
-            for entry in self.store.list_memory(scope, scope_id, Some(query), 20)? {
-                matches.push(format!("- [{label}] {}", entry.content));
+            for entry in self.store.list_memory(scope, scope_id, None, 500)? {
+                let score = relevance_score(query, &entry.content);
+                if score > 0 {
+                    candidates.push((score, entry.updated_at, label, entry));
+                }
             }
         }
+        candidates.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| right.1.cmp(&left.1)));
+        let mut seen = HashSet::new();
+        let matches = candidates
+            .into_iter()
+            .filter_map(|(_, _, label, entry)| {
+                let key = normalize(&entry.content);
+                seen.insert(key)
+                    .then(|| format!("- [{label}] {}", entry.content))
+            })
+            .take(12)
+            .collect::<Vec<_>>();
         if matches.is_empty() {
             Ok("No matching saved memories. You can still answer using the current conversation and available project context.".into())
         } else {
@@ -133,6 +152,40 @@ impl Tool for RecallMemory {
     fn is_read_only(&self) -> bool {
         true
     }
+}
+
+/// Rank by meaningful query terms instead of requiring one contiguous SQL
+/// substring. Exact phrases and coverage of distinct terms score highest.
+pub(crate) fn relevance_score(query: &str, content: &str) -> usize {
+    let query_terms = terms(query);
+    if query_terms.is_empty() {
+        return 0;
+    }
+    let content_lower = content.to_lowercase();
+    let content_terms = terms(content);
+    let matched = query_terms
+        .iter()
+        .filter(|term| content_terms.contains(*term))
+        .count();
+    if matched == 0 {
+        return 0;
+    }
+    let phrase_bonus = usize::from(content_lower.contains(&query.to_lowercase())) * 3;
+    matched * 10 + phrase_bonus + usize::from(matched == query_terms.len()) * 5
+}
+
+fn terms(value: &str) -> HashSet<String> {
+    value
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|term| term.chars().count() >= 2)
+        .map(str::to_lowercase)
+        .collect()
+}
+
+fn normalize(value: &str) -> String {
+    let mut terms = terms(value).into_iter().collect::<Vec<_>>();
+    terms.sort();
+    terms.join(" ")
 }
 
 #[cfg(test)]
@@ -208,6 +261,69 @@ mod tests {
                 .execute(r#"{"query":"conventional commits"}"#)
                 .unwrap()
                 .contains("Shared project convention")
+        );
+    }
+
+    #[test]
+    fn recall_ranks_related_terms_without_contiguous_substring_match() {
+        let store = RuntimeStore::open_in_memory_for_tests();
+        let agent = store
+            .create_agent(
+                "Researcher",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        store
+            .add_memory(
+                MemoryScope::Agent,
+                &agent.id,
+                "The user prefers concise technical explanations.",
+                None,
+            )
+            .unwrap();
+        store
+            .add_memory(
+                MemoryScope::Agent,
+                &agent.id,
+                "The project uses a blue sidebar.",
+                None,
+            )
+            .unwrap();
+        let recall = RecallMemory::new(store, agent.id, "/workspace", false);
+        let result = recall
+            .execute(r#"{"query":"technical concise preferences"}"#)
+            .unwrap();
+        assert!(result.contains("prefers concise technical explanations"));
+        assert!(!result.contains("blue sidebar"));
+    }
+
+    #[test]
+    fn saving_same_fact_with_different_punctuation_does_not_duplicate_it() {
+        let store = RuntimeStore::open_in_memory_for_tests();
+        let agent = store
+            .create_agent(
+                "Researcher",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let save = SaveMemory::new(store.clone(), agent.id.clone());
+        save.execute(r#"{"content":"Prefer concise, technical answers."}"#)
+            .unwrap();
+        assert!(
+            save.execute(r#"{"content":"Prefer concise technical answers"}"#)
+                .unwrap()
+                .contains("Already remembered")
+        );
+        assert_eq!(
+            store
+                .list_memory(MemoryScope::Agent, &agent.id, None, 20)
+                .unwrap()
+                .len(),
+            1
         );
     }
 }
