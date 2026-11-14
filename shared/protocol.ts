@@ -198,6 +198,19 @@ export type ScheduleRecord = {
   created_at: number;
 };
 
+export type EventTriggerRecord = {
+  id: string;
+  agent_id: string;
+  title: string;
+  prompt: string;
+  event_type: "task.completed" | "task.failed" | "approval.requested" | "memory.created";
+  cooldown_seconds: number;
+  enabled: boolean;
+  last_triggered_at: number | null;
+  created_after_sequence: number;
+  created_at: number;
+};
+
 export type RuntimeEvent = {
   sequence: number;
   event_id: string;
@@ -288,6 +301,10 @@ export type ClientMessage =
   | { type: "schedule_create"; data: { request_id: string; agent_id: string; title: string; prompt: string; run_at: number | null; every_seconds: number | null } }
   | { type: "schedule_delete"; data: { request_id: string; id: string } }
   | { type: "schedule_set_enabled"; data: { request_id: string; id: string; enabled: boolean } }
+  | { type: "event_triggers_list"; data: { request_id: string; agent_id: string | null } }
+  | { type: "event_trigger_create"; data: { request_id: string; agent_id: string; title: string; prompt: string; event_type: EventTriggerRecord["event_type"]; cooldown_seconds: number } }
+  | { type: "event_trigger_delete"; data: { request_id: string; id: string } }
+  | { type: "event_trigger_set_enabled"; data: { request_id: string; id: string; enabled: boolean } }
   | { type: "events_since"; data: { request_id: string; sequence: number; limit: number | null; agent_id?: string | null } }
   | { type: "runtime_capabilities"; data: { request_id: string } };
 
@@ -347,6 +364,9 @@ export type ServerEvent =
   | { type: "schedules"; data: { request_id: string; schedules: ScheduleRecord[] } }
   | { type: "schedule_saved"; data: { request_id: string; schedule: ScheduleRecord } }
   | { type: "schedule_deleted"; data: { request_id: string; deleted: boolean } }
+  | { type: "event_triggers"; data: { request_id: string; triggers: EventTriggerRecord[] } }
+  | { type: "event_trigger_saved"; data: { request_id: string; trigger: EventTriggerRecord } }
+  | { type: "event_trigger_deleted"; data: { request_id: string; deleted: boolean } }
   | { type: "runtime_events"; data: { request_id: string; events: RuntimeEvent[] } }
   | { type: "runtime_capabilities"; data: { request_id: string; features: string[]; storage_schema: number } }
   | { type: "runtime_notice"; data: { event: RuntimeEvent } };
@@ -564,6 +584,15 @@ function isScheduleRecord(value: unknown): value is ScheduleRecord {
     && (value.last_run_at === null || isNumber(value.last_run_at)) && isNumber(value.created_at);
 }
 
+function isEventTriggerRecord(value: unknown): value is EventTriggerRecord {
+  return isRecord(value) && isString(value.id) && isString(value.agent_id)
+    && isString(value.title) && isString(value.prompt)
+    && ["task.completed", "task.failed", "approval.requested", "memory.created"].includes(String(value.event_type))
+    && isNumber(value.cooldown_seconds) && typeof value.enabled === "boolean"
+    && (value.last_triggered_at === null || isNumber(value.last_triggered_at))
+    && isNumber(value.created_after_sequence) && isNumber(value.created_at);
+}
+
 function isRuntimeEvent(value: unknown): value is RuntimeEvent {
   return isRecord(value) && isNumber(value.sequence) && isString(value.event_id)
     && isNullableString(value.agent_id) && isNullableString(value.task_id)
@@ -628,6 +657,9 @@ export function parseServerEvent(line: string): ServerEvent {
     case "schedules": valid = isString(data.request_id) && Array.isArray(data.schedules) && data.schedules.every(isScheduleRecord); break;
     case "schedule_saved": valid = isString(data.request_id) && isScheduleRecord(data.schedule); break;
     case "schedule_deleted": valid = isString(data.request_id) && typeof data.deleted === "boolean"; break;
+    case "event_triggers": valid = isString(data.request_id) && Array.isArray(data.triggers) && data.triggers.every(isEventTriggerRecord); break;
+    case "event_trigger_saved": valid = isString(data.request_id) && isEventTriggerRecord(data.trigger); break;
+    case "event_trigger_deleted": valid = isString(data.request_id) && typeof data.deleted === "boolean"; break;
     case "runtime_events": valid = isString(data.request_id) && Array.isArray(data.events) && data.events.every(isRuntimeEvent); break;
     case "runtime_capabilities": valid = isString(data.request_id) && Array.isArray(data.features) && data.features.every(isString) && isNumber(data.storage_schema); break;
     case "runtime_notice": valid = isRuntimeEvent(data.event); break;

@@ -4,7 +4,7 @@ import type {
   SetupProvider,
 } from "./stores/setupStore";
 import type { LumaAgentEvent } from "./preload";
-import type { AgentConfiguration, AgentKind, AgentRecord, ApprovalRecord, ChatSummary, MemoryEntry, MemoryScope, ScheduleRecord, TaskRecord, RuntimeEvent, PluginEntry, InstalledPlugin, McpServerConfig } from "../../shared/protocol";
+import type { AgentConfiguration, AgentKind, AgentRecord, ApprovalRecord, ChatSummary, MemoryEntry, MemoryScope, ScheduleRecord, EventTriggerRecord, TaskRecord, RuntimeEvent, PluginEntry, InstalledPlugin, McpServerConfig } from "../../shared/protocol";
 import type { ChatAttachment } from "../../shared/attachments";
 
 declare global {
@@ -67,6 +67,10 @@ declare global {
       createSchedule(input: { agentId: string; title: string; prompt: string; everySeconds: number }): Promise<ScheduleRecord>;
       deleteSchedule(id: string): Promise<boolean>;
       setScheduleEnabled(id: string, enabled: boolean): Promise<ScheduleRecord>;
+      getEventTriggers(agentId?: string): Promise<EventTriggerRecord[]>;
+      createEventTrigger(input: { agentId: string; title: string; prompt: string; eventType: EventTriggerRecord["event_type"]; cooldownSeconds: number }): Promise<EventTriggerRecord>;
+      deleteEventTrigger(id: string): Promise<boolean>;
+      setEventTriggerEnabled(id: string, enabled: boolean): Promise<EventTriggerRecord>;
       getProviders(): Promise<SetupProvider[]>;
 
       getModels(

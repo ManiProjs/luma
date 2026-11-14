@@ -547,6 +547,7 @@ impl RuntimeSupervisor {
         for schedule in self.store.due_schedules(timestamp)? {
             self.store.enqueue_due_schedule(&schedule.id, timestamp)?;
         }
+        self.store.dispatch_event_triggers(timestamp)?;
         Ok(())
     }
 

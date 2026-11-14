@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { parseServerEvent, type ServerEvent, type AgentConfiguration, type AgentKind, type AgentRecord, type ApprovalRecord, type ChatSummary, type MemoryEntry, type MemoryScope, type ScheduleRecord, type TaskRecord, type RuntimeEvent, type PluginEntry, type InstalledPlugin, type McpServerConfig } from "../../shared/protocol";
+import { parseServerEvent, type ServerEvent, type AgentConfiguration, type AgentKind, type AgentRecord, type ApprovalRecord, type ChatSummary, type MemoryEntry, type MemoryScope, type ScheduleRecord, type EventTriggerRecord, type TaskRecord, type RuntimeEvent, type PluginEntry, type InstalledPlugin, type McpServerConfig } from "../../shared/protocol";
 import type { ChatAttachment } from "../../shared/attachments";
 
 export type LumaAgentEvent = ServerEvent;
@@ -86,6 +86,10 @@ contextBridge.exposeInMainWorld("luma", {
   createSchedule: (input: { agentId: string; title: string; prompt: string; everySeconds: number }): Promise<ScheduleRecord> => invoke("luma:create-schedule", input),
   deleteSchedule: (id: string): Promise<boolean> => invoke("luma:delete-schedule", id),
   setScheduleEnabled: (id: string, enabled: boolean): Promise<ScheduleRecord> => invoke("luma:set-schedule-enabled", id, enabled),
+  getEventTriggers: (agentId?: string): Promise<EventTriggerRecord[]> => invoke("luma:get-event-triggers", agentId),
+  createEventTrigger: (input: { agentId: string; title: string; prompt: string; eventType: EventTriggerRecord["event_type"]; cooldownSeconds: number }): Promise<EventTriggerRecord> => invoke("luma:create-event-trigger", input),
+  deleteEventTrigger: (id: string): Promise<boolean> => invoke("luma:delete-event-trigger", id),
+  setEventTriggerEnabled: (id: string, enabled: boolean): Promise<EventTriggerRecord> => invoke("luma:set-event-trigger-enabled", id, enabled),
   getProviders: () => invoke("luma:get-providers"),
 
   getModels: (

@@ -222,6 +222,11 @@ impl DesktopServer {
             | ClientMessage::SchedulesList { .. }
             | ClientMessage::ScheduleCreate { .. }
             | ClientMessage::ScheduleDelete { .. }
+            | ClientMessage::ScheduleSetEnabled { .. }
+            | ClientMessage::EventTriggersList { .. }
+            | ClientMessage::EventTriggerCreate { .. }
+            | ClientMessage::EventTriggerDelete { .. }
+            | ClientMessage::EventTriggerSetEnabled { .. }
             | ClientMessage::EventsSince { .. }
             | ClientMessage::RuntimeCapabilities { .. }) => {
                 self.serve_runtime(message, stdout).await
@@ -575,6 +580,44 @@ impl DesktopServer {
                     request_id,
                     schedule: self.runtime.set_schedule_enabled(&id, enabled)?,
                 },
+                ClientMessage::EventTriggersList {
+                    request_id,
+                    agent_id,
+                } => ServerEvent::EventTriggers {
+                    request_id,
+                    triggers: self.runtime.list_event_triggers(agent_id.as_deref())?,
+                },
+                ClientMessage::EventTriggerCreate {
+                    request_id,
+                    agent_id,
+                    title,
+                    prompt,
+                    event_type,
+                    cooldown_seconds,
+                } => ServerEvent::EventTriggerSaved {
+                    request_id,
+                    trigger: self.runtime.create_event_trigger(
+                        &agent_id,
+                        &title,
+                        &prompt,
+                        &event_type,
+                        cooldown_seconds,
+                    )?,
+                },
+                ClientMessage::EventTriggerDelete { request_id, id } => {
+                    ServerEvent::EventTriggerDeleted {
+                        request_id,
+                        deleted: self.runtime.delete_event_trigger(&id)?,
+                    }
+                }
+                ClientMessage::EventTriggerSetEnabled {
+                    request_id,
+                    id,
+                    enabled,
+                } => ServerEvent::EventTriggerSaved {
+                    request_id,
+                    trigger: self.runtime.set_event_trigger_enabled(&id, enabled)?,
+                },
                 ClientMessage::EventsSince {
                     request_id,
                     sequence,
@@ -597,12 +640,14 @@ impl DesktopServer {
                             "durable_tasks".into(),
                             "scoped_memory".into(),
                             "schedules".into(),
+                            "event_triggers".into(),
+                            "conversation_threads".into(),
                             "event_replay".into(),
                             "permission_profiles".into(),
                             "restart_reconciliation".into(),
                             "persistent_gateway".into(),
                         ],
-                        storage_schema: 2,
+                        storage_schema: 4,
                     }
                 }
                 _ => anyhow::bail!("not a runtime request"),

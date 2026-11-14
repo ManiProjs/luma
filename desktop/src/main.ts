@@ -26,6 +26,7 @@ import {
   type MemoryEntry,
   type MemoryScope,
   type ScheduleRecord,
+  type EventTriggerRecord,
   type TaskRecord,
   type RuntimeEvent,
   type ModelConfig,
@@ -37,7 +38,7 @@ import type { ChatAttachment } from "../../shared/attachments";
 type PendingRequest = {
   expectedType: "setup_config" | "setup_saved" | "providers" | "models" | "provider_tested" | "model_changed"
     | "agents" | "agent_saved" | "agent_deleted" | "tasks" | "task_saved" | "task_deleted" | "approvals" | "approval_resolved"
-    | "memory" | "memory_saved" | "memory_deleted" | "schedules" | "schedule_saved" | "schedule_deleted" | "runtime_events"
+    | "memory" | "memory_saved" | "memory_deleted" | "schedules" | "schedule_saved" | "schedule_deleted" | "event_triggers" | "event_trigger_saved" | "event_trigger_deleted" | "runtime_events"
     | "plugins" | "plugin_saved" | "plugin_deleted" | "mcp_servers" | "mcp_saved" | "mcp_deleted"
     | "history_list";
   resolve: (value: ServerEvent) => void;
@@ -1356,6 +1357,32 @@ app.whenReady().then(async () => {
     const response = await requestLuma("schedule_saved", (request_id) => ({ type: "schedule_set_enabled", data: { request_id, id, enabled } }));
     if (response.type !== "schedule_saved") throw new Error("Unexpected response to schedule_set_enabled.");
     return response.data.schedule;
+  });
+
+  handleIpc("luma:get-event-triggers", async (_event, agentId?: string): Promise<EventTriggerRecord[]> => {
+    const response = await requestLuma("event_triggers", (request_id) => ({ type: "event_triggers_list", data: { request_id, agent_id: agentId ?? null } }));
+    if (response.type !== "event_triggers") throw new Error("Unexpected response to event_triggers_list.");
+    return response.data.triggers;
+  });
+
+  handleIpc("luma:create-event-trigger", async (_event, input: { agentId: string; title: string; prompt: string; eventType: EventTriggerRecord["event_type"]; cooldownSeconds: number }) => {
+    const response = await requestLuma("event_trigger_saved", (request_id) => ({ type: "event_trigger_create", data: {
+      request_id, agent_id: input.agentId, title: input.title, prompt: input.prompt, event_type: input.eventType, cooldown_seconds: input.cooldownSeconds,
+    } }));
+    if (response.type !== "event_trigger_saved") throw new Error("Unexpected response to event_trigger_create.");
+    return response.data.trigger;
+  });
+
+  handleIpc("luma:delete-event-trigger", async (_event, id: string) => {
+    const response = await requestLuma("event_trigger_deleted", (request_id) => ({ type: "event_trigger_delete", data: { request_id, id } }));
+    if (response.type !== "event_trigger_deleted") throw new Error("Unexpected response to event_trigger_delete.");
+    return response.data.deleted;
+  });
+
+  handleIpc("luma:set-event-trigger-enabled", async (_event, id: string, enabled: boolean) => {
+    const response = await requestLuma("event_trigger_saved", (request_id) => ({ type: "event_trigger_set_enabled", data: { request_id, id, enabled } }));
+    if (response.type !== "event_trigger_saved") throw new Error("Unexpected response to event_trigger_set_enabled.");
+    return response.data.trigger;
   });
 
   handleIpc("luma:get-providers", async () => {

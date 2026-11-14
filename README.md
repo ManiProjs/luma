@@ -178,6 +178,8 @@ teammate's connectors. External tool calls require approval.
   and uninstall local plugin packages in Settings → Extensions or with `luma plugins`.
 - [MCP servers](docs/mcp.md): register stdio or HTTP servers and inspect their
   tools in Settings → Extensions or with `luma mcp`.
+- [Teammates](docs/teammates.md): persistent conversations, ranked long-term memory,
+  recurring schedules, and event-triggered background work.
 
 ### `patch_file`
 

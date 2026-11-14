@@ -24,7 +24,7 @@ import { useSetupStore } from "./stores/setupStore";
 
 import { useWorkspaceStore, type Chat } from "./stores/workspaceStore";
 import { MascotAvatar } from "./components/MascotAvatar";
-import type { AgentConfiguration, AgentRecord, ApprovalRecord, MemoryEntry, MemoryScope, ScheduleRecord, TaskRecord, RuntimeEvent } from "../../shared/protocol";
+import type { AgentConfiguration, AgentRecord, ApprovalRecord, MemoryEntry, MemoryScope, ScheduleRecord, EventTriggerRecord, TaskRecord, RuntimeEvent } from "../../shared/protocol";
 import { formatChatPrompt, type ChatAttachment } from "../../shared/attachments";
 import { MascotCustomizer } from "./components/MascotCustomizer";
 import { getProfileDisplayName, useProfileStore } from "./stores/profileStore";
@@ -3555,6 +3555,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeEvent[]>([]);
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
+  const [eventTriggers, setEventTriggers] = useState<EventTriggerRecord[]>([]);
   const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>([]);
   const [memoryScope, setMemoryScope] = useState<MemoryScope>("agent");
   const [workspacePath, setWorkspacePath] = useState("");
@@ -3599,6 +3600,10 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [schedulePrompt, setSchedulePrompt] = useState("");
   const [scheduleTitle, setScheduleTitle] = useState("Recurring task");
   const [scheduleIntervalHours, setScheduleIntervalHours] = useState("24");
+  const [triggerTitle, setTriggerTitle] = useState("Review completed work");
+  const [triggerPrompt, setTriggerPrompt] = useState("");
+  const [triggerEventType, setTriggerEventType] = useState<EventTriggerRecord["event_type"]>("task.completed");
+  const [triggerCooldownMinutes, setTriggerCooldownMinutes] = useState("60");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const refreshing = useRef(false);
@@ -3638,11 +3643,13 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
       const nextSelectedAgentId = selectedAgentId && nextAgents.some((agent) => agent.id === selectedAgentId)
         ? selectedAgentId : nextAgents.find((agent) => agent.kind === "teammates")?.id ?? nextAgents[0]?.id ?? "";
       const nextTasks = await window.luma.getTasks(nextSelectedAgentId || undefined);
+      const nextEventTriggers = await window.luma.getEventTriggers(nextSelectedAgentId || undefined);
       setAgents(nextAgents);
       setTasks(nextTasks);
       setCancellingTasks((current) => current.filter((id) => nextTasks.some((task) => task.id === id && ["queued", "running", "waiting_for_approval", "waiting_for_input", "paused"].includes(task.status))));
       setApprovals(nextApprovals);
       setSchedules(nextSchedules);
+      setEventTriggers(nextEventTriggers);
       setSelectedAgentId(nextSelectedAgentId);
       setError(null);
     } catch (reason) {
@@ -4126,6 +4133,21 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                     <button type="button" disabled={busy || !schedulePrompt.trim() || !scheduleTitle.trim() || !Number.isInteger(Number(scheduleIntervalHours)) || Number(scheduleIntervalHours) < 1 || Number(scheduleIntervalHours) > 8760} onClick={() => void perform(async () => { await window.luma.createSchedule({ agentId: selectedAgent.id, title: scheduleTitle.trim(), prompt: schedulePrompt.trim(), everySeconds: Number(scheduleIntervalHours) * 3600 }); setSchedulePrompt(""); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Create recurring schedule</button>
                     <p className="mt-1 text-[10px] text-[var(--luma-text-muted)]">{schedules.filter((schedule) => schedule.agent_id === selectedAgent.id && schedule.enabled).length} enabled schedules</p>
                     <div className="mt-2 space-y-1">{schedules.filter((schedule) => schedule.agent_id === selectedAgent.id).map((schedule) => <div key={schedule.id} className="flex items-center gap-2 border-t border-[var(--luma-border)] pt-1.5"><span className="min-w-0 flex-1 truncate text-[10px] text-[var(--luma-text-secondary)]">{schedule.title} · {schedule.every_seconds ? `every ${Math.round(schedule.every_seconds / 3600 * 10) / 10}h` : "one-time"} · {schedule.enabled ? `next ${new Date(schedule.next_run_at * 1000).toLocaleString()}` : "Disabled"}</span><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.setScheduleEnabled(schedule.id, !schedule.enabled))} className="text-[10px] text-[var(--luma-accent)] hover:underline">{schedule.enabled ? "Pause" : "Resume"}</button><button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.deleteSchedule(schedule.id); })} className="text-[10px] text-[var(--luma-danger)] hover:underline">Remove</button></div>)}</div>
+                    <div className="my-4 border-t border-[var(--luma-border)]" />
+                    <h4 className="mb-1 luma-kicker">Event-triggered work</h4>
+                    <p className="mb-2 text-[10px] leading-relaxed text-[var(--luma-text-muted)]">Run this teammate when a supported event occurs. Triggered runs are deduplicated, cooldown-limited, and cannot trigger themselves recursively.</p>
+                    <input value={triggerTitle} onChange={(event) => setTriggerTitle(event.target.value)} maxLength={120} placeholder="Trigger name" className="luma-input mb-2 h-8 w-full text-[11px]" />
+                    <select value={triggerEventType} onChange={(event) => setTriggerEventType(event.target.value as EventTriggerRecord["event_type"])} className="luma-input mb-2 h-8 w-full text-[11px]">
+                      <option value="task.completed">When a task completes</option>
+                      <option value="task.failed">When a task fails</option>
+                      <option value="approval.requested">When an approval is requested</option>
+                      <option value="memory.created">When a memory is saved</option>
+                    </select>
+                    <textarea value={triggerPrompt} onChange={(event) => setTriggerPrompt(event.target.value)} rows={2} maxLength={8000} placeholder="What should the teammate do when this happens?" className="luma-input w-full resize-y text-[11px]" />
+                    <label className="mt-2 block text-[10px] text-[var(--luma-text-muted)]">Minimum time between runs (minutes)<input type="number" min={1} max={1440} step={1} value={triggerCooldownMinutes} onChange={(event) => setTriggerCooldownMinutes(event.target.value)} className="luma-input mt-1 h-8 w-full text-[11px]" /></label>
+                    <button type="button" disabled={busy || !triggerTitle.trim() || !triggerPrompt.trim() || !Number.isInteger(Number(triggerCooldownMinutes)) || Number(triggerCooldownMinutes) < 1 || Number(triggerCooldownMinutes) > 1440} onClick={() => void perform(async () => { await window.luma.createEventTrigger({ agentId: selectedAgent.id, title: triggerTitle.trim(), prompt: triggerPrompt.trim(), eventType: triggerEventType, cooldownSeconds: Number(triggerCooldownMinutes) * 60 }); setTriggerPrompt(""); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Create event trigger</button>
+                    <p className="mt-2 text-[10px] text-[var(--luma-text-muted)]">{eventTriggers.filter((trigger) => trigger.agent_id === selectedAgent.id && trigger.enabled).length} enabled triggers</p>
+                    <div className="mt-2 space-y-1">{eventTriggers.filter((trigger) => trigger.agent_id === selectedAgent.id).map((trigger) => <div key={trigger.id} className="flex items-center gap-2 border-t border-[var(--luma-border)] pt-1.5"><span className="min-w-0 flex-1"><span className="block truncate text-[10px] text-[var(--luma-text-secondary)]">{trigger.title}</span><small className="block text-[9px] text-[var(--luma-text-muted)]">{trigger.event_type.replace(/\./g, " · ")} · cooldown {Math.round(trigger.cooldown_seconds / 60)}m</small></span><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.setEventTriggerEnabled(trigger.id, !trigger.enabled))} className="text-[10px] text-[var(--luma-accent)] hover:underline">{trigger.enabled ? "Pause" : "Resume"}</button><button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.deleteEventTrigger(trigger.id); })} className="text-[10px] text-[var(--luma-danger)] hover:underline">Remove</button></div>)}</div>
                   </div>
                 </section>
               </div>

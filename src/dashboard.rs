@@ -12,7 +12,7 @@ use axum::{
     },
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 
 use crate::{
@@ -188,6 +188,15 @@ impl DashboardServer {
                 get(api_schedules).post(api_create_schedule),
             )
             .route("/api/schedules/{id}", delete(api_delete_schedule))
+            .route(
+                "/api/event-triggers",
+                get(api_event_triggers).post(api_create_event_trigger),
+            )
+            .route("/api/event-triggers/{id}", delete(api_delete_event_trigger))
+            .route(
+                "/api/event-triggers/{id}/enabled",
+                put(api_set_event_trigger_enabled),
+            )
             .route("/api/events", get(api_events))
             .route("/api/terminal", post(api_terminal))
             .layer(middleware::from_fn(restrict_browser_origins))
@@ -806,6 +815,25 @@ struct CreateScheduleRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct CreateEventTriggerRequest {
+    agent_id: String,
+    title: String,
+    prompt: String,
+    event_type: String,
+    cooldown_seconds: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct SetEventTriggerEnabledRequest {
+    enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct EventTriggersQuery {
+    agent_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ResolveApprovalRequest {
     allowed: bool,
 }
@@ -1378,6 +1406,87 @@ async fn api_delete_schedule(
             .into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_event_triggers(
+    State(state): State<Arc<DashboardServer>>,
+    Query(query): Query<EventTriggersQuery>,
+) -> impl IntoResponse {
+    match state.runtime.list_event_triggers(query.agent_id.as_deref()) {
+        Ok(triggers) => Json(triggers).into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_create_event_trigger(
+    State(state): State<Arc<DashboardServer>>,
+    Json(request): Json<CreateEventTriggerRequest>,
+) -> impl IntoResponse {
+    match state.runtime.create_event_trigger(
+        &request.agent_id,
+        &request.title,
+        &request.prompt,
+        &request.event_type,
+        request.cooldown_seconds,
+    ) {
+        Ok(trigger) => (StatusCode::CREATED, Json(trigger)).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_delete_event_trigger(
+    State(state): State<Arc<DashboardServer>>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.runtime.delete_event_trigger(&id) {
+        Ok(true) => Json(serde_json::json!({ "deleted": true })).into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(ApiError {
+                error: "Event trigger not found.".into(),
+            }),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_set_event_trigger_enabled(
+    State(state): State<Arc<DashboardServer>>,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<SetEventTriggerEnabledRequest>,
+) -> impl IntoResponse {
+    match state
+        .runtime
+        .set_event_trigger_enabled(&id, request.enabled)
+    {
+        Ok(trigger) => Json(trigger).into_response(),
+        Err(error) => (
+            StatusCode::NOT_FOUND,
             Json(ApiError {
                 error: error.to_string(),
             }),

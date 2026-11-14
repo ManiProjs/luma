@@ -296,6 +296,27 @@ pub enum ClientMessage {
         id: String,
         enabled: bool,
     },
+    EventTriggersList {
+        request_id: String,
+        agent_id: Option<String>,
+    },
+    EventTriggerCreate {
+        request_id: String,
+        agent_id: String,
+        title: String,
+        prompt: String,
+        event_type: String,
+        cooldown_seconds: u64,
+    },
+    EventTriggerDelete {
+        request_id: String,
+        id: String,
+    },
+    EventTriggerSetEnabled {
+        request_id: String,
+        id: String,
+        enabled: bool,
+    },
     EventsSince {
         request_id: String,
         sequence: i64,
@@ -365,6 +386,10 @@ impl ClientMessage {
             | Self::ScheduleCreate { request_id, .. }
             | Self::ScheduleDelete { request_id, .. }
             | Self::ScheduleSetEnabled { request_id, .. }
+            | Self::EventTriggersList { request_id, .. }
+            | Self::EventTriggerCreate { request_id, .. }
+            | Self::EventTriggerDelete { request_id, .. }
+            | Self::EventTriggerSetEnabled { request_id, .. }
             | Self::EventsSince { request_id, .. }
             | Self::RuntimeCapabilities { request_id } => Some(request_id),
         }
@@ -453,6 +478,10 @@ impl ClientMessage {
             | Self::ScheduleCreate { .. }
             | Self::ScheduleDelete { .. }
             | Self::ScheduleSetEnabled { .. }
+            | Self::EventTriggersList { .. }
+            | Self::EventTriggerCreate { .. }
+            | Self::EventTriggerDelete { .. }
+            | Self::EventTriggerSetEnabled { .. }
             | Self::EventsSince { .. }
             | Self::RuntimeCapabilities { .. } => None,
         }
@@ -633,6 +662,18 @@ pub enum ServerEvent {
         schedule: crate::runtime::ScheduleRecord,
     },
     ScheduleDeleted {
+        request_id: String,
+        deleted: bool,
+    },
+    EventTriggers {
+        request_id: String,
+        triggers: Vec<crate::runtime::EventTriggerRecord>,
+    },
+    EventTriggerSaved {
+        request_id: String,
+        trigger: crate::runtime::EventTriggerRecord,
+    },
+    EventTriggerDeleted {
         request_id: String,
         deleted: bool,
     },
