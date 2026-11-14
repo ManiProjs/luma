@@ -213,6 +213,7 @@ impl DesktopServer {
             | ClientMessage::TasksList { .. }
             | ClientMessage::TaskCreate { .. }
             | ClientMessage::TaskCancel { .. }
+            | ClientMessage::TaskAnswerQuestion { .. }
             | ClientMessage::TaskRetry { .. }
             | ClientMessage::ApprovalsList { .. }
             | ClientMessage::ApprovalResolve { .. }

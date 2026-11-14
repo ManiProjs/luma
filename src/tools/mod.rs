@@ -19,7 +19,7 @@ impl Tool for AskQuestion {
         "ask_question"
     }
     fn description(&self) -> &str {
-        "Ask the user for missing information and wait for their answer. Input JSON: {\"prompt\":\"question\",\"choices\":[\"optional choice\"]}. This is an interactive control-flow action, not an approval."
+        "Ask the user for missing information and wait for their answer. Use the ReAct tool action envelope with name `ask_question` and input JSON {\"prompt\":\"question\",\"choices\":[\"optional choice\"]}. This displays an interactive question in Luma; do not print the JSON to the user. This is an interactive control-flow action, not an approval."
     }
     fn execute(&self, _input: &str) -> Result<String> {
         anyhow::bail!("ask_question must be handled by the Agent interaction loop")

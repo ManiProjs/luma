@@ -15,6 +15,22 @@ new chat creates a new conversation; sending another message in an existing
 chat continues that conversation. Conversation IDs are scoped to their owning
 Teammate and cannot be reused by another agent.
 
+## Rich responses
+
+Teammate replies support Markdown plus optional structured visual blocks. A
+Teammate can place one JSON object inside a fenced code block tagged `luma`:
+
+```luma
+{"type":"stat","label":"Tasks completed","value":12,"detail":"This week"}
+```
+
+Supported block types are `image`, `gallery`, `table`, `stat`, `chart`,
+`callout`, and `link`. Image and link URLs must use HTTP or HTTPS; unsupported
+or malformed blocks fall back to a readable JSON code block. Galleries, table
+rows, and chart series are bounded to keep responses compact. Ordinary Markdown
+and existing conversation history continue to render as before. Rich blocks
+are presentation only: they cannot execute HTML, scripts, or arbitrary code.
+
 ## Long-term memory
 
 Teammates can save durable facts with `save_memory` and retrieve them with

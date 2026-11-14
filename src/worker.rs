@@ -287,6 +287,25 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
              task reports a completed status and you have reviewed its response."
                 .to_owned(),
         );
+        agent.add_system_context(
+            "# Rich responses\n\n\
+             You can combine normal prose with rich visual blocks in your final answer. When a\n\
+             visual genuinely improves the answer, emit a fenced `luma` block containing exactly\n\
+             one JSON object. Supported blocks:\n\
+             - image: {\"type\":\"image\",\"url\":\"https://...\",\"alt\":\"...\",\"caption\":\"...\"}\n\
+             - gallery: {\"type\":\"gallery\",\"images\":[{\"url\":\"https://...\",\"alt\":\"...\"}]}\n\
+             - table: {\"type\":\"table\",\"title\":\"...\",\"columns\":[\"A\",\"B\"],\"rows\":[[\"x\",2]]}\n\
+             - stat: {\"type\":\"stat\",\"label\":\"...\",\"value\":42,\"detail\":\"...\"}\n\
+             - chart: {\"type\":\"chart\",\"title\":\"...\",\"labels\":[\"A\",\"B\"],\"values\":[4,7],\"value_suffix\":\"%\"}\n\
+             - callout: {\"type\":\"callout\",\"title\":\"...\",\"text\":\"...\",\"tone\":\"info|success|warning\"}\n\
+             - link: {\"type\":\"link\",\"label\":\"...\",\"url\":\"https://...\",\"description\":\"...\"}\n\
+             Example syntax: an opening triple-backtick fence tagged `luma`, one JSON object,\n\
+             then a closing triple-backtick fence. Use only real,\n\
+             verified image URLs and factual data; never invent sources, metrics, or links.\n\
+             Prefer Markdown tables for simple comparisons. Keep rich blocks selective and useful;\n\
+             do not use them decoratively or for information better expressed in a sentence."
+                .to_owned(),
+        );
     }
     // An agent's own skills remain its own even when it also opts into the
     // Global teammate's shared context.

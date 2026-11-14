@@ -213,9 +213,11 @@ Implementation needs explicit approval:
 → plan
 
 If a required preference, decision, or missing detail cannot be safely inferred:
-→ call ask_question with JSON input {{"prompt":"...","choices":["..."]}}.
+→ call ask_question using this exact action: {{"type":"tool","name":"ask_question","input":{{"prompt":"...","choices":["..."]}}}}.
 Use choices only when a small set of clear options helps; otherwise omit choices.
-Do not guess or ask questions that are not necessary to proceed.
+Ask one focused question at a time. Do not append unrelated decisions or bundle
+separate implementation choices into the same question. Do not guess or ask
+questions that are not necessary to proceed.
 Never print the ask_question input JSON as an answer or explanation. It must be
 sent as the input of a tool action so Luma can render the interactive question.
 
@@ -397,7 +399,7 @@ fn extract_json(text: &str) -> Result<Value> {
     }
 
     if let Ok(value) = serde_json::from_str::<Value>(clean) {
-        return Ok(value);
+        return Ok(normalize_action_alias(value));
     }
 
     // Scan balanced top-level objects instead of slicing from the first `{`
@@ -433,7 +435,7 @@ fn extract_json(text: &str) -> Result<Value> {
                 if depth == 0 {
                     if let Some(begin) = start {
                         if let Ok(value) = serde_json::from_slice::<Value>(&bytes[begin..=index]) {
-                            return Ok(value);
+                            return Ok(normalize_action_alias(value));
                         } else if let Err(error) =
                             serde_json::from_slice::<Value>(&bytes[begin..=index])
                         {
@@ -455,6 +457,36 @@ fn extract_json(text: &str) -> Result<Value> {
     ))
 }
 
+/// Normalize common model-emitted command envelopes into Luma's canonical
+/// ReAct protocol. Some models call the interactive question primitive using
+/// `{command: "ask_question", question: "..."}` instead of the documented
+/// `{type: "tool", name: "ask_question", input: {prompt: "..."}}` shape.
+fn normalize_action_alias(value: Value) -> Value {
+    let Some(object) = value.as_object() else {
+        return value;
+    };
+    let command = object
+        .get("command")
+        .or_else(|| object.get("action"))
+        .and_then(Value::as_str);
+    if command != Some("ask_question") {
+        return value;
+    }
+    let prompt = object
+        .get("question")
+        .or_else(|| object.get("prompt"))
+        .cloned();
+    let Some(prompt) = prompt else {
+        return value;
+    };
+    let mut input = serde_json::Map::new();
+    input.insert("prompt".into(), prompt);
+    if let Some(choices) = object.get("choices") {
+        input.insert("choices".into(), choices.clone());
+    }
+    serde_json::json!({"type":"tool", "name":"ask_question", "input":input})
+}
+
 /// Detect model-internal action payloads in fallback text, including JSON
 /// preceded by a natural-language preamble and provider XML envelopes.
 pub(crate) fn is_internal_action_response(text: &str) -> bool {
@@ -469,10 +501,17 @@ pub(crate) fn is_internal_action_response(text: &str) -> bool {
         return true;
     }
 
-    extract_json(text)
-        .ok()
-        .and_then(|value| value.get("type").and_then(Value::as_str).map(str::to_owned))
-        .is_some_and(|kind| matches!(kind.as_str(), "tool" | "plan" | "answer"))
+    extract_json(text).ok().is_some_and(|value| {
+        value
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| matches!(kind, "tool" | "plan" | "answer"))
+            || value
+                .get("command")
+                .or_else(|| value.get("action"))
+                .and_then(Value::as_str)
+                .is_some_and(|command| command == "ask_question")
+    })
 }
 
 fn extract_xml_tool_call(text: &str) -> Option<Value> {
@@ -608,6 +647,25 @@ mod tests {
             "The action is: {\"type\":\"tool\",\"name\":\"ask_question\",\"input\":{}}"
         ));
         assert!(!is_internal_action_response("A normal answer."));
+    }
+
+    #[test]
+    fn normalizes_ask_question_command_alias_into_interactive_tool_call() {
+        let value = extract_json(
+            r#"{"command":"ask_question","question":"How should photos be organized?","choices":["One folder","By date"]}"#,
+        )
+        .unwrap();
+        assert_eq!(value["type"], "tool");
+        assert_eq!(value["name"], "ask_question");
+        assert_eq!(value["input"]["prompt"], "How should photos be organized?");
+        assert_eq!(value["input"]["choices"][0], "One folder");
+    }
+
+    #[test]
+    fn detects_ask_question_command_alias_as_internal_action() {
+        assert!(is_internal_action_response(
+            r#"{"command":"ask_question","question":"Which option?"}"#
+        ));
     }
 
     // ── validate_response ───────────────────────────────────────────────────

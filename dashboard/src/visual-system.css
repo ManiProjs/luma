@@ -1073,6 +1073,42 @@ body { font-size: 13px; line-height: 1.58; letter-spacing: -.006em; }
   .management-page-heading > span { display: none; }
 }
 
+/* Compact dashboard controls and information density. */
+.management-sidebar { width: 196px; flex-basis: 196px; }
+.management-brand { gap: 8px; padding: 13px 13px 17px; }
+.management-brand-mark { width: 26px; height: 26px; }
+.management-nav-label { padding: 0 13px 6px; }
+.management-sidebar nav { gap: 1px; padding-inline: 7px; }
+.management-sidebar nav button { min-height: 31px; gap: 8px; padding-inline: 8px; font-size: 11px; }
+.management-sidebar-bottom { padding: 10px 13px; }
+.management-topbar { min-height: 42px; padding-inline: 16px; }
+.management-topbar > div { gap: 7px; }
+.management-icon-button { display: inline-flex; width: 28px; height: 28px; align-items: center; justify-content: center; border: 1px solid var(--luma-border-strong); border-radius: 4px; background: transparent; color: var(--luma-text-secondary); cursor: pointer; }
+.management-icon-button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.management-icon-button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.management-chat-button { border-color: var(--luma-accent); background: var(--luma-accent); color: #101010; }
+.management-content { padding: 20px clamp(16px, 3vw, 36px) 30px; }
+.management-page-heading { margin-bottom: 17px; }
+.management-eyebrow { margin-bottom: 4px; }
+.management-page-heading h1 { font-size: 23px; }
+.management-metrics { gap: 7px; margin-bottom: 14px; }
+.management-metrics > div { min-height: 78px; padding: 10px 11px; }
+.management-metrics strong { margin: 4px 0 2px; font-size: 22px; }
+.management-overview-grid { gap: 9px; margin-bottom: 10px; }
+.management-section { margin-bottom: 10px; padding: 11px 12px; }
+.management-section > header { margin-bottom: 7px; }
+.management-agent-row, .management-task-row, .management-memory-row { min-height: 39px; gap: 8px; padding-block: 5px; }
+.management-approval-row { gap: 10px; padding-block: 9px; }
+.management-settings > div { gap: 14px; padding-block: 9px; }
+.management-memory-form { gap: 7px; }
+.management-memory-form textarea { padding: 7px; }
+.management-memory-form button { min-height: 28px; padding-inline: 9px; }
+
+@media (max-width: 520px) {
+  .management-sidebar { width: 54px; flex-basis: 54px; }
+  .management-sidebar-resize { display: none; }
+}
+
 [data-appearance="light"] .management-shell,
 [data-appearance="light"] .management-main,
 [data-appearance="light"] .management-content,

@@ -354,6 +354,22 @@ html[data-platform="linux"] .luma-sidebar-glass {
 .luma-agent-view,
 .luma-teammates-content { background: var(--luma-bg); }
 
+.luma-agent-empty-scene::before {
+  position: absolute;
+  z-index: 0;
+  right: -4%;
+  bottom: -156px;
+  left: -4%;
+  height: 420px;
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse at 34% 72%, rgba(132, 83, 255, .36), transparent 60%),
+    radial-gradient(ellipse at 68% 72%, rgba(244, 91, 190, .32), transparent 60%);
+  filter: blur(56px);
+  content: "";
+  pointer-events: none;
+}
+
 .luma-composer { background: var(--luma-surface-raised); }
 
 @media (max-width: 760px) {
@@ -1152,4 +1168,287 @@ html[data-theme="luma"][data-appearance="dark"] .luma-activity-pill[data-status-
 html[data-theme="luma"][data-appearance="dark"] .luma-activity-pill[data-status-color="red"] {
   background: #3A1F1D;
   color: #F08A82;
+}
+
+/* Sidebar geometry and rows follow the bundled Claude reference. */
+.luma-conversation-header,
+.luma-teammate-header {
+  height: 52px;
+  min-height: 52px;
+}
+.luma-sidebar-slot,
+.luma-sidebar-slot .luma-sidebar {
+  width: 264px;
+  min-width: 264px;
+  flex-basis: 264px;
+}
+.luma-sidebar-brand {
+  height: 52px;
+  min-height: 52px;
+  padding: 0 20px;
+}
+.luma-primary-switcher {
+  order: 1;
+  margin: 0 12px 14px;
+  padding: 2px;
+  border-radius: 9px;
+  gap: 2px;
+}
+.luma-primary-switcher > button {
+  height: 30px;
+  min-height: 30px;
+  gap: 6px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+.luma-sidebar .luma-new-chat {
+  order: 2;
+  padding: 0 12px 14px;
+}
+.luma-sidebar .luma-new-chat > button:first-child {
+  height: 32px;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  font-size: 13px;
+  font-weight: 500;
+}
+.luma-sidebar .luma-new-chat > button:first-child:hover,
+.luma-sidebar .luma-sidebar-search:hover {
+  background: var(--luma-surface-hover);
+}
+.luma-sidebar .luma-new-chat > button:first-child > span:last-child {
+  font-size: 12px;
+}
+.luma-sidebar .luma-sidebar-search {
+  height: 32px;
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+.luma-sidebar-history-list {
+  order: 3;
+  padding: 0 12px 8px;
+}
+.luma-sidebar > .px-2\.5.pb-2,
+.luma-sidebar > .min-h-0.flex-1.overflow-auto.px-2\.5.py-3 {
+  order: 2;
+}
+.luma-sidebar-projects {
+  order: 4;
+  flex: 0 1 auto;
+  max-height: 38vh;
+  padding: 0 12px;
+}
+.luma-sidebar-footer { order: 5; }
+.luma-sidebar-projects > section > div:first-child,
+.luma-sidebar-history-list > section > div:first-child {
+  min-height: 24px;
+  height: auto;
+  margin: 0 0 6px;
+  padding: 0 10px;
+  color: var(--luma-text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.luma-sidebar-projects .luma-kicker,
+.luma-sidebar-history-list .luma-kicker {
+  color: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.luma-sidebar-history-list .luma-sidebar-section { margin-bottom: 12px; }
+.luma-chat-row {
+  min-height: 34px;
+  border-radius: 7px !important;
+}
+.luma-chat-row[data-active="true"] { background: var(--luma-accent-soft); }
+.luma-chat-row-select {
+  display: flex;
+  min-width: 0;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+}
+.luma-chat-row-select > div > span {
+  font-size: 13px;
+  font-weight: 500;
+}
+.luma-chat-row-time {
+  flex: none;
+  color: var(--luma-text-muted);
+  font-size: 11.5px;
+}
+.luma-sidebar-settings {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--luma-text-muted);
+}
+.luma-sidebar-settings:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-teammate-sidebar-actions {
+  gap: 2px;
+  padding: 0 12px;
+}
+.luma-teammate-sidebar-actions button {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 7px;
+  color: var(--luma-text);
+  font-size: 13px;
+}
+.luma-teammate-sidebar-heading {
+  min-height: 0;
+  margin-top: 4px;
+  padding: 18px 22px 6px;
+  color: var(--luma-text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.luma-teammate-sidebar-heading button {
+  width: 24px;
+  height: 24px;
+}
+.luma-teammate-sidebar-transition > .mt-3 { margin-top: 0.25rem; padding: 0 12px; }
+.luma-teammate-nav-item {
+  min-height: 44px;
+  padding: 7px 10px !important;
+  border-radius: 7px !important;
+}
+.luma-teammate-nav-item.is-selected {
+  border: 0 !important;
+  background: var(--luma-accent-soft) !important;
+}
+.luma-teammate-nav-item.is-selected { background: var(--luma-accent-soft) !important; }
+.luma-teammate-nav-item > div:first-child > span:last-child { font-size: 13px; }
+.luma-teammate-nav-item > div:last-child { padding-left: 40px; font-size: 12px; }
+.luma-sidebar .luma-teammate-history-nav-item {
+  min-height: 32px;
+  border-radius: 6px;
+}
+
+.luma-agent-empty-scene::before {
+  background:
+    radial-gradient(ellipse at 34% 72%, rgba(132, 83, 255, .32), transparent 60%),
+    radial-gradient(ellipse at 68% 72%, rgba(244, 91, 190, .27), transparent 60%),
+    radial-gradient(ellipse at 50% 88%, rgba(65, 132, 255, .34), transparent 58%);
+}
+html[data-theme="luma"][data-appearance="light"] .luma-chat-row[data-active="true"] { background: #D6DFF8; }
+html[data-theme="luma"][data-appearance="light"] .luma-app-shell[data-workspace="teammates"] .luma-teammate-nav-item.is-selected { background: #F6DEC9 !important; }
+html[data-theme="luma"][data-appearance="dark"] .luma-chat-row[data-active="true"] { background: #2A3866; }
+html[data-theme="luma"][data-appearance="dark"] .luma-app-shell[data-workspace="teammates"] .luma-teammate-nav-item.is-selected { background: #4A2E1C !important; }
+
+/* Reference composers use a two-row prompt surface with actions underneath. */
+.luma-composer-shell {
+  padding: 8px 24px 18px !important;
+  border-top: 0 !important;
+  background: transparent !important;
+}
+.luma-composer-shell > .luma-composer {
+  display: flex;
+  width: 100%;
+  max-width: 720px;
+  min-height: 82px !important;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px !important;
+  padding: 8px 12px 10px !important;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 14px;
+  background: var(--luma-surface-raised);
+  box-shadow: 0 1px 3px rgba(28, 27, 26, .06);
+}
+.luma-composer-shell > .luma-composer > .luma-prompt-input {
+  width: 100%;
+  min-height: 38px !important;
+  max-height: 112px !important;
+  padding: 2px 4px !important;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.luma-composer-actions {
+  display: flex;
+  width: 100%;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+}
+.luma-composer-actions > button[aria-label="Send"],
+.luma-composer-actions > button[aria-label="Stop"] {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 50%;
+  color: var(--luma-on-accent);
+}
+.luma-composer-shortcut {
+  margin-left: auto;
+  color: var(--luma-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.luma-teammate-composer {
+  display: flex;
+  width: min(720px, 100%);
+  flex-direction: column;
+  align-self: center;
+  margin: 8px auto 20px;
+  padding: 12px 12px 10px !important;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 14px;
+  background: var(--luma-surface-raised);
+  box-shadow: 0 1px 3px rgba(28, 27, 26, .06);
+}
+.luma-teammate-composer-row {
+  display: flex;
+  width: 100%;
+  min-height: 30px !important;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px !important;
+}
+.luma-teammate-composer-row .luma-prompt-input {
+  order: -1;
+  width: 100%;
+  min-width: 100%;
+  min-height: 38px !important;
+  height: auto;
+  max-height: 88px !important;
+  flex: 0 0 100%;
+  align-self: stretch;
+  padding: 2px 4px !important;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.luma-teammate-composer-row > button[aria-label="Send message"],
+.luma-teammate-composer-row > button[aria-label="Stop current task"] {
+  width: 32px !important;
+  height: 32px !important;
+  flex: 0 0 32px !important;
+  border-radius: 50%;
+}
+.luma-teammate-composer-shortcut {
+  order: 1;
+  margin-left: auto;
+  color: var(--luma-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.luma-teammate-composer-row > button[aria-label="Send message"],
+.luma-teammate-composer-row > button[aria-label="Stop current task"] { order: 2; }
+
+@media (max-width: 760px) {
+  .luma-composer-shell { padding-inline: 12px !important; }
+  .luma-teammate-composer { width: 100%; }
 }
