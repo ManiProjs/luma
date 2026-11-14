@@ -3697,11 +3697,24 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
   const agentTasks = useMemo(() => tasks.filter((task) => task.agent_id === selectedAgentId && !task.schedule_id), [tasks, selectedAgentId]);
+  const conversationGroups = useMemo(() => {
+    const grouped = new Map<string, TaskRecord[]>();
+    for (const task of agentTasks) {
+      const group = grouped.get(task.conversation_id) ?? [];
+      group.push(task);
+      grouped.set(task.conversation_id, group);
+    }
+    return [...grouped.entries()].map(([id, items]) => ({
+      id,
+      tasks: items.sort((left, right) => left.created_at - right.created_at),
+      latestAt: Math.max(...items.map((task) => task.updated_at)),
+    })).sort((left, right) => right.latestAt - left.latestAt);
+  }, [agentTasks]);
   const inspectorActiveTasks = agentTasks.filter((task) => ["queued", "running", "waiting_for_approval", "waiting_for_input", "paused"].includes(task.status));
   const inspectorCompletedTasks = agentTasks.filter((task) => ["completed", "failed", "cancelled", "interrupted"].includes(task.status)).sort((left, right) => right.created_at - left.created_at).slice(0, 6);
   const agentApprovals = approvals.filter((approval) => approval.agent_id === selectedAgentId);
   const visibleAgentTasks = selectedTaskId
-    ? selectedTaskId === "__new__" ? [] : agentTasks.filter((task) => task.id === selectedTaskId)
+    ? selectedTaskId === "__new__" ? [] : agentTasks.filter((task) => task.conversation_id === selectedTaskId)
     : agentTasks;
   const mentionQuery = chatPrompt.match(/(?:^|\s)@([^\s]*)$/)?.[1];
   const mentionMatches = suggestionsDismissed || mentionQuery === undefined ? [] : agents
@@ -3860,14 +3873,18 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
           ))}
           {selectedAgent && <div key={selectedAgent.id} className="luma-teammate-history-list">
             <div className="flex items-center justify-between px-2 pb-1 pt-2"><span className="luma-kicker">HISTORY</span><button type="button" onClick={() => { setSelectedTaskId(null); setActiveTab("chat"); }} className="text-[10px] text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]">All</button></div>
-            {agentTasks.slice().sort((left, right) => right.created_at - left.created_at).slice(0, 30).map((task) => <button key={task.id} type="button" className={`luma-teammate-history-nav-item ${selectedTaskId === task.id ? "is-selected" : ""}`} onClick={() => { setSelectedTaskId(task.id); setActiveTab("chat"); }}><span>{task.title || task.request}</span><small>{new Date(task.created_at * 1000).toLocaleDateString()}</small></button>)}
+            {conversationGroups.slice(0, 30).map((conversation) => {
+              const first = conversation.tasks[0];
+              const messageCount = conversation.tasks.length;
+              return <button key={conversation.id} type="button" className={`luma-teammate-history-nav-item ${selectedTaskId === conversation.id ? "is-selected" : ""}`} onClick={() => { setSelectedTaskId(conversation.id); setActiveTab("chat"); }}><span>{first.title || first.request}</span><small>{messageCount > 1 ? `${messageCount} messages · ` : ""}{new Date(conversation.latestAt * 1000).toLocaleDateString()}</small></button>;
+            })}
             {agentTasks.length === 0 && <p className="px-2 py-2 text-[10px] text-[var(--luma-text-muted)]">No history yet.</p>}
           </div>}
         </div>
       </div>,
     );
     return () => onSidebarChange(null);
-  }, [agents, agentTasks, busy, onSidebarChange, selectedAgentId, selectedTaskId, teammateSearch, teammateSearchOpen]);
+  }, [agents, agentTasks, conversationGroups, busy, onSidebarChange, selectedAgentId, selectedTaskId, teammateSearch, teammateSearchOpen]);
 
   useEffect(() => {
     if (!selectedAgent) return;
@@ -3982,11 +3999,11 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                     if (!routedText) throw new Error("Add a task description after the teammate mention.");
                     const createdTasks: TaskRecord[] = [];
                     for (const agent of destinations) {
-                      createdTasks.push(await window.luma.createTask({ agentId: agent.id, request: formatChatPrompt(routedText, chatAttachments), workspace: agent.configuration.workspace || workspacePath || undefined }));
+                      createdTasks.push(await window.luma.createTask({ agentId: agent.id, request: formatChatPrompt(routedText, chatAttachments), workspace: agent.configuration.workspace || workspacePath || undefined, conversationId: destinations.length === 1 && agent.id === selectedAgent.id && selectedTaskId !== "__new__" ? selectedTaskId ?? undefined : undefined }));
                     }
                     const created = createdTasks[0];
                     if (mentionedAgents.length) setSelectedAgentId(destinations[0].id);
-                    setSelectedTaskId(null);
+                    setSelectedTaskId(created.conversation_id);
                     setSubmittingTaskId(created.id);
                     setChatPrompt("");
                     setChatAttachments([]);
@@ -4132,14 +4149,14 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
             </section>}
             <section>
               <h3>In progress</h3>
-              {inspectorActiveTasks.length === 0 ? <p className="luma-inspector-empty">Nothing running right now.</p> : inspectorActiveTasks.map((task) => <button key={task.id} type="button" className={`luma-inspector-task ${selectedTaskId === task.id ? "is-selected" : ""}`} onClick={() => { setSelectedTaskId(task.id); setActiveTab("chat"); }}>
+              {inspectorActiveTasks.length === 0 ? <p className="luma-inspector-empty">Nothing running right now.</p> : inspectorActiveTasks.map((task) => <button key={task.id} type="button" className={`luma-inspector-task ${selectedTaskId === task.conversation_id ? "is-selected" : ""}`} onClick={() => { setSelectedTaskId(task.conversation_id); setActiveTab("chat"); }}>
                 <span className="luma-inspector-task-avatar"><MascotAvatar seed={selectedAgent?.name ?? "Teammate"} mascot={selectedAgent?.configuration.mascot} size={25} active={task.status === "running"} activity={taskMascotActivity(task)} /></span>
                 <span className="min-w-0 flex-1"><span className="luma-inspector-task-title">{task.title || task.request}</span><span className="luma-inspector-task-subtitle">{task.status.replace(/_/g, " ")}</span></span>
               </button>)}
             </section>
             <section>
               <h3>Done</h3>
-              {inspectorCompletedTasks.length === 0 ? <p className="luma-inspector-empty">Completed work will appear here.</p> : inspectorCompletedTasks.map((task) => <button key={task.id} type="button" className={`luma-inspector-task ${selectedTaskId === task.id ? "is-selected" : ""}`} onClick={() => { setSelectedTaskId(task.id); setActiveTab("chat"); }}>
+              {inspectorCompletedTasks.length === 0 ? <p className="luma-inspector-empty">Completed work will appear here.</p> : inspectorCompletedTasks.map((task) => <button key={task.id} type="button" className={`luma-inspector-task ${selectedTaskId === task.conversation_id ? "is-selected" : ""}`} onClick={() => { setSelectedTaskId(task.conversation_id); setActiveTab("chat"); }}>
                 <span className="luma-inspector-task-avatar"><MascotAvatar seed={selectedAgent?.name ?? "Teammate"} mascot={selectedAgent?.configuration.mascot} size={25} /></span>
                 <span className="min-w-0 flex-1"><span className="luma-inspector-task-title">{task.title || task.request}</span><span className="luma-inspector-task-subtitle">{task.status} · {new Date(task.created_at * 1000).toLocaleDateString()}</span></span>
               </button>)}

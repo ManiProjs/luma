@@ -178,6 +178,8 @@ pub enum ClientMessage {
         title: Option<String>,
         workspace: Option<String>,
         recover_on_restart: bool,
+        #[serde(default)]
+        conversation_id: Option<String>,
     },
     TaskCancel {
         request_id: String,

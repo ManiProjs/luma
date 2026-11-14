@@ -777,6 +777,8 @@ struct CreateTaskRequest {
     workspace: Option<String>,
     #[serde(default)]
     recover_on_restart: bool,
+    #[serde(default)]
+    conversation_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1011,13 +1013,14 @@ async fn api_create_task(
     let workspace = request
         .workspace
         .or_else(|| Some(state.workspace_dir.display().to_string()));
-    match state.runtime.create_task(
+    match state.runtime.create_task_in_conversation(
         &request.agent_id,
         &request.request,
         request.title,
         workspace,
         request.recover_on_restart,
         None,
+        request.conversation_id.as_deref(),
     ) {
         Ok(task) => (StatusCode::CREATED, Json(task)).into_response(),
         Err(error) => (

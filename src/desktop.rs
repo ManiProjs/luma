@@ -357,15 +357,17 @@ impl DesktopServer {
                     title,
                     workspace,
                     recover_on_restart,
+                    conversation_id,
                 } => ServerEvent::TaskSaved {
                     request_id,
-                    task: self.runtime.create_task(
+                    task: self.runtime.create_task_in_conversation(
                         &agent_id,
                         &request,
                         title,
                         workspace,
                         recover_on_restart,
                         None,
+                        conversation_id.as_deref(),
                     )?,
                 },
                 ClientMessage::TaskCancel { request_id, id } => {

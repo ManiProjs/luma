@@ -36,7 +36,7 @@ declare global {
       setAgentStatus(id: string, status: "idle" | "paused" | "stopped"): Promise<AgentRecord>;
       getTasks(agentId?: string): Promise<TaskRecord[]>;
       getRuntimeEvents(agentId: string): Promise<RuntimeEvent[]>;
-      createTask(input: { agentId: string; request: string; workspace?: string }): Promise<TaskRecord>;
+      createTask(input: { agentId: string; request: string; workspace?: string; conversationId?: string }): Promise<TaskRecord>;
       cancelTask(id: string): Promise<TaskRecord>;
       answerTaskQuestion(id: string, questionId: string, answer: string): Promise<TaskRecord>;
       retryTask(id: string): Promise<TaskRecord>;

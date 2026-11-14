@@ -1157,10 +1157,11 @@ app.whenReady().then(async () => {
     return response.data.events;
   });
 
-  handleIpc("luma:create-task", async (_event, input: { agentId: string; request: string; workspace?: string }) => {
+  handleIpc("luma:create-task", async (_event, input: { agentId: string; request: string; workspace?: string; conversationId?: string }) => {
     const response = await requestLuma("task_saved", (request_id) => ({ type: "task_create", data: {
       request_id, agent_id: input.agentId, request: input.request, title: null,
       workspace: input.workspace ?? workspaceRoot, recover_on_restart: false,
+      conversation_id: input.conversationId ?? null,
     } }));
     if (response.type !== "task_saved") throw new Error("Unexpected response to task_create.");
     return response.data.task;

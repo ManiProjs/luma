@@ -149,7 +149,11 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     let galaxy = std::fs::read_to_string(&galaxy_path).unwrap_or_default();
     let mut history = History::default();
     let mut previous_tasks = store.list_tasks(Some(&agent_record.id), 500)?;
-    previous_tasks.retain(|previous| previous.id != task.id && previous.schedule_id.is_none());
+    previous_tasks.retain(|previous| {
+        previous.id != task.id
+            && previous.conversation_id == task.conversation_id
+            && previous.schedule_id.is_none()
+    });
     previous_tasks.reverse();
     for previous in previous_tasks {
         let answer = store.task_text_response(&previous.id)?;

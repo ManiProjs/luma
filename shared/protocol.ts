@@ -154,6 +154,7 @@ export type AgentRecord = {
 
 export type TaskRecord = {
   id: string;
+  conversation_id: string;
   agent_id: string;
   title: string;
   request: string;
@@ -262,7 +263,7 @@ export type ClientMessage =
   | { type: "agent_update"; data: { request_id: string; id: string; name: string | null; description: string | null; configuration: AgentConfiguration | null } }
   | { type: "agent_set_status"; data: { request_id: string; id: string; status: AgentStatus } }
   | { type: "tasks_list"; data: { request_id: string; agent_id: string | null; limit: number | null } }
-  | { type: "task_create"; data: { request_id: string; agent_id: string; request: string; title: string | null; workspace: string | null; recover_on_restart: boolean } }
+  | { type: "task_create"; data: { request_id: string; agent_id: string; request: string; title: string | null; workspace: string | null; recover_on_restart: boolean; conversation_id?: string | null } }
   | { type: "task_cancel"; data: { request_id: string; id: string } }
   | { type: "task_answer_question"; data: { request_id: string; id: string; question_id: string; answer: string } }
   | { type: "task_retry"; data: { request_id: string; id: string } }
@@ -538,7 +539,7 @@ function isAgentRecord(value: unknown): value is AgentRecord {
 }
 
 function isTaskRecord(value: unknown): value is TaskRecord {
-  return isRecord(value) && isString(value.id) && isString(value.agent_id)
+  return isRecord(value) && isString(value.id) && isString(value.conversation_id) && isString(value.agent_id)
     && isString(value.title) && isString(value.request)
     && ["queued", "running", "waiting_for_approval", "waiting_for_input", "paused", "completed", "failed", "cancelled", "interrupted"].includes(String(value.status))
     && isNullableString(value.workspace) && (value.checkpoint === null || value.checkpoint !== undefined)

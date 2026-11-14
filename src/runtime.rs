@@ -13,7 +13,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 pub const GLOBAL_AGENT_ID: &str = "agent_global";
 
 fn now() -> i64 {
@@ -247,6 +247,8 @@ pub struct AgentRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskRecord {
     pub id: String,
+    /// Stable conversation identity shared by multiple execution tasks.
+    pub conversation_id: String,
     pub agent_id: String,
     pub title: String,
     pub request: String,
@@ -499,6 +501,16 @@ impl RuntimeStore {
                 COMMIT;",
             )?;
         }
+        if version < 3 {
+            db.execute_batch(
+                "BEGIN IMMEDIATE;
+                ALTER TABLE tasks ADD COLUMN conversation_id TEXT;
+                UPDATE tasks SET conversation_id = id WHERE conversation_id IS NULL;
+                CREATE INDEX tasks_conversation_created ON tasks(conversation_id, created_at);
+                PRAGMA user_version = 3;
+                COMMIT;",
+            )?;
+        }
         Ok(())
     }
 
@@ -741,6 +753,27 @@ impl RuntimeStore {
         recover_on_restart: bool,
         schedule_id: Option<String>,
     ) -> Result<TaskRecord> {
+        self.create_task_in_conversation(
+            agent_id,
+            request,
+            title,
+            workspace,
+            recover_on_restart,
+            schedule_id,
+            None,
+        )
+    }
+
+    pub fn create_task_in_conversation(
+        &self,
+        agent_id: &str,
+        request: &str,
+        title: Option<String>,
+        workspace: Option<String>,
+        recover_on_restart: bool,
+        schedule_id: Option<String>,
+        conversation_id: Option<&str>,
+    ) -> Result<TaskRecord> {
         let agent = self
             .get_agent(agent_id)?
             .ok_or_else(|| anyhow!("agent not found: {agent_id}"))?;
@@ -754,9 +787,26 @@ impl RuntimeStore {
         if let Some(path) = workspace.as_deref() {
             validate_workspace(path, &agent.configuration)?;
         }
+        let conversation_id = if let Some(conversation_id) = conversation_id {
+            let db = self.db()?;
+            let owner: Option<String> = db
+                .query_row(
+                    "SELECT agent_id FROM tasks WHERE conversation_id=?1 ORDER BY created_at ASC LIMIT 1",
+                    [conversation_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if owner.as_deref() != Some(agent_id) {
+                bail!("conversation does not belong to this teammate");
+            }
+            conversation_id.to_owned()
+        } else {
+            new_id("conversation")
+        };
         let timestamp = now();
         let record = TaskRecord {
             id: new_id("task"),
+            conversation_id: conversation_id.clone(),
             agent_id: agent_id.into(),
             title: title.filter(|s| !s.trim().is_empty()).unwrap_or_else(|| {
                 request
@@ -779,7 +829,7 @@ impl RuntimeStore {
             updated_at: timestamp,
         };
         let db = self.db()?;
-        db.execute("INSERT INTO tasks (id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,NULL,NULL,0,?7,?8,?9,?9)", params![record.id, record.agent_id, record.title, record.request, serde_json::to_string(&record.status)?, record.workspace, recover_on_restart, record.schedule_id, timestamp])?;
+        db.execute("INSERT INTO tasks (id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id) VALUES (?1,?2,?3,?4,?5,?6,NULL,NULL,0,?7,?8,?9,?9,?10)", params![record.id, record.agent_id, record.title, record.request, serde_json::to_string(&record.status)?, record.workspace, recover_on_restart, record.schedule_id, timestamp, record.conversation_id])?;
         drop(db);
         self.append_event(
             Some(agent_id),
@@ -792,7 +842,7 @@ impl RuntimeStore {
 
     pub fn get_task(&self, id: &str) -> Result<Option<TaskRecord>> {
         let db = self.db()?;
-        db.query_row("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at FROM tasks WHERE id=?1", [id], task_from_row).optional().map_err(Into::into)
+        db.query_row("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id FROM tasks WHERE id=?1", [id], task_from_row).optional().map_err(Into::into)
     }
 
     pub fn rename_task(&self, id: &str, title: &str) -> Result<TaskRecord> {
@@ -852,9 +902,9 @@ impl RuntimeStore {
         let db = self.db()?;
         let limit = limit.clamp(1, 500) as i64;
         let mut statement = if agent_id.is_some() {
-            db.prepare("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at FROM tasks WHERE agent_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2")?
+            db.prepare("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id FROM tasks WHERE agent_id=?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2")?
         } else {
-            db.prepare("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at FROM tasks ORDER BY created_at DESC, rowid DESC LIMIT ?1")?
+            db.prepare("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id FROM tasks ORDER BY created_at DESC, rowid DESC LIMIT ?1")?
         };
         let rows = if let Some(agent_id) = agent_id {
             statement.query_map(params![agent_id, limit], task_from_row)?
@@ -1117,7 +1167,7 @@ impl RuntimeStore {
         let timestamp = now();
         let mut db = self.db()?;
         let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let task = transaction.query_row("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at FROM tasks WHERE id=?1", [task_id], task_from_row)?;
+        let task = transaction.query_row("SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id FROM tasks WHERE id=?1", [task_id], task_from_row)?;
         if task.status != TaskStatus::WaitingForInput {
             bail!("the task is not waiting for an answer");
         }
@@ -1474,6 +1524,7 @@ impl RuntimeStore {
             }
             let task = TaskRecord {
                 id: new_id("task"),
+                conversation_id: new_id("conversation"),
                 agent_id: schedule.agent_id.clone(),
                 title: if schedule.title.trim().is_empty() {
                     schedule
@@ -1499,8 +1550,8 @@ impl RuntimeStore {
                 updated_at: timestamp,
             };
             transaction.execute(
-                "INSERT INTO tasks (id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,NULL,NULL,0,0,?7,?8,?8)",
-                params![task.id, task.agent_id, task.title, task.request, serde_json::to_string(&task.status)?, task.workspace, task.schedule_id, timestamp],
+                "INSERT INTO tasks (id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id) VALUES (?1,?2,?3,?4,?5,?6,NULL,NULL,0,0,?7,?8,?8,?9)",
+                params![task.id, task.agent_id, task.title, task.request, serde_json::to_string(&task.status)?, task.workspace, task.schedule_id, timestamp, task.conversation_id],
             )?;
             let payload = serde_json::to_string(&task)?;
             transaction.execute(
@@ -1637,6 +1688,7 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
         schedule_id: row.get(10)?,
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
+        conversation_id: row.get(13)?,
     })
 }
 
@@ -1777,8 +1829,66 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         assert!(table_exists);
+        let conversation_column: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tasks') WHERE name='conversation_id')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(conversation_column);
+    }
+
+    #[test]
+    fn tasks_can_continue_only_their_own_teammate_conversation() {
+        let store = RuntimeStore::open_in_memory_for_tests();
+        let first = store
+            .create_agent(
+                "First",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let second = store
+            .create_agent(
+                "Second",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let opening = store
+            .create_task(&first.id, "Remember this thread", None, None, false, None)
+            .unwrap();
+        let follow_up = store
+            .create_task_in_conversation(
+                &first.id,
+                "Continue the same discussion",
+                None,
+                None,
+                false,
+                None,
+                Some(&opening.conversation_id),
+            )
+            .unwrap();
+        assert_eq!(opening.conversation_id, follow_up.conversation_id);
+        assert_ne!(opening.id, follow_up.id);
+        assert!(
+            store
+                .create_task_in_conversation(
+                    &second.id,
+                    "Try to cross into another teammate's conversation",
+                    None,
+                    None,
+                    false,
+                    None,
+                    Some(&opening.conversation_id),
+                )
+                .is_err()
+        );
     }
 
     #[test]
