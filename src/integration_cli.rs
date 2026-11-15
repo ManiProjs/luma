@@ -13,7 +13,7 @@ pub fn run(args: &[String]) -> Result<()> {
     let values = &args[2..];
     match (group, action) {
         ("plugins", "list") => {
-            let entries = crate::plugins::PluginManager::default().list()?;
+            let entries = crate::plugins::PluginManager.list()?;
             if entries.is_empty() {
                 println!("No native Luma plugins installed.");
             }
@@ -40,7 +40,7 @@ pub fn run(args: &[String]) -> Result<()> {
         }
         ("plugins", "install") => {
             let path = one(values, "luma plugins install <path>")?;
-            let record = crate::plugins::PluginManager::default().install(Path::new(path))?;
+            let record = crate::plugins::PluginManager.install(Path::new(path))?;
             println!(
                 "Installed {} (disabled). Inspect it, then run: luma plugins enable {}",
                 record.id, record.id
@@ -48,8 +48,7 @@ pub fn run(args: &[String]) -> Result<()> {
         }
         ("plugins", "enable" | "disable") => {
             let id = one(values, "luma plugins enable|disable <id>")?;
-            let record =
-                crate::plugins::PluginManager::default().set_enabled(id, action == "enable")?;
+            let record = crate::plugins::PluginManager.set_enabled(id, action == "enable")?;
             println!(
                 "{}: {}",
                 record.id,
@@ -62,13 +61,13 @@ pub fn run(args: &[String]) -> Result<()> {
         }
         ("plugins", "uninstall") => {
             let id = one(values, "luma plugins uninstall <id>")?;
-            if !crate::plugins::PluginManager::default().uninstall(id)? {
+            if !crate::plugins::PluginManager.uninstall(id)? {
                 bail!("plugin not installed: {id}");
             }
             println!("Uninstalled plugin {id}.");
         }
         ("mcp", "list") => {
-            let servers = crate::mcp::McpManager::default().list()?;
+            let servers = crate::mcp::McpManager.list()?;
             if servers.is_empty() {
                 println!("No MCP servers configured.");
             }
@@ -119,7 +118,7 @@ pub fn run(args: &[String]) -> Result<()> {
                 }
                 index += 1;
             }
-            let server = crate::mcp::McpManager::default().add(id, command, server_args, env)?;
+            let server = crate::mcp::McpManager.add(id, command, server_args, env)?;
             println!(
                 "Registered MCP server {} (disabled). Run `luma mcp tools {}` to inspect its tools, then enable it.",
                 server.id, server.id
@@ -153,7 +152,7 @@ pub fn run(args: &[String]) -> Result<()> {
                 headers.insert(key.to_owned(), value.to_owned());
                 index += 1;
             }
-            let server = crate::mcp::McpManager::default().add_http(id, url, headers)?;
+            let server = crate::mcp::McpManager.add_http(id, url, headers)?;
             println!(
                 "Registered HTTP MCP server {} (disabled). Run `luma mcp tools {}` to inspect its tools, then enable it.",
                 server.id, server.id
@@ -161,7 +160,7 @@ pub fn run(args: &[String]) -> Result<()> {
         }
         ("mcp", "enable" | "disable") => {
             let id = one(values, "luma mcp enable|disable <id>")?;
-            let server = crate::mcp::McpManager::default().set_enabled(id, action == "enable")?;
+            let server = crate::mcp::McpManager.set_enabled(id, action == "enable")?;
             println!(
                 "{}: {}",
                 server.id,
@@ -174,14 +173,14 @@ pub fn run(args: &[String]) -> Result<()> {
         }
         ("mcp", "remove") => {
             let id = one(values, "luma mcp remove <id>")?;
-            if !crate::mcp::McpManager::default().remove(id)? {
+            if !crate::mcp::McpManager.remove(id)? {
                 bail!("MCP server not found: {id}");
             }
             println!("Removed MCP server {id}.");
         }
         ("mcp", "tools") => {
             let id = one(values, "luma mcp tools <id>")?;
-            let tools = crate::mcp::McpManager::default().tools(id)?;
+            let tools = crate::mcp::McpManager.tools(id)?;
             if tools.is_empty() {
                 println!("This MCP server exposes no tools.");
             }

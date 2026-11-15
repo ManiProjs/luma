@@ -294,6 +294,13 @@ fn validate_headers(headers: &BTreeMap<String, String>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn set_private_permissions(path: &std::path::Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{validate_headers, validate_http_url, validate_server_id};
@@ -339,13 +346,6 @@ mod tests {
         assert!(server.url.is_none());
         assert!(server.headers.is_empty());
     }
-}
-
-#[cfg(unix)]
-fn set_private_permissions(path: &std::path::Path) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    Ok(())
 }
 
 #[cfg(not(unix))]

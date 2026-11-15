@@ -35,7 +35,7 @@ impl History {
         // In tests, never write to the user's real history file.
         #[cfg(test)]
         {
-            return Ok(());
+            Ok(())
         }
 
         #[cfg(not(test))]

@@ -234,8 +234,10 @@ mod tests {
     #[test]
     fn teammate_can_list_peers_and_inspect_only_its_own_child_tasks() {
         let store = RuntimeStore::open_in_memory_for_tests();
-        let mut coordinator_configuration = AgentConfiguration::default();
-        coordinator_configuration.network_access = Some(false);
+        let coordinator_configuration = AgentConfiguration {
+            network_access: Some(false),
+            ..AgentConfiguration::default()
+        };
         let first = store
             .create_agent(
                 "Coordinator",

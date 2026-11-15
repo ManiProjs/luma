@@ -248,16 +248,14 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     agent.set_force_react(agent_record.kind == crate::runtime::AgentKind::Teammates);
     agent.set_permission_profile(permissions);
     agent.set_workspace_root(&std::env::current_dir()?)?;
-    if inherit_global {
-        if let Some(global_configuration) = global_configuration {
-            if !global_configuration.system_prompt.trim().is_empty() {
-                agent.add_system_context(global_configuration.system_prompt.clone());
-            }
-            for skill_name in &global_configuration.skills {
-                let skill = tools::skills::load_agent_skill(&std::env::current_dir()?, skill_name)
-                    .with_context(|| format!("loading global skill '{skill_name}'"))?;
-                agent.add_system_context(skill);
-            }
+    if inherit_global && let Some(global_configuration) = global_configuration {
+        if !global_configuration.system_prompt.trim().is_empty() {
+            agent.add_system_context(global_configuration.system_prompt.clone());
+        }
+        for skill_name in &global_configuration.skills {
+            let skill = tools::skills::load_agent_skill(&std::env::current_dir()?, skill_name)
+                .with_context(|| format!("loading global skill '{skill_name}'"))?;
+            agent.add_system_context(skill);
         }
     }
     if !agent_record.configuration.system_prompt.trim().is_empty() {
@@ -615,21 +613,18 @@ impl RuntimeSupervisor {
                         }
                         Err(error) => { tracing::error!(%error, "failed to inspect queued tasks"); None }
                     };
-                    if let Some(task) = queued {
-                        if let Err(error) = self.run_one(&task.id, &shutdown).await {
+                    if let Some(task) = queued
+                        && let Err(error) = self.run_one(&task.id, &shutdown).await {
                             tracing::error!(task_id = %task.id, %error, "background task failed");
-                            if let Ok(Some(current)) = self.store.get_task(&task.id) {
-                                if matches!(current.status, TaskStatus::Queued | TaskStatus::Running | TaskStatus::WaitingForApproval | TaskStatus::WaitingForInput) {
+                            if let Ok(Some(current)) = self.store.get_task(&task.id)
+                                && matches!(current.status, TaskStatus::Queued | TaskStatus::Running | TaskStatus::WaitingForApproval | TaskStatus::WaitingForInput) {
                                     let _ = self.store.transition_task(&task.id, TaskStatus::Failed, Some(error.to_string()), None);
                                 }
-                            }
-                            if let Ok(Some(agent)) = self.store.get_agent(&task.agent_id) {
-                                if matches!(agent.status, AgentStatus::Active | AgentStatus::Waiting | AgentStatus::Recovering) {
+                            if let Ok(Some(agent)) = self.store.get_agent(&task.agent_id)
+                                && matches!(agent.status, AgentStatus::Active | AgentStatus::Waiting | AgentStatus::Recovering) {
                                     let _ = self.store.set_agent_status(&agent.id, AgentStatus::Idle);
                                 }
-                            }
                         }
-                    }
                 }
             }
         }
@@ -758,8 +753,8 @@ impl RuntimeSupervisor {
                             // Close the pipe so Tokio's non-cancellable stdin
                             // blocking read can finish and let the worker exit.
                             child_stdin.take();
-                        } else if value.get("type").and_then(|v| v.as_str()) == Some("event") {
-                            if let Ok(event) = serde_json::from_value::<AgentEvent>(value["data"].clone()) {
+                        } else if value.get("type").and_then(|v| v.as_str()) == Some("event")
+                            && let Ok(event) = serde_json::from_value::<AgentEvent>(value["data"].clone()) {
                                 match &event {
                                     AgentEvent::Status { state } if *state == crate::event::AgentStatus::Waiting => {
                                         let _ = self.store.set_agent_status(&agent.id, AgentStatus::Waiting);
@@ -781,14 +776,12 @@ impl RuntimeSupervisor {
                                         let _ = self.store.set_agent_status(&agent.id, AgentStatus::Waiting);
                                     }
                                     AgentEvent::Error(message) => failure = Some(message.clone()),
-                                    AgentEvent::Finished => {
-                                        if !cancelled { terminal_status = if failure.is_some() { TaskStatus::Failed } else { TaskStatus::Completed }; }
-                                    }
+                                    AgentEvent::Finished
+                                        if !cancelled => { terminal_status = if failure.is_some() { TaskStatus::Failed } else { TaskStatus::Completed }; }
                                     _ => {}
                                 }
                                 let _ = self.store.append_event(Some(&agent.id), Some(task_id), "task.agent_event", serde_json::to_value(&event)?);
                             }
-                        }
                     }
                     line.clear();
                 }
@@ -817,13 +810,13 @@ impl RuntimeSupervisor {
         let _ = self
             .store
             .transition_task(task_id, terminal_status, failure, None);
-        if let Ok(Some(current_agent)) = self.store.get_agent(&agent.id) {
-            if matches!(
+        if let Ok(Some(current_agent)) = self.store.get_agent(&agent.id)
+            && matches!(
                 current_agent.status,
                 AgentStatus::Active | AgentStatus::Waiting | AgentStatus::Recovering
-            ) {
-                let _ = self.store.set_agent_status(&agent.id, AgentStatus::Idle);
-            }
+            )
+        {
+            let _ = self.store.set_agent_status(&agent.id, AgentStatus::Idle);
         }
         Ok(())
     }

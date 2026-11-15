@@ -14,7 +14,7 @@ use anyhow::Result;
 use crate::tools::ToolRegistry;
 
 pub fn register_enabled_tools(registry: &mut ToolRegistry) -> Result<usize> {
-    let tools = match PluginManager::default().enabled_tools() {
+    let tools = match PluginManager.enabled_tools() {
         Ok(tools) => tools,
         Err(error) => {
             tracing::warn!(%error, "could not load the Luma plugin registry");

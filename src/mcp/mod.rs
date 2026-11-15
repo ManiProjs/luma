@@ -21,7 +21,7 @@ pub enum McpTransport {
 }
 
 pub fn register_enabled_tools(registry: &mut ToolRegistry) -> Result<usize> {
-    let tools = match McpManager::default().enabled_tools() {
+    let tools = match McpManager.enabled_tools() {
         Ok(tools) => tools,
         Err(error) => {
             tracing::warn!(%error, "could not load the MCP server registry");

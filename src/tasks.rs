@@ -52,7 +52,7 @@ pub fn save(checkpoint: &TaskCheckpoint) -> Result<()> {
     #[cfg(test)]
     {
         let _ = checkpoint;
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(test))]
     {
@@ -69,7 +69,7 @@ pub fn save(checkpoint: &TaskCheckpoint) -> Result<()> {
 pub fn load() -> Result<Option<TaskCheckpoint>> {
     #[cfg(test)]
     {
-        return Ok(None);
+        Ok(None)
     }
     #[cfg(not(test))]
     {

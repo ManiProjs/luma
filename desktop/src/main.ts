@@ -248,6 +248,8 @@ type GitChange = {
   indexStatus: string;
   worktreeStatus: string;
   kind: "added" | "modified" | "deleted" | "renamed" | "untracked";
+  additions?: number;
+  deletions?: number;
 };
 
 function runGit(args: string[]): Promise<string> {
@@ -267,7 +269,17 @@ function runGit(args: string[]): Promise<string> {
 
 async function getGitChanges(): Promise<{ branch: string; files: GitChange[] }> {
   const branch = (await runGit(["branch", "--show-current"])).trim() || "HEAD";
-  const status = await runGit(["status", "--porcelain=v1", "--untracked-files=all"]);
+  const [status, numstat] = await Promise.all([
+    runGit(["status", "--porcelain=v1", "--untracked-files=all"]),
+    runGit(["diff", "HEAD", "--no-renames", "--numstat"]).catch(() => ""),
+  ]);
+  const fileStats = new Map<string, { additions: number; deletions: number }>();
+  for (const line of numstat.split(/\r?\n/).filter(Boolean)) {
+    const [added, removed, ...pathParts] = line.split("\t");
+    const filePath = pathParts.join("\t");
+    if (!filePath || added === "-" || removed === "-") continue;
+    fileStats.set(filePath, { additions: Number(added), deletions: Number(removed) });
+  }
   const files = status.split(/\r?\n/).filter(Boolean).map((line): GitChange => {
     const indexStatus = line[0] ?? " ";
     const worktreeStatus = line[1] ?? " ";
@@ -276,7 +288,7 @@ async function getGitChanges(): Promise<{ branch: string; files: GitChange[] }> 
     const filePath = renamed ? rawPath.slice(rawPath.lastIndexOf(" -> ") + 4) : rawPath;
     const code = indexStatus === "?" ? "?" : indexStatus !== " " ? indexStatus : worktreeStatus;
     const kind: GitChange["kind"] = code === "?" ? "untracked" : code === "A" ? "added" : code === "D" ? "deleted" : code === "R" || renamed ? "renamed" : "modified";
-    return { path: filePath, indexStatus, worktreeStatus, kind };
+    return { path: filePath, indexStatus, worktreeStatus, kind, ...fileStats.get(filePath) };
   });
   return { branch, files };
 }

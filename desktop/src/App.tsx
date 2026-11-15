@@ -56,6 +56,8 @@ export type GitChange = {
   indexStatus: string;
   worktreeStatus: string;
   kind: "added" | "modified" | "deleted" | "renamed" | "untracked";
+  additions?: number;
+  deletions?: number;
 };
 
 const SLASH_COMMANDS = [
@@ -108,8 +110,8 @@ const TEAMMATE_SLASH_COMMANDS = [
 function ChevronIcon({ open }: { open: boolean }) {
   return (
     <svg
-      width="12"
-      height="12"
+      width="14"
+      height="14"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -126,12 +128,12 @@ function ChevronIcon({ open }: { open: boolean }) {
 function FolderIcon() {
   return (
     <svg
-      width="13"
-      height="13"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.6"
+      strokeWidth="1.7"
       strokeLinecap="round"
       strokeLinejoin="round"
     >
@@ -143,17 +145,17 @@ function FolderIcon() {
 function FileIcon() {
   return (
     <svg
-      width="13"
-      height="13"
+      width="15"
+      height="15"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.6"
+      strokeWidth="1.8"
       strokeLinecap="round"
       strokeLinejoin="round"
     >
-      <path d="M6 3h8l4 4v14H6z" />
-      <path d="M14 3v5h5" />
+      <path d="M6 3.5h8l4 4v13H6z" />
+      <path d="M14 3.5v4h4" />
     </svg>
   );
 }
@@ -161,8 +163,8 @@ function FileIcon() {
 function SearchIcon() {
   return (
     <svg
-      width="13"
-      height="13"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -178,8 +180,8 @@ function SearchIcon() {
 function PlusIcon() {
   return (
     <svg
-      width="13"
-      height="13"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -192,7 +194,7 @@ function PlusIcon() {
 }
 
 function PanelCloseIcon() {
-  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="M14.5 4.5v15" /></svg>;
+  return <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="M14.5 4.5v15" /></svg>;
 }
 
 function toolActivityLabel(tools: { name: string }[]) {
@@ -204,6 +206,47 @@ function toolActivityLabel(tools: { name: string }[]) {
   const labels = [...new Set(tools.map((tool) => displayNames[tool.name] ?? tool.name.split(/[_-]/g).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ")))];
   const names = labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}` : labels[0] ?? "tools";
   return `Used ${tools.length} ${names}`;
+}
+
+function editedToolFiles(tools: Array<{ id: string; name: string; input: string; diff?: string }>) {
+  const files = tools.flatMap((tool) => {
+    if (tool.name !== "write_file" && tool.name !== "patch_file") return [];
+    let path = "";
+    try {
+      const input = JSON.parse(tool.input) as Record<string, unknown>;
+      const candidate = input.path ?? input.file_path ?? input.filePath ?? input.target;
+      if (typeof candidate === "string") path = candidate;
+    } catch {
+      const match = tool.input.match(/(?:^|[,{\s])(?:"?(?:path|file_path|filePath|target)"?)\s*[:=]\s*["']([^"']+)["']/);
+      if (match) path = match[1];
+    }
+    if (!path) return [];
+    const additions = tool.diff?.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++")).length;
+    const deletions = tool.diff?.split("\n").filter((line) => line.startsWith("-") && !line.startsWith("---")).length;
+    return [{ id: tool.id, path, additions, deletions }];
+  });
+  return [...new Map(files.map((file) => [file.path, file])).values()];
+}
+
+function toolActivitySummary(tools: Array<{ id: string; name: string; input: string; diff?: string }>) {
+  const editedCount = editedToolFiles(tools).length;
+  return editedCount > 0
+    ? `Edited ${editedCount} ${editedCount === 1 ? "file" : "files"}`
+    : toolActivityLabel(tools);
+}
+
+function EditedFilesList({ tools }: { tools: Array<{ id: string; name: string; input: string; diff?: string }> }) {
+  const files = editedToolFiles(tools);
+  if (files.length === 0) return null;
+  return <div className="luma-edited-files" aria-label="Edited files">
+    {files.map((file) => <div key={file.id} className="luma-edited-file">
+      <FileIcon />
+      <span className="luma-edited-file-path" title={file.path}>{file.path.split(/[\\/]/).pop() || file.path}</span>
+      {file.additions !== undefined && file.additions > 0 && <span className="luma-diff-additions">+{file.additions}</span>}
+      {file.deletions !== undefined && file.deletions > 0 && <span className="luma-diff-deletions">−{file.deletions}</span>}
+      <span className="luma-edited-file-status">Edited</span>
+    </div>)}
+  </div>;
 }
 
 function routeTeammateMentions(prompt: string, agents: AgentRecord[]) {
@@ -330,7 +373,7 @@ function TeammateModelDropdown({ agent, onChanged }: { agent: AgentRecord; onCha
     }} onClick={() => void showModels()} disabled={loading} className="luma-model-inline max-w-[150px]" title={`Current model: ${currentLabel}. Change model`}>
       <span className="max-w-[120px] truncate">{currentLabel}</span><span aria-hidden="true">⌄</span>
     </button>
-    {open && menuPosition && createPortal(<div ref={menuRef} style={{ position: "fixed", top: menuPosition.top, left: menuPosition.left, width: 256, maxHeight: "min(340px, calc(100vh - 24px))", zIndex: 9999 }} className="overflow-hidden rounded-md border border-[var(--luma-border-strong)] bg-[var(--luma-surface)] shadow-xl">
+    {open && menuPosition && createPortal(<div ref={menuRef} style={{ position: "fixed", top: menuPosition.top, left: menuPosition.left, width: 256, maxHeight: "min(340px, calc(100vh - 24px))", zIndex: 9999 }} className="luma-model-dropdown-menu overflow-hidden rounded-md border border-[var(--luma-border-strong)] bg-[var(--luma-surface)] shadow-xl">
       <div className="border-b border-[var(--luma-border)] p-2"><input autoFocus value={search} onChange={(event) => { setSearch(event.target.value); setActiveModelIndex(0); }} aria-activedescendant={filtered[activeModelIndex] ? `teammate-model-option-${activeModelIndex}` : undefined} onKeyDown={(event) => {
         if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key) && filtered.length) {
           event.preventDefault();
@@ -373,8 +416,8 @@ function PinIcon({ filled }: { filled?: boolean }) {
 function SettingsIcon() {
   return (
     <svg
-      width="14"
-      height="14"
+      width="16"
+      height="16"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -1421,13 +1464,13 @@ function Sidebar({ mode, onOpenChat, onOpenTeammates, onProjectFolderChange, tea
       <div className="luma-sidebar-brand drag-region">
         <div className="no-drag"><LumaWordmark compact section={mode === "teammates" ? "teammates" : undefined} /></div>
         <button type="button" className="no-drag luma-sidebar-icon-button" onClick={onToggleSidebar} aria-label={sidebarVisible ? "Hide sidebar" : "Show sidebar"} title={`${sidebarVisible ? "Hide" : "Show"} sidebar (${window.luma.platform === "darwin" ? "⌘" : "Ctrl"}+B)`}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="M9.5 4.5v15" /></svg>
         </button>
       </div>
       <nav className="luma-primary-switcher no-drag" aria-label="Luma workspace" data-mode={mode === "teammates" ? "teammates" : "code"}>
         <span className="luma-primary-switcher-indicator" aria-hidden="true" />
         <button type="button" aria-current={mode !== "teammates" ? "page" : undefined} data-active={mode !== "teammates"} onClick={onOpenChat}>
-          <span aria-hidden="true" className="luma-primary-switcher-icon">&lt;/&gt;</span>
+          <svg className="luma-primary-switcher-code-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14" /></svg>
           Code
         </button>
         <button type="button" aria-current={mode === "teammates" ? "page" : undefined} data-active={mode === "teammates"} onClick={onOpenTeammates}>
@@ -1987,47 +2030,26 @@ function ToolActivity({
     return null;
   }
 
+  const uniqueEditedFiles = editedToolFiles(tools);
+
   return (
-    <section className="luma-tool-group my-2 rounded-md border border-[var(--luma-border)] px-2 py-1">
-      <button type="button" aria-expanded={expanded} onClick={onToggle} className="flex w-full items-center gap-2 py-1 text-left text-[12px] text-[var(--luma-text-secondary)] hover:text-[var(--luma-text)]">
-        <span aria-hidden="true">{expanded ? "⌄" : "›"}</span>
-        <span>{toolActivityLabel(tools)}{errorCount > 0 ? ` · ${errorCount} failed` : ""}</span>
-        <span className="ml-auto text-[var(--luma-text-muted)]">⌘O</span>
+    <section className="luma-tool-group">
+      <button type="button" aria-expanded={expanded} onClick={onToggle} className="luma-tool-group-trigger">
+        <svg className="luma-tool-chevron" data-expanded={expanded} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+        <span>{toolActivitySummary(tools)}{errorCount > 0 ? ` · ${errorCount} failed` : ""}</span>
+        <span className="luma-tool-group-count">{tools.length} {tools.length === 1 ? "tool" : "tools"}</span>
       </button>
-      {expanded && <div role="list" aria-label="Code tool activity" className="space-y-2 pb-1">
-      {tools.map((tool) => (
-        <div
-          key={tool.id}
-          role="listitem"
-          aria-label={`${tool.name} ${tool.finished ? 'completed' : 'running'}`}
-          className="luma-tool-activity-row rounded px-2 py-1"
-        >
-          <div className="flex items-center gap-2">
-          <span
-            className={`
-              h-1.5 w-1.5 rounded-full
-              ${
-                tool.finished
-                  ? "bg-[var(--luma-success)]"
-                  : "animate-pulse bg-[var(--luma-accent)]"
-              }
-            `}
-          />
-
-          <span className="text-[12px] text-[var(--luma-text-secondary)]">
-            {tool.name}
-          </span>
-
-          {tool.durationMs !== undefined && (
-            <span className="ml-auto text-[12px] text-[var(--luma-text-muted)]">
-              {tool.durationMs}ms
-            </span>
-          )}
+      {expanded && <div className="luma-tool-group-content" role="list" aria-label="Code tool activity">
+        {uniqueEditedFiles.length > 0 && <EditedFilesList tools={tools} />}
+        {tools.map((tool) => <div key={tool.id} role="listitem" aria-label={`${tool.name} ${tool.finished ? "completed" : "running"}`} className="luma-tool-activity-row">
+          <div className="luma-tool-activity-heading">
+            <span className={`luma-tool-state ${tool.finished ? "is-finished" : "is-running"}`} />
+            <span>{tool.name}</span>
+            {tool.durationMs !== undefined && <span className="luma-tool-duration">{tool.durationMs}ms</span>}
           </div>
-          {tool.input && <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words pl-3 font-mono text-[11px] leading-5 text-[var(--luma-text-muted)]">{tool.input}</pre>}
-          {tool.diff && <pre className="mt-2 max-h-72 overflow-auto border-l border-[var(--luma-border)] pl-3 font-mono text-[11px] leading-5 text-[var(--luma-text-secondary)]">{tool.diff}</pre>}
-        </div>
-      ))}
+          {tool.input && <pre className="luma-tool-detail">{tool.input}</pre>}
+          {tool.diff && <pre className="luma-tool-diff">{tool.diff}</pre>}
+        </div>)}
       </div>}
     </section>
   );
@@ -3535,8 +3557,10 @@ function CodeInspector({ workspacePath, onOpenFile }: {
         {loading && files.length === 0 ? <p className="luma-inspector-empty">Checking repository changes…</p> : files.length === 0 ? <p className="luma-inspector-empty">No changes in this workspace.</p> : <>
           <div className="luma-inspector-change-list">
             {files.map((file) => <button key={file.path} type="button" data-selected={selected === file.path} onClick={() => setSelected(file.path)}>
-              <span className="luma-change-status">{statusLabel(file)}</span><span className="min-w-0 flex-1 truncate" title={file.path}>{file.path}</span>
-              <span className="luma-change-kind">{file.kind === "untracked" ? "new" : file.indexStatus !== " " && file.indexStatus !== "?" ? "staged" : "worktree"}</span>
+              <span className="luma-change-status">{statusLabel(file)}</span><span className="min-w-0 flex-1 truncate" title={file.path}>{file.path.split(/[\\/]/).pop() || file.path}</span>
+              {file.additions !== undefined && file.additions > 0 && <span className="luma-diff-additions">+{file.additions}</span>}
+              {file.deletions !== undefined && file.deletions > 0 && <span className="luma-diff-deletions">−{file.deletions}</span>}
+              {file.kind === "untracked" && <span className="luma-change-kind">new</span>}
             </button>)}
           </div>
           <div className="luma-inspector-diff-header"><span className="min-w-0 flex-1 truncate">{selected ?? "Diff preview"}</span>{selected && <button type="button" onClick={() => onOpenFile(selected)}>Open</button>}</div>
@@ -3554,6 +3578,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [runtimeEvents, setRuntimeEvents] = useState<RuntimeEvent[]>([]);
+  const [runtimeEventsLoadedAgentId, setRuntimeEventsLoadedAgentId] = useState<string | null>(null);
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [eventTriggers, setEventTriggers] = useState<EventTriggerRecord[]>([]);
@@ -3737,21 +3762,8 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
 
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? null;
   const agentTasks = useMemo(() => tasks.filter((task) => task.agent_id === selectedAgentId && !task.schedule_id), [tasks, selectedAgentId]);
-  const conversationGroups = useMemo(() => {
-    const grouped = new Map<string, TaskRecord[]>();
-    for (const task of agentTasks) {
-      const group = grouped.get(task.conversation_id) ?? [];
-      group.push(task);
-      grouped.set(task.conversation_id, group);
-    }
-    return [...grouped.entries()].map(([id, items]) => ({
-      id,
-      tasks: items.sort((left, right) => left.created_at - right.created_at),
-      latestAt: Math.max(...items.map((task) => task.updated_at)),
-    })).sort((left, right) => right.latestAt - left.latestAt);
-  }, [agentTasks]);
   const inspectorActiveTasks = agentTasks.filter((task) => ["queued", "running", "waiting_for_approval", "waiting_for_input", "paused"].includes(task.status));
-  const inspectorCompletedTasks = agentTasks.filter((task) => ["completed", "failed", "cancelled", "interrupted"].includes(task.status)).sort((left, right) => right.created_at - left.created_at).slice(0, 6);
+  const inspectorCompletedTasks = agentTasks.filter((task) => ["completed", "failed", "cancelled", "interrupted"].includes(task.status)).sort((left, right) => right.created_at - left.created_at);
   const agentApprovals = approvals.filter((approval) => approval.agent_id === selectedAgentId);
   const visibleAgentTasks = selectedTaskId
     ? selectedTaskId === "__new__" ? [] : agentTasks.filter((task) => task.conversation_id === selectedTaskId)
@@ -3804,7 +3816,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
 
   useEffect(() => {
     const history = teammateHistoryRef.current;
-    if (activeTab !== "chat" || !selectedAgentId || !history) return;
+    if (activeTab !== "chat" || !selectedAgentId || runtimeEventsLoadedAgentId !== selectedAgentId || !history) return;
     let frame = 0;
     const scrollToLatest = () => {
       window.cancelAnimationFrame(frame);
@@ -3814,6 +3826,11 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
         });
       });
     };
+    // Position immediately, then repeat after React commits and layout settles.
+    // The conversation can grow after this effect (runtime events, Markdown,
+    // code blocks, and late-loading fonts), so observe size changes as well as
+    // DOM mutations while the user is following the latest message.
+    history.scrollTop = history.scrollHeight;
     const updateFollowState = () => {
       const distanceFromBottom = history.scrollHeight - history.clientHeight - history.scrollTop;
       followLatestMessageRef.current = distanceFromBottom <= 72;
@@ -3831,12 +3848,23 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
       if (autoScrollToLatest && followLatestMessageRef.current) scrollToLatest();
     });
     observer.observe(history, { childList: true, characterData: true, subtree: true });
+    const resizeObserver = new ResizeObserver(() => {
+      if (autoScrollToLatest && followLatestMessageRef.current) scrollToLatest();
+    });
+    resizeObserver.observe(history);
+    for (const child of history.children) resizeObserver.observe(child);
+    const observeNewChildren = new MutationObserver(() => {
+      for (const child of history.children) resizeObserver.observe(child);
+    });
+    observeNewChildren.observe(history, { childList: true });
     return () => {
       window.cancelAnimationFrame(frame);
       observer.disconnect();
+      resizeObserver.disconnect();
+      observeNewChildren.disconnect();
       history.removeEventListener("scroll", updateFollowState);
     };
-  }, [activeTab, selectedAgentId, selectedTaskId, autoScrollToLatest]);
+  }, [activeTab, selectedAgentId, selectedTaskId, visibleAgentTasks.length, runtimeEventsLoadedAgentId, autoScrollToLatest]);
 
   useEffect(() => {
     if (inspectorTab !== "files") return;
@@ -3913,29 +3941,20 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
           <button type="button" aria-pressed={teammateSearchOpen} onClick={() => setTeammateSearchOpen((value) => !value)}><SearchIcon /> Search <kbd>{window.luma.platform === "darwin" ? "⌘K" : "Ctrl K"}</kbd></button>
         </div>
         {teammateSearchOpen && <input className="luma-input luma-teammate-search" autoFocus value={teammateSearch} onChange={(event) => setTeammateSearch(event.target.value)} placeholder="Search teammates" />}
-        <div className="luma-teammate-sidebar-heading"><span>Your team</span><button type="button" disabled={busy} onClick={() => setCreateOpen(true)} aria-label="Add teammate" title="Add teammate"><PlusIcon /></button></div>
+        <div className="luma-teammate-sidebar-heading"><span>Your team</span></div>
         {agents.length === 0 && <p className="px-1 py-3 text-[11px] text-[var(--luma-text-muted)]">No teammates yet. Add one to give it a persistent identity and workspace.</p>}
         <div className="mt-3 space-y-1">
           {agents.filter((agent) => `${agent.name} ${agent.description ?? ""}`.toLowerCase().includes(teammateSearch.trim().toLowerCase())).map((agent) => (
             <button key={agent.id} type="button" aria-current={selectedAgentId === agent.id ? "page" : undefined} onClick={() => { setSelectedTaskId(null); setSelectedAgentId(agent.id); setActiveTab("chat"); setTeammateNotice(""); }} className={`luma-teammate-nav-item w-full rounded-md px-2.5 py-2 text-left transition-colors ${selectedAgentId === agent.id ? "is-selected" : ""}`}>
-              <div className="flex items-center gap-2"><MascotAvatar seed={agent.name} mascot={agent.configuration.mascot} size={30} active={false} activity="idle" /><span className={`h-1.5 w-1.5 rounded-full ${agent.status === "active" ? "bg-[var(--luma-success)]" : agent.status === "waiting" ? "bg-[var(--luma-warning)]" : "bg-[var(--luma-text-muted)]"}`} /><span className="min-w-0 flex-1 truncate text-[12px] font-medium">{agent.name}</span></div>
-              <div className="mt-1 pl-10 text-[10px] text-[var(--luma-text-muted)]">{agent.description || (agent.id === "agent_global" ? "Global teammate" : agent.status === "active" ? "Working now" : agent.status === "waiting" ? "Needs your attention" : "Ready when needed")}</div>
+              <div className="flex items-center gap-2.5"><MascotAvatar seed={agent.name} mascot={agent.configuration.mascot} size={30} active={false} activity="idle" /><span className="flex min-w-0 flex-1 flex-col"><span className="truncate text-[13px] font-semibold">{agent.name}</span><span className="truncate text-[12px] text-[var(--luma-text-muted)]">{agent.description || (agent.id === "agent_global" ? "Global teammate" : "Personal teammate")} · {agent.status === "active" ? "Working" : agent.status === "waiting" ? "Needs attention" : agent.status === "paused" ? "Paused" : "Idle"}</span></span></div>
             </button>
           ))}
-          {selectedAgent && <div key={selectedAgent.id} className="luma-teammate-history-list">
-            <div className="flex items-center justify-between px-2 pb-1 pt-2"><span className="luma-kicker">HISTORY</span><button type="button" onClick={() => { setSelectedTaskId(null); setActiveTab("chat"); }} className="text-[10px] text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]">All</button></div>
-            {conversationGroups.slice(0, 30).map((conversation) => {
-              const first = conversation.tasks[0];
-              const messageCount = conversation.tasks.length;
-              return <button key={conversation.id} type="button" className={`luma-teammate-history-nav-item ${selectedTaskId === conversation.id ? "is-selected" : ""}`} onClick={() => { setSelectedTaskId(conversation.id); setActiveTab("chat"); }}><span>{first.title || first.request}</span><small>{messageCount > 1 ? `${messageCount} messages · ` : ""}{new Date(conversation.latestAt * 1000).toLocaleDateString()}</small></button>;
-            })}
-            {agentTasks.length === 0 && <p className="px-2 py-2 text-[10px] text-[var(--luma-text-muted)]">No history yet.</p>}
-          </div>}
+          <button type="button" disabled={busy} onClick={() => setCreateOpen(true)} className="luma-teammate-add-button"><span><PlusIcon /></span>Add teammate</button>
         </div>
       </div>,
     );
     return () => onSidebarChange(null);
-  }, [agents, agentTasks, conversationGroups, busy, onSidebarChange, selectedAgentId, selectedTaskId, teammateSearch, teammateSearchOpen]);
+  }, [agents, busy, onSidebarChange, selectedAgentId, teammateSearch, teammateSearchOpen]);
 
   useEffect(() => {
     if (!selectedAgent) return;
@@ -3948,10 +3967,18 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   }, [selectedAgentId]);
 
   useEffect(() => {
-    if (!selectedAgentId) { setRuntimeEvents([]); return; }
+    if (!selectedAgentId) {
+      setRuntimeEvents([]);
+      setRuntimeEventsLoadedAgentId(null);
+      return;
+    }
     let disposed = false;
+    setRuntimeEventsLoadedAgentId(null);
     const load = () => void window.luma.getRuntimeEvents(selectedAgentId).then((events) => {
-      if (!disposed) setRuntimeEvents(events);
+      if (!disposed) {
+        setRuntimeEvents(events);
+        setRuntimeEventsLoadedAgentId(selectedAgentId);
+      }
     }).catch((reason) => {
       if (!disposed) setError(reason instanceof Error ? reason.message : String(reason));
     });
@@ -4015,9 +4042,9 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                       <div className="luma-teammate-user-row flex w-full justify-end"><div className="luma-teammate-user-message px-3 py-2"><div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">You</div><p className="whitespace-pre-wrap break-words text-[12px] leading-6">{task.request}</p></div></div>
                       <div className="luma-teammate-assistant-message flex items-start gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={42} active={false} activity={activity} /><div className="min-w-0 flex-1 pt-0.5"><div className="mb-1 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">{selectedAgent.name}<span className="font-normal normal-case tracking-normal">{task.parent_task_id ? "· delegated" : ""} {task.status === "running" ? "· working" : task.status === "queued" ? "· queued" : task.status === "waiting_for_approval" ? "· needs approval" : task.status === "waiting_for_input" ? "· needs your answer" : ""}</span></div><div className="luma-teammate-assistant-bubble space-y-2">
                         {timeline.map((segment) => segment.kind === "tools" ? (
-                          <details key={segment.id} className="luma-task-tool-group rounded-md border border-[var(--luma-border)] px-2 py-1.5">
-                            <summary className="cursor-pointer select-none text-[10px] text-[var(--luma-text-muted)]">{toolActivityLabel(segment.tools)}</summary>
-                            <div className="mt-2 space-y-2">{segment.tools.map((tool) => <div key={tool.id} className="border-l-2 border-[var(--luma-border-strong)] pl-2"><div className="text-[10px] font-medium text-[var(--luma-text-secondary)]">{tool.name}<span className="ml-2 font-normal text-[var(--luma-text-muted)]">{tool.durationMs === undefined ? "running" : `${tool.durationMs} ms${tool.failed ? " · failed" : ""}`}</span></div>{tool.input && <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-muted)]">{tool.input}</pre>}{tool.diff && <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-muted)]">{tool.diff}</pre>}</div>)}</div>
+                          <details key={segment.id} className="luma-task-tool-group">
+                            <summary>{toolActivitySummary(segment.tools)}</summary>
+                            <div className="space-y-2"><EditedFilesList tools={segment.tools} />{segment.tools.map((tool) => <div key={tool.id} className="luma-tool-activity-row"><div className="luma-tool-activity-heading"><span className={`luma-tool-state ${tool.durationMs === undefined ? "is-running" : "is-finished"}`} />{tool.name}<span className="luma-tool-duration">{tool.durationMs === undefined ? "running" : `${tool.durationMs} ms${tool.failed ? " · failed" : ""}`}</span></div>{tool.input && <pre className="luma-tool-detail">{tool.input}</pre>}{tool.diff && <pre className="luma-tool-diff">{tool.diff}</pre>}</div>)}</div>
                           </details>
                         ) : <div key={segment.id} className="text-[12px] leading-6"><RichResponse content={segment.content} /></div>)}
                         <TaskQuestionCard task={task} busy={busy} onAnswer={answerTaskQuestion} />

@@ -96,7 +96,7 @@ fn prune_directory(directory: &Path) -> Result<usize> {
     }
 
     let mut removed = 0;
-    for entry in fs::read_dir(&directory)? {
+    for entry in fs::read_dir(directory)? {
         let path = entry?.path();
         if path.extension().is_none_or(|extension| extension != "json") {
             continue;
@@ -151,7 +151,7 @@ pub fn list() -> Result<Vec<ChatSummary>> {
             summary: chat.summary,
         });
     }
-    chats.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    chats.sort_by_key(|chat| std::cmp::Reverse(chat.updated_at));
     Ok(chats)
 }
 

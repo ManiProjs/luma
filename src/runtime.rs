@@ -293,6 +293,14 @@ pub struct TaskRecord {
     pub updated_at: i64,
 }
 
+pub struct CreateTaskOptions<'a> {
+    pub title: Option<String>,
+    pub workspace: Option<String>,
+    pub recover_on_restart: bool,
+    pub schedule_id: Option<String>,
+    pub conversation_id: Option<&'a str>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MemoryScope {
@@ -832,6 +840,7 @@ impl RuntimeStore {
         Ok(())
     }
 
+    #[allow(dead_code)] // Public convenience API retained for downstream runtime users.
     pub fn create_task(
         &self,
         agent_id: &str,
@@ -844,11 +853,13 @@ impl RuntimeStore {
         self.create_task_in_conversation(
             agent_id,
             request,
-            title,
-            workspace,
-            recover_on_restart,
-            schedule_id,
-            None,
+            CreateTaskOptions {
+                title,
+                workspace,
+                recover_on_restart,
+                schedule_id,
+                conversation_id: None,
+            },
         )
     }
 
@@ -856,12 +867,15 @@ impl RuntimeStore {
         &self,
         agent_id: &str,
         request: &str,
-        title: Option<String>,
-        workspace: Option<String>,
-        recover_on_restart: bool,
-        schedule_id: Option<String>,
-        conversation_id: Option<&str>,
+        options: CreateTaskOptions<'_>,
     ) -> Result<TaskRecord> {
+        let CreateTaskOptions {
+            title,
+            workspace,
+            recover_on_restart,
+            schedule_id,
+            conversation_id,
+        } = options;
         let agent = self
             .get_agent(agent_id)?
             .ok_or_else(|| anyhow!("agent not found: {agent_id}"))?;
@@ -1097,6 +1111,7 @@ impl RuntimeStore {
         Ok(record)
     }
 
+    #[allow(dead_code)] // Public query API retained for downstream runtime users.
     pub fn list_child_tasks(&self, parent_task_id: &str) -> Result<Vec<TaskRecord>> {
         let db = self.db()?;
         let mut statement = db.prepare(
@@ -1107,6 +1122,7 @@ impl RuntimeStore {
             .map_err(Into::into)
     }
 
+    #[allow(dead_code)] // Public query API retained for downstream runtime users.
     pub fn delegated_task(
         &self,
         parent_task_id: &str,
@@ -1736,7 +1752,7 @@ impl RuntimeStore {
         if prompt.trim().is_empty() {
             bail!("scheduled prompt cannot be empty");
         }
-        if every_seconds.is_some_and(|seconds| seconds < 60 || seconds > 31_536_000) {
+        if every_seconds.is_some_and(|seconds| !(60..=31_536_000).contains(&seconds)) {
             bail!("recurrence interval must be between 60 seconds and one year");
         }
         if run_at.is_none() && every_seconds.is_none() {
@@ -2008,10 +2024,10 @@ impl RuntimeStore {
             return Ok(false);
         }
         let workspace = agent.configuration.workspace.clone();
-        if let Some(path) = workspace.as_deref() {
-            if validate_workspace(path, &agent.configuration).is_err() {
-                return Ok(false);
-            }
+        if let Some(path) = workspace.as_deref()
+            && validate_workspace(path, &agent.configuration).is_err()
+        {
+            return Ok(false);
         }
         let mut db = self.db()?;
         let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -2593,11 +2609,13 @@ mod tests {
             .create_task_in_conversation(
                 &first.id,
                 "Continue the same discussion",
-                None,
-                None,
-                false,
-                None,
-                Some(&opening.conversation_id),
+                CreateTaskOptions {
+                    title: None,
+                    workspace: None,
+                    recover_on_restart: false,
+                    schedule_id: None,
+                    conversation_id: Some(&opening.conversation_id),
+                },
             )
             .unwrap();
         assert_eq!(opening.conversation_id, follow_up.conversation_id);
@@ -2607,11 +2625,13 @@ mod tests {
                 .create_task_in_conversation(
                     &second.id,
                     "Try to cross into another teammate's conversation",
-                    None,
-                    None,
-                    false,
-                    None,
-                    Some(&opening.conversation_id),
+                    CreateTaskOptions {
+                        title: None,
+                        workspace: None,
+                        recover_on_restart: false,
+                        schedule_id: None,
+                        conversation_id: Some(&opening.conversation_id),
+                    },
                 )
                 .is_err()
         );
@@ -2926,8 +2946,10 @@ mod tests {
     #[test]
     fn restart_recovery_never_requeues_uncertain_side_effects() {
         let store = RuntimeStore::in_memory();
-        let mut configuration = AgentConfiguration::default();
-        configuration.recover_interrupted_tasks = true;
+        let configuration = AgentConfiguration {
+            recover_interrupted_tasks: true,
+            ..AgentConfiguration::default()
+        };
         let agent = store
             .create_agent("A", None, AgentKind::Teammates, configuration)
             .unwrap();

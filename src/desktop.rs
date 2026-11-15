@@ -369,11 +369,13 @@ impl DesktopServer {
                     task: self.runtime.create_task_in_conversation(
                         &agent_id,
                         &request,
-                        title,
-                        workspace,
-                        recover_on_restart,
-                        None,
-                        conversation_id.as_deref(),
+                        crate::runtime::CreateTaskOptions {
+                            title,
+                            workspace,
+                            recover_on_restart,
+                            schedule_id: None,
+                            conversation_id: conversation_id.as_deref(),
+                        },
                     )?,
                 },
                 ClientMessage::TaskCancel { request_id, id } => {
@@ -450,12 +452,11 @@ impl DesktopServer {
                 },
                 ClientMessage::PluginsList { request_id } => ServerEvent::Plugins {
                     request_id,
-                    plugins: crate::plugins::PluginManager::default().list()?,
+                    plugins: crate::plugins::PluginManager.list()?,
                 },
                 ClientMessage::PluginInstall { request_id, path } => ServerEvent::PluginSaved {
                     request_id,
-                    plugin: crate::plugins::PluginManager::default()
-                        .install(std::path::Path::new(&path))?,
+                    plugin: crate::plugins::PluginManager.install(std::path::Path::new(&path))?,
                 },
                 ClientMessage::PluginSetEnabled {
                     request_id,
@@ -463,16 +464,16 @@ impl DesktopServer {
                     enabled,
                 } => ServerEvent::PluginSaved {
                     request_id,
-                    plugin: crate::plugins::PluginManager::default().set_enabled(&id, enabled)?,
+                    plugin: crate::plugins::PluginManager.set_enabled(&id, enabled)?,
                 },
                 ClientMessage::PluginUninstall { request_id, id } => ServerEvent::PluginDeleted {
                     request_id,
-                    deleted: crate::plugins::PluginManager::default().uninstall(&id)?,
+                    deleted: crate::plugins::PluginManager.uninstall(&id)?,
                     id,
                 },
                 ClientMessage::McpList { request_id } => ServerEvent::McpServers {
                     request_id,
-                    servers: crate::mcp::McpManager::default().list()?,
+                    servers: crate::mcp::McpManager.list()?,
                 },
                 ClientMessage::McpAddStdio {
                     request_id,
@@ -482,7 +483,7 @@ impl DesktopServer {
                     env,
                 } => ServerEvent::McpSaved {
                     request_id,
-                    server: crate::mcp::McpManager::default().add(id, command, args, env)?,
+                    server: crate::mcp::McpManager.add(id, command, args, env)?,
                 },
                 ClientMessage::McpAddHttp {
                     request_id,
@@ -491,7 +492,7 @@ impl DesktopServer {
                     headers,
                 } => ServerEvent::McpSaved {
                     request_id,
-                    server: crate::mcp::McpManager::default().add_http(id, url, headers)?,
+                    server: crate::mcp::McpManager.add_http(id, url, headers)?,
                 },
                 ClientMessage::McpSetEnabled {
                     request_id,
@@ -499,15 +500,15 @@ impl DesktopServer {
                     enabled,
                 } => ServerEvent::McpSaved {
                     request_id,
-                    server: crate::mcp::McpManager::default().set_enabled(&id, enabled)?,
+                    server: crate::mcp::McpManager.set_enabled(&id, enabled)?,
                 },
                 ClientMessage::McpUpdate { request_id, server } => ServerEvent::McpSaved {
                     request_id,
-                    server: crate::mcp::McpManager::default().update(server)?,
+                    server: crate::mcp::McpManager.update(server)?,
                 },
                 ClientMessage::McpRemove { request_id, id } => ServerEvent::McpDeleted {
                     request_id,
-                    deleted: crate::mcp::McpManager::default().remove(&id)?,
+                    deleted: crate::mcp::McpManager.remove(&id)?,
                     id,
                 },
                 ClientMessage::ApprovalsList { request_id } => ServerEvent::Approvals {

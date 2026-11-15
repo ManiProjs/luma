@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, fs, path::PathBuf};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     pub model: ModelConfig,
 
@@ -17,7 +17,7 @@ pub struct Config {
     pub provider_api_keys: HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ModelConfig {
     pub provider: String,
 
@@ -26,27 +26,6 @@ pub struct ModelConfig {
     pub name: String,
 
     pub api_key: Option<String>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            model: ModelConfig::default(),
-            providers: Vec::new(),
-            provider_api_keys: HashMap::new(),
-        }
-    }
-}
-
-impl Default for ModelConfig {
-    fn default() -> Self {
-        Self {
-            provider: String::new(),
-            endpoint: String::new(),
-            name: String::new(),
-            api_key: None,
-        }
-    }
 }
 
 /// Returns the directory containing Luma's configuration.

@@ -1452,3 +1452,319 @@ html[data-theme="luma"][data-appearance="dark"] .luma-app-shell[data-workspace="
   .luma-composer-shell { padding-inline: 12px !important; }
   .luma-teammate-composer { width: 100%; }
 }
+
+/* Exact Claude reference palette and component geometry. */
+html[data-theme="luma"] {
+  --luma-bg: #1A1918;
+  --luma-surface: #232220;
+  --luma-surface-raised: #232220;
+  --luma-surface-hover: #2D2C2A;
+  --luma-border: #323130;
+  --luma-border-strong: #3A3937;
+  --luma-text: #ECEBE8;
+  --luma-text-secondary: #A8A6A1;
+  --luma-text-muted: #8F8D88;
+  --luma-accent: #9DB2F8;
+  --luma-accent-soft: #2A3866;
+  --luma-accent-glow: transparent;
+  --luma-success: #75C58B;
+  --luma-danger: #F08A82;
+  --luma-warning: #E9B96E;
+  --luma-selection: #2A3866;
+  --luma-on-accent: #FFFFFF;
+  color-scheme: dark;
+}
+
+html[data-theme="luma"][data-appearance="light"] {
+  --luma-bg: #FCFCFB;
+  --luma-surface: #EDECE9;
+  --luma-surface-raised: #FFFFFF;
+  --luma-surface-hover: #E3E2DE;
+  --luma-border: #DAD8D4;
+  --luma-border-strong: #D8D6D1;
+  --luma-text: #1C1B1A;
+  --luma-text-secondary: #5E5D5A;
+  --luma-text-muted: #66645F;
+  --luma-accent: #2F55D4;
+  --luma-accent-soft: #E6ECFC;
+  --luma-accent-glow: transparent;
+  --luma-success: #1F6B39;
+  --luma-danger: #A8271F;
+  --luma-warning: #A46B18;
+  --luma-selection: #E6ECFC;
+  --luma-on-accent: #FFFFFF;
+  color-scheme: light;
+}
+
+html[data-theme="luma"][data-appearance="light"]:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="code"] {
+  --luma-accent: #2F55D4;
+  --luma-accent-soft: #D6DFF8;
+}
+html[data-theme="luma"][data-appearance="light"]:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="teammates"] {
+  --luma-accent: #A94608;
+  --luma-accent-soft: #F6DEC9;
+}
+html[data-theme="luma"][data-appearance="dark"]:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="code"] {
+  --luma-accent: #9DB2F8;
+  --luma-accent-soft: #2A3866;
+}
+html[data-theme="luma"][data-appearance="dark"]:not([data-custom-accent="true"]) .luma-app-shell[data-workspace="teammates"] {
+  --luma-accent: #C2570C;
+  --luma-accent-soft: #4A2E1C;
+}
+
+html[data-theme="luma"] .luma-app-shell {
+  background: var(--luma-bg);
+  color: var(--luma-text);
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif;
+}
+html[data-theme="luma"] .luma-agent-empty-scene::before { background: none; filter: none; }
+html[data-theme="luma"] .luma-sidebar-slot .luma-sidebar {
+  background: #232220;
+  border-right-color: #323130;
+}
+html[data-theme="luma"][data-appearance="dark"] .luma-sidebar-slot .luma-sidebar.luma-sidebar-glass {
+  background: #232220;
+  border-right-color: #323130;
+}
+html[data-theme="luma"][data-appearance="light"] .luma-sidebar-slot .luma-sidebar {
+  background: #EDECE9;
+  border-right-color: #DAD8D4;
+}
+html[data-theme="luma"] .luma-sidebar-brand {
+  height: 52px;
+  min-height: 52px;
+  padding: 0 20px;
+}
+html[data-theme="luma"] .luma-sidebar-icon-button,
+html[data-theme="luma"] .luma-inspector-icon-button,
+html[data-theme="luma"] .luma-sidebar-settings {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  color: var(--luma-text-secondary);
+}
+html[data-theme="luma"] .luma-sidebar-icon-button:hover,
+html[data-theme="luma"] .luma-inspector-icon-button:hover,
+html[data-theme="luma"] .luma-sidebar-settings:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+
+html[data-theme="luma"] .luma-primary-switcher {
+  height: 34px;
+  margin: 0 12px 14px;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 9px;
+  background: #2E2D2B;
+}
+html[data-theme="luma"][data-appearance="light"] .luma-primary-switcher { background: #DEDDD9; }
+html[data-theme="luma"] .luma-primary-switcher > button {
+  height: 30px;
+  min-height: 30px;
+  gap: 6px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+}
+html[data-theme="luma"] .luma-primary-switcher > button[data-active="true"] {
+  background: #4A4845;
+  color: #ECEBE8;
+  box-shadow: 0 1px 2px rgba(0,0,0,.4), 0 0 0 .5px rgba(255,255,255,.06);
+}
+html[data-theme="luma"][data-appearance="light"] .luma-primary-switcher > button[data-active="true"] {
+  background: #FFFFFF;
+  color: #1C1B1A;
+  box-shadow: 0 1px 2px rgba(0,0,0,.14), 0 0 0 .5px rgba(0,0,0,.06);
+}
+html[data-theme="luma"] .luma-primary-switcher-code-icon { flex: none; }
+html[data-theme="luma"] .luma-primary-switcher > button[data-active="true"] .luma-primary-switcher-code-icon,
+html[data-theme="luma"] .luma-primary-switcher > button[data-active="true"] > svg { color: var(--luma-accent); }
+
+html[data-theme="luma"] .luma-sidebar .luma-new-chat {
+  padding: 0 22px 14px;
+}
+html[data-theme="luma"] .luma-sidebar .luma-new-chat > button:first-child,
+html[data-theme="luma"] .luma-sidebar .luma-sidebar-search,
+html[data-theme="luma"] .luma-teammate-sidebar-actions button {
+  height: 32px;
+  min-height: 32px;
+  padding: 0 10px;
+  gap: 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--luma-text);
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: none;
+}
+html[data-theme="luma"] .luma-sidebar .luma-new-chat > button:first-child:hover,
+html[data-theme="luma"] .luma-sidebar .luma-sidebar-search:hover,
+html[data-theme="luma"] .luma-teammate-sidebar-actions button:hover { background: var(--luma-surface-hover); }
+html[data-theme="luma"] .luma-sidebar .luma-new-chat > button:first-child > svg,
+html[data-theme="luma"] .luma-sidebar .luma-new-chat > button:first-child > span:first-child { color: var(--luma-accent); }
+html[data-theme="luma"] .luma-sidebar .luma-sidebar-search { width: 100%; text-align: left; }
+html[data-theme="luma"] .luma-sidebar .luma-sidebar-search kbd,
+html[data-theme="luma"] .luma-teammate-sidebar-actions kbd { margin-left: auto; color: var(--luma-text-muted); font-size: 12px; }
+
+html[data-theme="luma"] .luma-sidebar-history-list {
+  order: 3;
+  padding: 0 12px 8px;
+}
+html[data-theme="luma"] .luma-sidebar-projects {
+  order: 4;
+  max-height: 38vh;
+  padding: 0 12px;
+}
+html[data-theme="luma"] .luma-sidebar-history-list > section > div:first-child,
+html[data-theme="luma"] .luma-sidebar-projects > section > div:first-child {
+  min-height: 24px;
+  margin: 0 0 6px;
+  padding: 0 10px;
+  color: var(--luma-text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+html[data-theme="luma"] .luma-sidebar-history-list .luma-sidebar-section { margin-bottom: 12px; }
+html[data-theme="luma"] .luma-chat-row,
+html[data-theme="luma"] .luma-chat-row-select { min-height: 34px; border-radius: 7px !important; }
+html[data-theme="luma"] .luma-chat-row-select { gap: 9px; padding: 0 10px; }
+html[data-theme="luma"] .luma-chat-row-select > div > span { font-size: 13px; font-weight: 500; }
+html[data-theme="luma"] .luma-chat-row-time { color: var(--luma-text-muted); font-size: 11.5px; }
+html[data-theme="luma"] .luma-sidebar-projects button { min-height: 32px; border-radius: 7px; font-size: 13px; }
+html[data-theme="luma"] .luma-sidebar-footer {
+  min-height: 54px;
+  margin: 12px;
+  padding: 6px 8px;
+  gap: 10px;
+  border-top-color: var(--luma-border);
+}
+html[data-theme="luma"] .luma-sidebar-account { gap: 10px; min-height: 30px; padding: 0; }
+html[data-theme="luma"] .luma-sidebar-account-avatar { width: 28px; height: 28px; background: #ECEBE8; color: #1C1B1A; font-size: 12px; }
+html[data-theme="luma"][data-appearance="light"] .luma-sidebar-account-avatar { background: #1C1B1A; color: #FFFFFF; }
+html[data-theme="luma"] .luma-sidebar-account strong { font-size: 13px; font-weight: 500; }
+
+html[data-theme="luma"] .luma-conversation-header,
+html[data-theme="luma"] .luma-teammate-header { height: 52px; min-height: 52px; padding-inline: 24px 16px; border-bottom-color: var(--luma-border); background: var(--luma-bg); }
+html[data-theme="luma"] .luma-agent-transcript { max-width: 720px; padding-top: 28px; }
+html[data-theme="luma"] .luma-message-row.is-user { justify-content: flex-end; }
+html[data-theme="luma"] .luma-message-row.is-user::before { display: none; }
+html[data-theme="luma"] .luma-message-row.is-user .luma-message-content { max-width: 82%; border: 0; border-radius: 14px; background: #2B2A28; padding: 10px 14px; color: #ECEBE8; font-size: 14px; line-height: 1.5; }
+html[data-theme="luma"][data-appearance="light"] .luma-message-row.is-user .luma-message-content { background: #F0EFEC; color: #1C1B1A; }
+html[data-theme="luma"] .luma-message-content { font-size: 14px; line-height: 1.6; }
+html[data-theme="luma"] .luma-composer-shell { padding: 8px 24px 20px !important; background: transparent !important; }
+html[data-theme="luma"] .luma-composer-shell > .luma-composer,
+html[data-theme="luma"] .luma-teammate-composer {
+  min-height: 64px !important;
+  padding: 12px 12px 10px !important;
+  border: 1px solid var(--luma-border-strong) !important;
+  border-radius: 14px !important;
+  background: var(--luma-surface-raised) !important;
+  box-shadow: 0 1px 3px rgba(0,0,0,.12) !important;
+}
+html[data-theme="luma"] .luma-teammate-composer { margin: 8px auto 20px; }
+html[data-theme="luma"] .luma-code-prompt,
+html[data-theme="luma"] .luma-teammate-prompt { background: transparent !important; color: var(--luma-text) !important; }
+
+html[data-theme="luma"] .luma-code-inspector,
+html[data-theme="luma"] .luma-teammate-inspector { background: #1F1E1C; border-left-color: #2E2D2B; }
+html[data-theme="luma"][data-appearance="light"] .luma-code-inspector,
+html[data-theme="luma"][data-appearance="light"] .luma-teammate-inspector { background: #F7F6F4; border-left-color: #E6E4E0; }
+html[data-theme="luma"] .luma-inspector-header { height: 52px; min-height: 52px; padding: 0 16px; }
+html[data-theme="luma"] .luma-inspector-tabs { gap: 4px; }
+html[data-theme="luma"] .luma-inspector-tabs button { height: 28px; min-height: 28px; padding: 0 10px; border-radius: 7px; font-size: 12.5px; }
+html[data-theme="luma"] .luma-inspector-tabs button[data-active="true"] { background: #353432; color: #ECEBE8; }
+html[data-theme="luma"][data-appearance="light"] .luma-inspector-tabs button[data-active="true"] { background: #E6E4E0; color: #1C1B1A; }
+html[data-theme="luma"] .luma-inspector-summary { padding: 14px 16px 8px; }
+html[data-theme="luma"] .luma-inspector-summary strong { font-size: 12.5px; }
+html[data-theme="luma"] .luma-inspector-actions { gap: 7px; padding: 4px 16px 12px; }
+html[data-theme="luma"] .luma-inspector-actions button { height: 28px; min-height: 28px; padding: 0 10px; border-radius: 7px; font-size: 11px; }
+html[data-theme="luma"] .luma-inspector-change-list { padding: 0 8px 8px; }
+html[data-theme="luma"] .luma-inspector-change-list > button { min-height: 30px; padding: 0 8px; border-radius: 6px; font-size: 12px; }
+html[data-theme="luma"] .luma-inspector-diff-header { min-height: 36px; padding: 0 12px; }
+html[data-theme="luma"] .luma-inspector-diff { margin: 14px 16px 16px; padding: 6px 0; border: 1px solid var(--luma-border-strong); border-radius: 10px; background: #161615; font-size: 11.5px; line-height: 1.75; }
+html[data-theme="luma"][data-appearance="light"] .luma-inspector-diff { background: #FFFFFF; }
+
+html[data-theme="luma"] .luma-composer-model-menu,
+html[data-theme="luma"] .luma-composer-quick-menu,
+html[data-theme="luma"] .luma-model-dropdown-menu,
+html[data-theme="luma"] .luma-profile-menu,
+html[data-theme="luma"] .luma-mention-menu,
+html[data-theme="luma"] .luma-command-menu {
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 8px;
+  background: var(--luma-surface-raised);
+  box-shadow: 0 10px 28px rgba(0,0,0,.18);
+}
+html[data-theme="luma"] .luma-composer-model-menu button,
+html[data-theme="luma"] .luma-composer-quick-menu label,
+html[data-theme="luma"] .luma-composer-quick-menu > button { min-height: 30px; padding: 5px 9px; border-radius: 6px; color: var(--luma-text-secondary); font-size: 12px; }
+html[data-theme="luma"] .luma-composer-model-menu button:hover,
+html[data-theme="luma"] .luma-composer-quick-menu label:hover,
+html[data-theme="luma"] .luma-composer-quick-menu > button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+html[data-theme="luma"] .luma-model-dropdown-menu { padding: 0; }
+html[data-theme="luma"] .luma-model-dropdown-menu [role="listbox"] > button { min-height: 36px; padding: 6px 9px; border-radius: 6px; text-align: left; }
+html[data-theme="luma"] .luma-model-dropdown-menu [role="listbox"] > button[aria-selected="true"] { background: var(--luma-accent-soft); }
+html[data-theme="luma"] .luma-model-dropdown-menu > div:first-child { padding: 9px; }
+html[data-theme="luma"] .luma-model-dropdown-menu > div:last-child { padding: 4px 8px; }
+
+html[data-theme="luma"] .luma-tool-group { margin: 12px 0; border: 0; border-radius: 0; padding: 0; background: transparent; }
+html[data-theme="luma"] .luma-tool-group-trigger { display: flex; width: 100%; min-height: 28px; align-items: center; gap: 8px; padding: 3px 0; color: var(--luma-text-secondary); font-size: 13px; text-align: left; }
+html[data-theme="luma"] .luma-tool-group-trigger:hover { color: var(--luma-text); }
+html[data-theme="luma"] .luma-tool-chevron { flex: none; transition: transform 140ms ease; }
+html[data-theme="luma"] .luma-tool-chevron[data-expanded="true"] { transform: rotate(90deg); }
+html[data-theme="luma"] .luma-tool-group-count { margin-left: auto; color: var(--luma-text-muted); font-size: 11px; }
+html[data-theme="luma"] .luma-tool-group-content { display: grid; gap: 8px; padding: 4px 0 2px 22px; }
+html[data-theme="luma"] .luma-edited-files { overflow: hidden; border: 1px solid #343331; border-radius: 10px; background: #232220; }
+html[data-theme="luma"][data-appearance="light"] .luma-edited-files { border-color: #E2E0DC; background: #FFFFFF; }
+html[data-theme="luma"] .luma-edited-file { display: flex; min-height: 36px; align-items: center; gap: 10px; padding: 0 12px; color: var(--luma-text-secondary); font-size: 12px; }
+html[data-theme="luma"] .luma-edited-file + .luma-edited-file { border-top: 1px solid var(--luma-border); }
+html[data-theme="luma"] .luma-edited-file > svg { flex: none; color: var(--luma-text-secondary); }
+html[data-theme="luma"] .luma-edited-file-path { min-width: 0; flex: 1; overflow: hidden; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+html[data-theme="luma"] .luma-diff-additions,
+html[data-theme="luma"] .luma-diff-deletions { flex: none; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 12px; }
+html[data-theme="luma"] .luma-diff-additions { color: #78C28C; }
+html[data-theme="luma"] .luma-diff-deletions { color: #F08A82; }
+html[data-theme="luma"][data-appearance="light"] .luma-diff-additions { color: #1F6B39; }
+html[data-theme="luma"][data-appearance="light"] .luma-diff-deletions { color: #A8271F; }
+html[data-theme="luma"] .luma-edited-file-status { flex: none; color: var(--luma-text-secondary); font-size: 12px; }
+html[data-theme="luma"] .luma-tool-activity-row { min-width: 0; padding: 6px 0; border: 0; border-top: 1px solid var(--luma-border); background: transparent; }
+html[data-theme="luma"] .luma-tool-activity-heading { display: flex; align-items: center; gap: 8px; color: var(--luma-text-secondary); font-size: 12px; }
+html[data-theme="luma"] .luma-tool-state { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--luma-accent); }
+html[data-theme="luma"] .luma-tool-state.is-finished { background: var(--luma-success); }
+html[data-theme="luma"] .luma-tool-state.is-running { animation: luma-activity-pulse 1.3s ease-in-out infinite; }
+html[data-theme="luma"] .luma-tool-duration { margin-left: auto; color: var(--luma-text-muted); font-size: 11px; }
+html[data-theme="luma"] .luma-tool-detail,
+html[data-theme="luma"] .luma-tool-diff { max-height: 180px; overflow: auto; margin: 6px 0 0 14px; padding-left: 10px; border-left: 1px solid var(--luma-border); color: var(--luma-text-muted); font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 11px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+html[data-theme="luma"] .luma-task-tool-group { border: 0; border-radius: 0; padding: 2px 0; }
+html[data-theme="luma"] .luma-task-tool-group summary { display: flex; min-height: 28px; align-items: center; gap: 8px; color: var(--luma-text-secondary); font-size: 13px; list-style: none; cursor: pointer; user-select: none; }
+html[data-theme="luma"] .luma-task-tool-group summary::-webkit-details-marker { display: none; }
+html[data-theme="luma"] .luma-task-tool-group summary::before { width: 7px; height: 7px; flex: none; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; content: ""; transform: rotate(-45deg) translateY(-1px); transition: transform 140ms ease; }
+html[data-theme="luma"] .luma-task-tool-group[open] summary::before { transform: rotate(45deg) translateY(-1px); }
+html[data-theme="luma"] .luma-task-tool-group > div { padding: 4px 0 4px 20px; }
+
+html[data-theme="luma"] .luma-teammate-sidebar-actions { gap: 2px; padding: 0 12px; }
+html[data-theme="luma"] .luma-teammate-sidebar-heading { min-height: 24px; margin-top: 0; padding: 18px 12px 6px; color: var(--luma-text-muted); font-size: 11.5px; font-weight: 600; }
+html[data-theme="luma"] .luma-teammate-sidebar-heading button { width: 24px; height: 24px; }
+html[data-theme="luma"] .luma-teammate-sidebar-transition > .mt-3 { margin-top: 0 !important; padding: 0; }
+html[data-theme="luma"] .luma-teammate-search { width: calc(100% - 24px); margin: 8px 12px 0; }
+html[data-theme="luma"] .luma-teammate-nav-item { display: block; min-height: 44px; padding: 7px 12px !important; border-radius: 7px !important; }
+html[data-theme="luma"] .luma-teammate-nav-item > div:first-child { gap: 10px; }
+html[data-theme="luma"] .luma-teammate-nav-item > div:first-child > span { min-width: 0; }
+html[data-theme="luma"] .luma-teammate-nav-item > div:first-child > span > span:first-child { color: var(--luma-text); font-size: 13px; font-weight: 600; }
+html[data-theme="luma"] .luma-teammate-nav-item > div:first-child > span > span:last-child { color: var(--luma-text-muted); font-size: 12px; font-weight: 400; }
+html[data-theme="luma"][data-appearance="light"] .luma-app-shell[data-workspace="teammates"] .luma-teammate-nav-item.is-selected > div:first-child > span > span:last-child { color: #5A3A22; }
+html[data-theme="luma"][data-appearance="dark"] .luma-app-shell[data-workspace="teammates"] .luma-teammate-nav-item.is-selected > div:first-child > span > span:last-child { color: #D0B6A2; }
+html[data-theme="luma"] .luma-teammate-add-button { display: flex; width: 100%; min-height: 44px; align-items: center; gap: 10px; padding: 7px 12px; border-radius: 7px; color: var(--luma-text-secondary); font-size: 13px; text-align: left; }
+html[data-theme="luma"] .luma-teammate-add-button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+html[data-theme="luma"] .luma-teammate-add-button > span { display: flex; width: 30px; height: 30px; flex: none; align-items: center; justify-content: center; border: 1.5px dashed var(--luma-text-muted); border-radius: 50%; }
+html[data-theme="luma"] .luma-teammate-add-button svg { width: 14px; height: 14px; }
+html[data-theme="luma"] .luma-teammate-history-nav-item { min-height: 30px; padding: 0 8px; border-radius: 6px; font-size: 12px; }
+@media (min-width: 1051px) {
+  html[data-theme="luma"] .luma-code-inspector { min-width: 340px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-theme="luma"] .luma-tool-chevron,
+  html[data-theme="luma"] .luma-tool-state.is-running { transition: none; animation: none; }
+}

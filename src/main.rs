@@ -243,7 +243,7 @@ async fn run() -> Result<()> {
 
     #[cfg(feature = "tui")]
     {
-        return run_tui(session, ui_events.subscribe(), input_tx, cancel).await;
+        run_tui(session, ui_events.subscribe(), input_tx, cancel).await
     }
 
     // Without the Ratatui front end there is no terminal UI to fall back to.

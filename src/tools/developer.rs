@@ -281,13 +281,12 @@ impl Tool for CountLines {
                 continue;
             }
             let path = entry.path();
-            if let Some(glob) = args.glob.as_deref() {
-                if !path
+            if let Some(glob) = args.glob.as_deref()
+                && !path
                     .to_string_lossy()
                     .ends_with(glob.trim_start_matches('*'))
-                {
-                    continue;
-                }
+            {
+                continue;
             }
             let extension = path
                 .extension()

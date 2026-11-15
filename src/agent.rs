@@ -1130,15 +1130,15 @@ project structure, dependencies, or test results.
             return Ok(());
         }
 
-        if let Some(root) = &self.workspace_root {
-            if let Err(error) = validate_agent_tool_paths(root, name, input) {
-                let message = format!(
-                    "Failed to run tool\n{name}: workspace policy denied this operation: {error}"
-                );
-                tx.send(AgentEvent::Error(message.clone())).await?;
-                self.record_observation(name, &message);
-                return Ok(());
-            }
+        if let Some(root) = &self.workspace_root
+            && let Err(error) = validate_agent_tool_paths(root, name, input)
+        {
+            let message = format!(
+                "Failed to run tool\n{name}: workspace policy denied this operation: {error}"
+            );
+            tx.send(AgentEvent::Error(message.clone())).await?;
+            self.record_observation(name, &message);
+            return Ok(());
         }
 
         tx.send(AgentEvent::Status {
@@ -1300,10 +1300,10 @@ project structure, dependencies, or test results.
     }
 
     fn complete_checkpoint(&mut self) {
-        if let Some(checkpoint) = self.checkpoint.as_mut() {
-            if checkpoint.status == crate::tasks::TaskStatus::InProgress {
-                checkpoint.status = crate::tasks::TaskStatus::Completed;
-            }
+        if let Some(checkpoint) = self.checkpoint.as_mut()
+            && checkpoint.status == crate::tasks::TaskStatus::InProgress
+        {
+            checkpoint.status = crate::tasks::TaskStatus::Completed;
         }
         self.save_checkpoint();
     }

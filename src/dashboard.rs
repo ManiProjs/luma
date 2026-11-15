@@ -233,13 +233,12 @@ async fn restrict_browser_origins(request: Request, next: Next) -> Response {
         return StatusCode::FORBIDDEN.into_response();
     };
 
-    if let Some(origin) = request.headers().get(ORIGIN) {
-        if !origin
+    if let Some(origin) = request.headers().get(ORIGIN)
+        && !origin
             .to_str()
             .is_ok_and(|origin| is_same_origin_authority(origin, host))
-        {
-            return StatusCode::FORBIDDEN.into_response();
-        }
+    {
+        return StatusCode::FORBIDDEN.into_response();
     }
 
     next.run(request).await
@@ -1044,11 +1043,13 @@ async fn api_create_task(
     match state.runtime.create_task_in_conversation(
         &request.agent_id,
         &request.request,
-        request.title,
-        workspace,
-        request.recover_on_restart,
-        None,
-        request.conversation_id.as_deref(),
+        crate::runtime::CreateTaskOptions {
+            title: request.title,
+            workspace,
+            recover_on_restart: request.recover_on_restart,
+            schedule_id: None,
+            conversation_id: request.conversation_id.as_deref(),
+        },
     ) {
         Ok(task) => (StatusCode::CREATED, Json(task)).into_response(),
         Err(error) => (
@@ -1758,12 +1759,12 @@ async fn rename_path(state: &DashboardServer, from: &str, to: &str) -> ServerMes
         };
     }
 
-    if let Some(parent) = to_path.parent() {
-        if let Err(error) = fs::create_dir_all(parent).await {
-            return ServerMessage::Error {
-                message: format!("Failed to create destination directory: {}", error),
-            };
-        }
+    if let Some(parent) = to_path.parent()
+        && let Err(error) = fs::create_dir_all(parent).await
+    {
+        return ServerMessage::Error {
+            message: format!("Failed to create destination directory: {}", error),
+        };
     }
 
     match fs::rename(&from_path, &to_path).await {

@@ -380,7 +380,7 @@ impl Session {
         question_tx: QuestionAnswerSender,
         cancel: RequestCancellation,
     ) -> Self {
-        let session = Self {
+        Self {
             info,
             state: SessionState::default(),
             confirm_tx,
@@ -397,8 +397,7 @@ impl Session {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-        };
-        session
+        }
     }
 
     /// Whether a client has asked to exit — sent by `/quit`, or by Ctrl+C
@@ -665,7 +664,7 @@ impl Session {
         }
 
         if text == "/plugins" {
-            let output = match crate::plugins::PluginManager::default().list() {
+            let output = match crate::plugins::PluginManager.list() {
                 Ok(entries) if entries.is_empty() => "No native Luma plugins installed.".to_owned(),
                 Ok(entries) => entries
                     .into_iter()
@@ -692,7 +691,7 @@ impl Session {
         }
 
         if text == "/mcp" {
-            let output = match crate::mcp::McpManager::default().list() {
+            let output = match crate::mcp::McpManager.list() {
                 Ok(servers) if servers.is_empty() => "No MCP servers configured.".to_owned(),
                 Ok(servers) => servers
                     .into_iter()

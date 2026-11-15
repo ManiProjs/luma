@@ -4,9 +4,7 @@
 //! working directory, with auto-confirmation. No network, no real model,
 //! no user filesystem.
 
-use std::sync::Mutex;
-
-use tokio::sync::mpsc;
+use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
@@ -498,7 +496,7 @@ async fn ask_question_falls_back_to_a_follow_up_task_when_interaction_is_unavail
 /// Serializes tests that change the process working directory.
 /// `std::env::set_current_dir` is process-global, so cwd-dependent tests
 /// must not run concurrently with each other.
-static CWD_LOCK: Mutex<()> = Mutex::new(());
+static CWD_LOCK: Mutex<()> = Mutex::const_new(());
 
 /// Runs the closure inside a temp working directory, restoring the
 /// original cwd afterwards. Required because the filesystem tools are
@@ -508,9 +506,7 @@ where
     F: FnOnce(std::path::PathBuf) -> Fut,
     Fut: std::future::Future<Output = ()>,
 {
-    let _guard = CWD_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _guard = CWD_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let original = std::env::current_dir().unwrap();
     std::env::set_current_dir(dir.path()).unwrap();
