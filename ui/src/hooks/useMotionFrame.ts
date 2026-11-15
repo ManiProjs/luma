@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useStdout } from "ink";
 
 /** A lightweight frame clock for terminal-native motion. */
-export function useMotionFrame(active: boolean, frameDuration = 70): number {
+export function useMotionFrame(active: boolean, frameDuration = 1000 / 30): number {
   const { stdout } = useStdout();
   const [frame, setFrame] = useState(0);
   const enabled = active
@@ -15,7 +15,10 @@ export function useMotionFrame(active: boolean, frameDuration = 70): number {
       setFrame(0);
       return;
     }
-    const interval = setInterval(() => setFrame((current) => current + 1), frameDuration);
+    const startedAt = performance.now();
+    const interval = setInterval(() => {
+      setFrame(Math.floor((performance.now() - startedAt) / frameDuration));
+    }, frameDuration);
     return () => clearInterval(interval);
   }, [enabled, frameDuration]);
 

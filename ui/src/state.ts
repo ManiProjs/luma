@@ -39,6 +39,13 @@ export interface UiState {
   connectionError: string | null;
   messages: Message[];
   session: UiSessionInfo;
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    cost_usd_micros: number;
+  };
+  lastPromptTokens: number | null;
   status: Status;
   activeTool: string | null;
   confirmation: { name: string; input: string } | null;
@@ -67,6 +74,9 @@ export const initialState: UiState = {
     model: "unknown",
     tools: [],
   },
+
+  usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, cost_usd_micros: 0 },
+  lastPromptTokens: null,
 
   status: "idle",
   activeTool: null,

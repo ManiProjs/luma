@@ -1,20 +1,27 @@
 import { useEffect, useRef, useState } from "react";
 import { userError } from "./errors";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
+import type { DOMElement } from "ink";
 import { randomUUID } from "node:crypto";
 import { LumaClient } from "./client";
 import { startDesktopServer, stopDesktopServer } from "./server";
 import type { AgentConfiguration, AgentRecord, ClientMessage, RuntimeEvent, ServerEvent, TaskRecord } from "./protocol";
-import { Mascot } from "./components/Mascot";
 import { Markdown } from "./components/Markdown";
 import { theme } from "./theme";
 import { useMotionFrame } from "./hooks/useMotionFrame";
-import { usePulseColor } from "./hooks/usePulseColor";
+import { useTerminalMouse } from "./hooks/useTerminalMouse";
+import { useTerminalFullscreen } from "./hooks/useTerminalFullscreen";
 
 type RequestEvent = Extract<ServerEvent, { data: { request_id: string } }>;
 type View = "list" | "settings" | "chat";
 type SettingField = "personality" | "workspace" | "skills" | "mascot";
 type ChatLine = { id: string; role: "user" | "assistant" | "status" | "tool"; content: string };
+
+function TaskActivity({ taskId }: { taskId: string }) {
+  const frame = useMotionFrame(true);
+  const spinner = ["◐", "◓", "◑", "◒"][Math.floor(frame / 3) % 4];
+  return <Text color={theme.brand}>{spinner} Task running · {taskId.slice(0, 8)} · Ctrl+C cancels this task.</Text>;
+}
 
 function request<T extends RequestEvent["type"]>(
   client: LumaClient,
@@ -51,23 +58,40 @@ export function TeammatesManager() {
   const [editing, setEditing] = useState<SettingField | null>(null);
   const [editValue, setEditValue] = useState("");
   const [chatInput, setChatInput] = useState("");
+  const [chatOffset, setChatOffset] = useState(0);
   const [fullScreen, setFullScreen] = useState(false);
-  const [, refreshFullScreen] = useState(0);
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const sequence = useRef(0);
   const polling = useRef(false);
-  const motionFrame = useMotionFrame(Boolean(activeTaskId));
-  const activitySpinner = ["◐", "◓", "◑", "◒"][motionFrame % 4];
-  const activeBrand = usePulseColor(Boolean(activeTaskId), theme.brand, "#B4D3FF");
+  const rootElement = useRef<DOMElement>(null);
+  const agentRowElements = useRef<Array<DOMElement | null>>([]);
+  const chatAction = useRef<DOMElement>(null);
+  const settingsAction = useRef<DOMElement>(null);
+  const chatWindowSize = Math.max(5, (stdout.rows || 24) - 12);
+  const chatEnd = chatOffset > 0 ? Math.max(0, chatLines.length - chatOffset) : chatLines.length;
+  const visibleChatLines = chatLines.slice(Math.max(0, chatEnd - chatWindowSize), chatEnd);
+  const wideLayout = (stdout.columns || 80) >= 92;
+  useTerminalFullscreen(fullScreen);
 
-  useEffect(() => {
-    if (!fullScreen || !stdout.isTTY) return;
-    stdout.write("\u001B[?1049h\u001B[2J\u001B[H");
-    refreshFullScreen((value) => value + 1);
-    return () => { stdout.write("\u001B[?1049l"); };
-  }, [fullScreen, stdout]);
+  useTerminalMouse(rootElement, (event, contains) => {
+    if (event.action === "wheel" && view === "chat" && contains(rootElement.current)) {
+      setChatOffset((offset) => Math.max(0, Math.min(Math.max(0, chatLines.length - 1), offset + (event.wheelDirection === "down" ? -3 : 3))));
+      return;
+    }
+    if (event.action === "wheel" && view === "list" && contains(rootElement.current)) {
+      setSelected((index) => Math.max(0, Math.min(agents.length - 1, index + (event.wheelDirection === "down" ? 1 : -1) * 3)));
+      return;
+    }
+    if (event.action !== "press" || event.button !== 0 || busy) return;
+    if (view === "list") {
+      const row = agentRowElements.current.findIndex((element) => contains(element));
+      if (row >= 0) setSelected(row);
+      else if (contains(chatAction.current) && selectedAgent) { setChatLines([]); setView("chat"); }
+      else if (contains(settingsAction.current) && selectedAgent) setView("settings");
+    }
+  });
 
   const selectedAgent = agents[selected];
 
@@ -163,6 +187,7 @@ export function TeammatesManager() {
     const prompt = chatInput.trim();
     if (!agent || !prompt || busy || activeTaskId) return;
     setChatInput("");
+    setChatOffset(0);
     setChatLines((lines) => [...lines, { id: randomUUID(), role: "user", content: prompt }, { id: `pending-${Date.now()}`, role: "assistant", content: "Thinking…" }]);
     setBusy(true); setError("");
     try {
@@ -373,6 +398,10 @@ export function TeammatesManager() {
     if (view === "chat") {
       if ((key.ctrl || key.meta) && input.toLowerCase() === "c" && activeTaskId) { void cancelActiveTask(); return; }
       if (key.escape) { setView("list"); return; }
+      if (key.pageUp) { setChatOffset((offset) => Math.min(Math.max(0, chatLines.length - 1), offset + chatWindowSize)); return; }
+      if (key.pageDown) { setChatOffset((offset) => Math.max(0, offset - chatWindowSize)); return; }
+      if (key.end) { setChatOffset(0); return; }
+      if (key.home) { setChatOffset(Math.max(0, chatLines.length - 1)); return; }
       if (key.return) { void sendChat(); return; }
       if (key.backspace || key.delete) setChatInput((value) => value.slice(0, -1));
       else if (input && !key.ctrl && !key.meta) setChatInput((value) => value + input);
@@ -408,67 +437,66 @@ export function TeammatesManager() {
     </Box>;
   }
 
-  const rule = "─".repeat(Math.max(1, Math.min((stdout.columns || 72) - 4, 96)));
-  return <Box flexDirection="column" paddingX={1}>
-    <Box marginBottom={1} justifyContent="space-between">
-      <Box flexDirection="row" alignItems="center" gap={1}>
-        <Mascot seed="luma-crew" compact />
-        <Text bold color={activeBrand}>LUMA</Text><Text color={theme.chrome}>/</Text><Text bold>TEAMMATES</Text>
-        {view !== "list" ? <><Text color={theme.chrome}>/</Text><Text color={theme.muted}>{view.toUpperCase()}</Text></> : null}
-      </Box>
-      <Text color={connected ? theme.success : theme.warning}>{connected ? "● connected" : "○ connecting"}</Text>
+  return <Box ref={rootElement} flexDirection="column" width="100%" paddingX={fullScreen ? 2 : 1} height={fullScreen && stdout.isTTY ? Math.max(1, stdout.rows - 1) : undefined}>
+    <Box marginBottom={1} flexDirection="row" flexWrap="wrap" columnGap={1}>
+      <Text bold color={theme.brand}>Luma</Text><Text color={theme.chrome}>·</Text><Text color={theme.text}>Teammates</Text>
+      {view !== "list" ? <><Text color={theme.chrome}>·</Text><Text color={theme.muted}>{view}</Text></> : null}
+      <Text color={theme.chrome}>·</Text><Text color={connected ? theme.muted : theme.warning}>{connected ? "connected" : "connecting"}</Text>
+      {fullScreen ? <Text color={theme.brand}>· fullscreen</Text> : null}
     </Box>
-    <Text color={theme.chrome}>{rule}</Text>
 
-    {view === "list" ? <>
-      <Box marginTop={1} flexDirection="column">
-        <Box flexDirection="row" justifyContent="space-between"><Text color={theme.muted} bold>YOUR TEAMMATES</Text><Text color={theme.chrome}>{agents.length} total</Text></Box>
-        {agents.length === 0 ? <Text color={theme.muted}>No teammates yet. Create one with `luma teammates create &lt;name&gt;`.</Text> : agents.map((item, index) => <Box key={item.id} flexDirection="column" marginTop={1}>
-          <Box flexDirection="row" gap={1}><Text color={index === selected ? theme.brand : theme.chrome}>{index === selected ? "›" : " "}</Text><Mascot seed={item.name} compact /><Text color={index === selected ? "white" : theme.muted} bold={index === selected}>{item.name}</Text><Text color={theme.chrome}>· {item.status}</Text></Box>
-          {index === selected ? <Text color={theme.chrome}>  {item.kind} · {item.id === "agent_global" ? "protected global teammate" : "persistent agent"}</Text> : null}
+    {view === "list" ? <Box marginTop={1} flexDirection={wideLayout ? "row" : "column"} flexGrow={fullScreen ? 1 : 0} minHeight={0}>
+      <Box width={wideLayout ? "34%" : "100%"} paddingRight={wideLayout ? 2 : 0} flexDirection="column">
+        <Text color={theme.chrome}>{agents.length} teammates</Text>
+        {agents.length === 0 ? <Text color={theme.muted}>No teammates yet. Create one with `luma teammates create &lt;name&gt;`.</Text> : agents.map((item, index) => <Box key={item.id} ref={(element) => { agentRowElements.current[index] = element; }} flexDirection="column" marginTop={1}>
+          <Text color={index === selected ? theme.text : theme.muted}><Text color={index === selected ? theme.brand : theme.chrome}>{index === selected ? "› " : "  "}</Text>{item.name}<Text color={theme.chrome}>  {item.status === "idle" ? "" : `· ${item.status}`}</Text></Text>
         </Box>)}
       </Box>
-      {selectedAgent && <Box marginTop={1} flexDirection="column"><Text color={theme.chrome}>{rule}</Text><Box flexDirection="row" alignItems="center" gap={2}><Mascot seed={selectedAgent.name} /><Box flexDirection="column"><Text bold>{selectedAgent.name}</Text><Text color={theme.muted}>{selectedAgent.status} · {selectedAgent.kind}</Text></Box></Box><Text color={theme.muted}>{selectedAgent.description || "No description"}</Text><Text color={theme.muted}>Skills  {selectedAgent.configuration.skills.length ? selectedAgent.configuration.skills.join(", ") : "none attached"}</Text><Text color={theme.muted}>Workspace  {selectedAgent.configuration.workspace || "default"}</Text></Box>}
+      {selectedAgent ? <Box flexGrow={1} flexDirection="column" borderLeft={wideLayout} borderColor={theme.border} paddingLeft={wideLayout ? 2 : 0} marginTop={wideLayout ? 0 : 2}>
+        <Text bold color={theme.text}>{selectedAgent.name}</Text>
+        <Text color={theme.muted}>{selectedAgent.kind} · {selectedAgent.status}</Text>
+        <Text color={theme.secondary}>{selectedAgent.description || "No description"}</Text>
+        <Box marginTop={1} flexDirection="row" flexWrap="wrap" columnGap={1}><Text color={theme.chrome}>Skills</Text><Text color={theme.secondary}>{selectedAgent.configuration.skills.length ? selectedAgent.configuration.skills.join(", ") : "none"}</Text></Box>
+        <Box flexDirection="row" flexWrap="wrap" columnGap={1}><Text color={theme.chrome}>Workspace</Text><Text color={theme.secondary}>{selectedAgent.configuration.workspace || "default"}</Text></Box>
+        <Box flexDirection="row" gap={2} marginTop={1}><Box ref={chatAction}><Text color={theme.brand}>C chat</Text></Box><Box ref={settingsAction}><Text color={theme.brand}>E settings</Text></Box></Box>
+      </Box> : null}
       {confirmDelete && selectedAgent ? <Box marginTop={1}><Text color={theme.warning}>Delete {selectedAgent.name} and its dependent data? (y/N)</Text></Box> : null}
-      <Box marginTop={1}><Text color={theme.chrome}>{rule}</Text><Text color={theme.muted}>↑/↓ select  ·  C chat  ·  E settings  ·  D delete  ·  R refresh  ·  Ctrl+F full screen  ·  Q quit</Text></Box>
-    </> : null}
+    </Box> : null}
+    {!fullScreen && view === "list" ? <Box marginTop={1}><Text color={theme.chrome}>↑/↓ select · C chat · E settings · D delete · Q quit</Text></Box> : null}
 
-    {view === "settings" && selectedAgent ? <Box marginTop={1} flexDirection="column" gap={1}>
-      <Text bold color="white">{selectedAgent.name} settings</Text>
-      <Text color={theme.muted}>1  Personality / system instructions</Text>
+    {view === "settings" && selectedAgent ? <Box marginTop={1} flexDirection="column" gap={1} flexGrow={fullScreen ? 1 : 0} minHeight={0}>
+      <Text bold color={theme.text}>{selectedAgent.name} settings</Text>
+      <Text color={theme.muted}>1 · Personality</Text>
       <Text color={theme.chrome}>{selectedAgent.configuration.system_prompt || "Not configured"}</Text>
-      <Text color={theme.muted}>2  Workspace</Text><Text color={theme.chrome}>{selectedAgent.configuration.workspace || "Default workspace"}</Text>
-      <Text color={theme.muted}>3  Skills</Text><Text color={theme.chrome}>{selectedAgent.configuration.skills.join(", ") || "No skills attached"}</Text>
-      <Text color={theme.muted}>4  Mascot</Text><Text color={theme.chrome}>{selectedAgent.configuration.mascot || "auto"}</Text>
+      <Text color={theme.muted}>2 · Workspace</Text><Text color={theme.chrome}>{selectedAgent.configuration.workspace || "Default workspace"}</Text>
+      <Text color={theme.muted}>3 · Skills</Text><Text color={theme.chrome}>{selectedAgent.configuration.skills.join(", ") || "None"}</Text>
+      <Text color={theme.muted}>4 · Mascot</Text><Text color={theme.chrome}>{selectedAgent.configuration.mascot || "Auto"}</Text>
       <Text color={theme.muted}>G  Use global skills, memory, connectors, etc.  <Text color={selectedAgent.configuration.use_global_context ? theme.success : theme.warning}>{selectedAgent.configuration.use_global_context ? "ON" : "OFF"}</Text></Text>
       <Text color={theme.muted}>5  Internet access / web search  <Text color={(selectedAgent.configuration.network_access ?? true) ? theme.success : theme.warning}>{(selectedAgent.configuration.network_access ?? true) ? "ON" : "OFF"}</Text></Text>
-      {editing ? <Box marginTop={1} flexDirection="column"><Text color={theme.brand}>Editing {editing} · Enter saves · Esc cancels</Text><Text color="white">{editValue}▌</Text></Box> : null}
-      <Text color={theme.chrome}>{rule}</Text><Text color={theme.muted}>1–4 edit a setting  ·  G toggle global context  ·  5 toggle internet  ·  Esc back</Text>
+      {editing ? <Box marginTop={1} flexDirection="column"><Text color={theme.brand}>Editing {editing} · Enter saves · Esc cancels</Text><Text color={theme.text}>{editValue}▌</Text></Box> : null}
+      {!fullScreen ? <Text color={theme.chrome}>1–4 edit · G global context · 5 internet · Esc back</Text> : null}
     </Box> : null}
 
-    {view === "chat" && selectedAgent ? <Box marginTop={1} flexDirection="column">
-      <Box flexDirection="row" alignItems="center" gap={1}><Mascot seed={selectedAgent.name} compact /><Text bold>Chat with {selectedAgent.name}</Text><Text color={theme.muted}>· {selectedAgent.status}</Text></Box>
-      <Box marginTop={1} flexDirection="column" gap={1}>
-        {historyLoading ? <Text color={theme.muted}>Loading this teammate's history…</Text> : chatLines.length === 0 ? <Text color={theme.muted}>Send a message to start a task with this teammate.</Text> : chatLines.map((line) => line.role === "user" ? (
-          <Box key={line.id} flexDirection="row" justifyContent="flex-end" marginTop={1}>
-            <Box flexDirection="column" borderStyle="round" borderColor={theme.brand} paddingX={1}>
-              <Text color={theme.brand} bold>YOU</Text>
-              <Markdown content={line.content} />
-            </Box>
-          </Box>
+    {view === "chat" && selectedAgent ? <Box marginTop={1} flexDirection="column" flexGrow={fullScreen ? 1 : 0} minHeight={0}>
+      <Box flexDirection="row" alignItems="center" gap={1}><Text bold>{selectedAgent.name}</Text><Text color={theme.muted}>· {selectedAgent.status}</Text></Box>
+      <Box marginTop={1} flexDirection="column" gap={1} flexGrow={fullScreen ? 1 : 0} minHeight={0} overflow={fullScreen ? "hidden" : "visible"}>
+        {chatOffset > 0 ? <Text color={theme.chrome}>↑ Older messages · scroll down or press End for latest</Text> : null}
+        {historyLoading ? <Text color={theme.muted}>Loading this teammate's history…</Text> : chatLines.length === 0 ? <Text color={theme.muted}>Send a message to start a task with this teammate.</Text> : visibleChatLines.map((line) => line.role === "user" ? (
+          <Box key={line.id} flexDirection="row" marginTop={1}><Text color={theme.brand}>› </Text><Markdown content={line.content} /></Box>
         ) : <Box key={line.id} flexDirection="column" marginTop={1}>
-          <Text color={line.role === "status" ? theme.warning : line.role === "tool" ? theme.tool : theme.assistant ?? "white"} bold>{line.role === "status" ? "STATUS" : line.role === "tool" ? "TOOL" : selectedAgent.name.toUpperCase()}</Text>
-          <Box marginLeft={2}>{line.role === "tool" ? <Text color={theme.tool}>{line.content}</Text> : <Markdown content={line.content} />}</Box>
+          {line.role === "status" ? <Text color={theme.warning}>{line.content}</Text> : line.role === "tool" ? <Text color={theme.tool}>↳ {line.content}</Text> : <Markdown content={line.content} />}
         </Box>)}
       </Box>
-      {activeTaskId ? <Text color={theme.brand}>{activitySpinner} Task running · {activeTaskId.slice(0, 8)} · Ctrl+C cancels this task.</Text> : null}
-      <Box marginTop={1} borderStyle="round" borderColor={theme.brand} paddingX={1} flexDirection="column" width="100%">
-        <Text color={theme.brand} bold>MESSAGE</Text>
-        <Text color="white">{chatInput}▌</Text>
+      {activeTaskId ? <TaskActivity taskId={activeTaskId} /> : null}
+      <Box marginTop={1} flexDirection="row" width="100%">
+        <Text color={theme.brand}>› </Text><Text color={theme.text}>{chatInput}<Text color={theme.brand}>▏</Text></Text>
       </Box>
-      <Text color={theme.muted}>Enter send  ·  Ctrl+C cancel task  ·  Ctrl+F full screen  ·  Esc back</Text>
+      {!fullScreen ? <Text color={theme.chrome}>Enter send · Esc back{activeTaskId ? " · Ctrl+C cancel task" : ""}</Text> : null}
     </Box> : null}
 
     {error ? <Box marginTop={1}><Text color={theme.error}>{error}</Text></Box> : null}
+    {fullScreen ? <>
+      <Text color={theme.chrome}>{view === "list" ? "↑/↓ select · C chat · E settings · D delete · Q quit" : view === "settings" ? "1–4 edit · G global context · 5 internet · Esc back" : "Enter send · scroll history · Esc back"} · Ctrl+F exit fullscreen</Text>
+    </> : null}
   </Box>;
 }

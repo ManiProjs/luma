@@ -1,6 +1,6 @@
 import { marked, type Token, type Tokens } from "marked";
 import { Box, Text } from "ink";
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 
 import { theme } from "../theme";
 
@@ -21,7 +21,7 @@ function inline(tokens: InlineToken[], keyPrefix: string): ReactNode[] {
       case "del":
         return <Text key={key} strikethrough>{children(token.tokens, key)}</Text>;
       case "codespan":
-        return <Text key={key} color={theme.accent} backgroundColor={theme.codeBackground}> {token.text} </Text>;
+        return <Text key={key} color={theme.accent}>{token.text}</Text>;
       case "br":
         return <Text key={key}>{"\n"}</Text>;
       case "link":
@@ -46,14 +46,14 @@ function blocks(tokens: Token[], keyPrefix = "md"): ReactNode[] {
       case "space":
         return null;
       case "heading":
-        return <Box key={key} marginTop={index === 0 ? 0 : 1}><Text bold color={token.depth <= 2 ? theme.brand : "white"}>{children(token.tokens, key)}</Text></Box>;
+        return <Box key={key} marginTop={index === 0 ? 0 : 1}><Text bold color={theme.text}>{children(token.tokens, key)}</Text></Box>;
       case "paragraph":
         return <Box key={key}><Text>{children(token.tokens, key)}</Text></Box>;
       case "text":
         return <Box key={key}><Text>{"tokens" in token && token.tokens ? inline(token.tokens, key) : token.text}</Text></Box>;
       case "code":
-        return <Box key={key} flexDirection="column" marginY={1} paddingX={1} borderStyle="single" borderLeft borderColor={theme.chrome}>
-          {token.lang ? <Text color={theme.muted} dimColor>{token.lang.toUpperCase()}</Text> : null}
+        return <Box key={key} flexDirection="column" marginY={1} paddingLeft={1} borderLeft borderColor={theme.chrome}>
+          {token.lang ? <Text color={theme.chrome}>{token.lang}</Text> : null}
           <Text>{token.text}</Text>
         </Box>;
       case "blockquote":
@@ -69,7 +69,7 @@ function blocks(tokens: Token[], keyPrefix = "md"): ReactNode[] {
           </Box>)}
         </Box>;
       case "hr":
-        return <Box key={key} marginY={1}><Text color={theme.chrome}>────────────────────────────────</Text></Box>;
+        return <Box key={key} marginY={1}><Text color={theme.chrome}>────────</Text></Box>;
       case "table":
         const table = token as Tokens.Table;
         return <Box key={key} flexDirection="column" marginY={1}>
@@ -87,7 +87,7 @@ function blocks(tokens: Token[], keyPrefix = "md"): ReactNode[] {
   });
 }
 
-export function Markdown({ content }: { content: string }) {
+export const Markdown = memo(function Markdown({ content }: { content: string }) {
   const tokens = marked.lexer(content, { gfm: true, breaks: true });
   return <Box flexDirection="column">{blocks(tokens)}</Box>;
-}
+});

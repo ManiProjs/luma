@@ -1,8 +1,11 @@
 import { Box, Text, useInput } from "ink";
-import { useEffect, useMemo, useState } from "react";
+import type { DOMElement } from "ink";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { SupportedModel, SupportedProvider } from "../protocol";
 import { theme } from "../theme";
+import { useTerminalMouse } from "../hooks/useTerminalMouse";
+import { usePulseColor } from "../hooks/usePulseColor";
 
 type Props = {
   providers: SupportedProvider[];
@@ -30,6 +33,9 @@ export function ModelPicker({ providers, models, stage, loading, error, savedApi
   const [draftProvider, setDraftProvider] = useState<SupportedProvider | null>(null);
   const [pendingProvider, setPendingProvider] = useState<SupportedProvider | null>(null);
   const [search, setSearch] = useState("");
+  const selectedColor = usePulseColor(!loading, theme.accent, "#c0cee2");
+  const rootElement = useRef<DOMElement>(null);
+  const entryElements = useRef<Array<DOMElement | null>>([]);
 
   const entries = useMemo(() => {
     if (stage === "providers") {
@@ -50,6 +56,39 @@ export function ModelPicker({ providers, models, stage, loading, error, savedApi
   const visibleEntries = entries.slice(Math.max(0, Math.min(index - 6, entries.length - 12)), Math.max(12, index + 6));
 
   useEffect(() => { setIndex(0); setSearch(""); }, [stage]);
+
+  function activateEntry(selectedIndex: number) {
+    if (loading) return;
+    const selected = entries[selectedIndex];
+    if (!selected) return;
+    if (stage === "providers") {
+      if ("provider" in selected && selected.provider) {
+        if (selected.provider.requires_api_key && !savedApiKeys[selected.provider.id]) {
+          setPendingProvider(selected.provider);
+          setApiKey("");
+          setCustomStage("providerKey");
+        } else onSelectProvider(selected.provider);
+      } else setCustomStage("name");
+    } else if ("model" in selected && selected.model === null) return;
+    else if ("model" in selected && selected.model) onChooseModel(selected.model);
+    else setCustomStage("model");
+  }
+
+  useTerminalMouse(rootElement, (event, contains) => {
+    if (customStage) return;
+    if (event.action === "wheel" && contains(rootElement.current)) {
+      setIndex((value) => Math.max(0, Math.min(entries.length - 1, value + (event.wheelDirection === "down" ? 1 : -1) * 3)));
+      return;
+    }
+    if (event.action !== "press" || event.button !== 0) return;
+    const row = entryElements.current.findIndex((element) => contains(element));
+    if (row >= 0) {
+      const start = Math.max(0, Math.min(index - 6, entries.length - 12));
+      const selectedIndex = start + row;
+      setIndex(selectedIndex);
+      activateEntry(selectedIndex);
+    }
+  });
 
   useInput((input, key) => {
     if (/^\u001B?\[(?:<\d+;\d+;\d+[Mm]|\d+;\d+R)$/.test(input)) return;
@@ -113,44 +152,31 @@ export function ModelPicker({ providers, models, stage, loading, error, savedApi
     }
     if (key.upArrow) setIndex((value) => Math.max(0, value - 1));
     if (key.downArrow) setIndex((value) => Math.min(entries.length - 1, value + 1));
-    if (key.return && !loading) {
-      const selected = entries[index];
-      if (!selected) return;
-      if (stage === "providers") {
-        if ("provider" in selected && selected.provider) {
-          if (selected.provider.requires_api_key && !savedApiKeys[selected.provider.id]) {
-            setPendingProvider(selected.provider);
-            setApiKey("");
-            setCustomStage("providerKey");
-          } else onSelectProvider(selected.provider);
-        }
-        else setCustomStage("name");
-      } else if ("model" in selected && selected.model === null) return;
-      else if ("model" in selected && selected.model) onChooseModel(selected.model);
-      else setCustomStage("model");
-    }
+    if (key.return) activateEntry(index);
   });
 
   if (customStage) {
     const current = customStage === "name" ? name : customStage === "endpoint" ? endpoint : customStage === "key" ? apiKey : model;
     const prompt = customStage === "name" ? "Provider name" : customStage === "endpoint" ? "API base URL" : customStage === "key" ? "API key (optional)" : customStage === "providerKey" ? `API key for ${pendingProvider?.name ?? "provider"}` : customStage === "model" ? "Model ID" : "Save this provider for future use? (y/n)";
-    return <Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={1} marginY={1}>
+    return <Box flexDirection="column" marginY={1}>
       <Text bold color={theme.accent}>Custom provider</Text>
       <Text>{prompt}</Text>
-      <Text color="white">{customStage === "save" ? (save ? "Yes" : "No") : customStage === "key" || customStage === "providerKey" ? "•".repeat(apiKey.length) : current}<Text color={theme.accent}>▌</Text></Text>
-      <Text color="gray">Enter to continue · Esc to cancel</Text>
-      {customStage === "save" ? <Text color="gray">Press y or n, then Enter</Text> : null}
+      <Text color={theme.text}>{customStage === "save" ? (save ? "Yes" : "No") : customStage === "key" || customStage === "providerKey" ? "•".repeat(apiKey.length) : current}<Text color={theme.accent}>▌</Text></Text>
+      <Text color={theme.muted}>Enter to continue · Esc to cancel</Text>
+      {customStage === "save" ? <Text color={theme.muted}>Press y or n, then Enter</Text> : null}
     </Box>;
   }
 
-  return <Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={1} marginY={1}>
+  return <Box ref={rootElement} flexDirection="column" marginY={1}>
     <Text bold color={theme.accent}>{scope === "session" ? "Choose a session model" : stage === "providers" ? "Choose a provider" : "Choose a model"}</Text>
-    {stage === "models" ? <Text color="gray">Search: {search || "type to filter models"}</Text> : null}
-    {loading ? <Text color="gray">Loading…</Text> : visibleEntries.map((entry, visibleIndex) => {
+    {stage === "models" ? <Text color={theme.muted}>Search: {search || "type to filter models"}</Text> : null}
+    {loading ? <Text color={theme.muted}>Loading…</Text> : visibleEntries.map((entry, visibleIndex) => {
       const itemIndex = Math.max(0, Math.min(index - 6, entries.length - 12)) + visibleIndex;
-      return <Text key={entry.label} color={itemIndex === index ? theme.accent : "white"}>{itemIndex === index ? "› " : "  "}{entry.label}</Text>;
+      return <Box key={entry.label} ref={(element) => { entryElements.current[itemIndex] = element; }}>
+        <Text color={itemIndex === index ? selectedColor : theme.text}>{itemIndex === index ? "› " : "  "}{entry.label}</Text>
+      </Box>;
     })}
     {error ? <Text color="red">{error}</Text> : null}
-    <Text color="gray">{stage === "models" ? "Type to search · ↑/↓ navigate · Enter select · Esc close" : "↑/↓ navigate · Enter select · Esc close"}</Text>
+    <Text color={theme.muted}>{stage === "models" ? "Type to search · ↑/↓ navigate · scroll or click · Enter select · Esc close" : "↑/↓ navigate · scroll or click · Enter select · Esc close"}</Text>
   </Box>;
 }

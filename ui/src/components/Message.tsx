@@ -1,22 +1,31 @@
 import { Box, Text } from "ink";
+import { memo } from "react";
 
 import type { Message as MessageType } from "../state";
 import { glyphs, theme } from "../theme";
 import { Markdown } from "./Markdown";
-import { useSpinner } from "../hooks/useSpinner";
+import { useMotionFrame } from "../hooks/useMotionFrame";
+import { pulseColorAtFrame } from "../hooks/usePulseColor";
+import { spinnerAtFrame } from "../hooks/useSpinner";
 
 type Props = {
   message: MessageType;
   running?: boolean;
+  streaming?: boolean;
 };
 
-export function Message({ message, running = false, detailsExpanded = false }: Props & { detailsExpanded?: boolean }) {
-  const spinner = useSpinner(message.role === "tool" && running);
+export const Message = memo(function Message({ message, running = false, streaming = false, detailsExpanded = false }: Props & { detailsExpanded?: boolean }) {
+  const animated = streaming || (message.role === "tool" && running);
+  const motionFrame = useMotionFrame(animated);
+  const spinner = animated && message.role === "tool" && running ? spinnerAtFrame(motionFrame) : "";
+  const toolColor = running ? pulseColorAtFrame(motionFrame, theme.brand, "#c0cee2") : theme.chrome;
   if (message.role === "user") {
     return (
       <Box flexDirection="column" marginTop={1}>
-        <Text color={theme.brand} bold>YOU</Text>
-        <Box marginLeft={2} marginTop={0}>
+        <Box flexDirection="row" alignItems="center" marginBottom={0}>
+          <Text color={theme.secondary} bold>You</Text>
+        </Box>
+        <Box paddingLeft={1} borderLeft borderColor={theme.border}>
           <Markdown content={message.content} />
         </Box>
       </Box>
@@ -26,10 +35,8 @@ export function Message({ message, running = false, detailsExpanded = false }: P
   if (message.role === "assistant") {
     return (
       <Box flexDirection="column" marginTop={1}>
-        <Text color={theme.assistant ?? "white"} bold>LUMA</Text>
-        <Box marginLeft={2} marginTop={0}>
-          <Markdown content={message.content} />
-        </Box>
+        <Markdown content={message.content} />
+        {streaming && Math.floor(motionFrame / 15) % 2 === 0 ? <Text color={theme.brand}>▍</Text> : null}
       </Box>
     );
   }
@@ -37,11 +44,11 @@ export function Message({ message, running = false, detailsExpanded = false }: P
   if (message.role === "tool") {
     const [heading, ...details] = message.content.split("\n");
     return (
-      <Box marginLeft={2} marginTop={1} flexDirection="column">
+      <Box marginLeft={1} marginTop={1} flexDirection="column">
         <Box flexDirection="row" alignItems="center">
-          <Text color={running ? theme.brand : theme.chrome}>{glyphs.tool} </Text>
+          <Text color={running ? toolColor : theme.chrome}>{glyphs.tool} </Text>
           <Box flexGrow={1} marginLeft={1}>
-            <Text color={running ? "white" : theme.muted} bold={running}>
+            <Text color={running ? theme.text : theme.muted} bold={running}>
               {running ? spinner : ""} {heading}
             </Text>
           </Box>
@@ -65,9 +72,8 @@ export function Message({ message, running = false, detailsExpanded = false }: P
   if (message.role === "preview") {
     const [path, ...diff] = message.content.split("\n");
     return (
-      <Box flexDirection="column" marginTop={1} marginLeft={2} paddingLeft={1} borderStyle="round" borderColor={theme.warning}>
-        <Text color={theme.warning} bold>{"  "}PROPOSED CHANGE</Text>
-        <Text color={theme.muted} italic>{"  "}{path}</Text>
+      <Box flexDirection="column" marginTop={1} marginLeft={1} paddingLeft={1} borderLeft borderColor={theme.warning}>
+        <Text color={theme.warning} bold>Proposed change · {path}</Text>
         <Box marginTop={1} flexDirection="column" marginLeft={1}>
           {diff.map((line, index) => (
             <Text
@@ -101,4 +107,4 @@ export function Message({ message, running = false, detailsExpanded = false }: P
       <Text>{message.content}</Text>
     </Box>
   );
-}
+});

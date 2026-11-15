@@ -5,6 +5,7 @@ import { useEffect, useState, type RefObject } from "react";
 import { glyphs, theme } from "../theme";
 import { PromptHeader } from "./PromptHeader";
 import { usePulseColor } from "../hooks/usePulseColor";
+import { useMotionFrame } from "../hooks/useMotionFrame";
 
 import type { Status } from "../state";
 import type { ChatAttachment } from "../../../shared/attachments";
@@ -12,8 +13,8 @@ import type { ChatAttachment } from "../../../shared/attachments";
 type Props = {
   status: Status;
   activeTool: string | null;
-  toolCalls: number;
-  turns: number;
+  usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number; cost_usd_micros: number };
+  lastPromptTokens: number | null;
   value: string;
   onChange: (value: string) => void;
   onSubmit: () => void;
@@ -72,8 +73,8 @@ const COMMANDS = [
 export function Composer({
   status,
   activeTool,
-  toolCalls,
-  turns,
+  usage,
+  lastPromptTokens,
   value,
   onChange,
   onSubmit,
@@ -98,7 +99,10 @@ export function Composer({
   const suggestions = !question && commandPrefix.startsWith("/")
     ? COMMANDS.filter(([command]) => command.startsWith(commandPrefix.toLowerCase()))
     : [];
-  const selectedCommandColor = usePulseColor(suggestions.length > 0, theme.brand, "#B5D2FF");
+  const selectedCommandColor = usePulseColor(suggestions.length > 0, theme.brand, "#B4CFFF");
+  const approvalColor = usePulseColor(Boolean(confirmation), theme.warning, "#f0d69b");
+  const questionColor = usePulseColor(Boolean(question), theme.brand, "#c0cee2");
+  const cursorFrame = useMotionFrame(!disabled, 500);
   const suggestionWindowSize = 7;
   const suggestionStart = Math.max(0, Math.min(selectedSuggestion - 2, suggestions.length - suggestionWindowSize));
   const visibleSuggestions = suggestions.slice(suggestionStart, suggestionStart + suggestionWindowSize);
@@ -149,10 +153,11 @@ export function Composer({
       return;
     }
     if (key.tab && suggestions.length > 0) {
-      const suggestion = suggestions[selectedSuggestion];
+      const suggestion = suggestions[selectedSuggestion]?.[0];
       if (!suggestion) return;
-      onChange(value.slice(0, cursor - commandPrefix.length) + suggestion + value.slice(cursor));
-      setCursor(suggestion.length);
+      const replacementStart = cursor - commandPrefix.length;
+      onChange(value.slice(0, replacementStart) + suggestion + value.slice(cursor));
+      setCursor(replacementStart + suggestion.length);
       setSelectedSuggestion(0);
       return;
     }
@@ -211,11 +216,12 @@ export function Composer({
 
   const beforeCursor = value.slice(0, cursor);
   const afterCursor = value.slice(cursor);
+  const draftTokensEstimate = Math.ceil((value.length + attachments.reduce((total, attachment) => total + attachment.content.length, 0)) / 4);
 
   return (
-    <Box flexDirection="column" marginTop={1}>
+    <Box flexDirection="column" width="100%" marginTop={1}>
       {suggestions.length > 0 ? <Box flexDirection="column" marginBottom={1}>
-        <Text color={theme.chrome}>COMMANDS {selectedSuggestion + 1}/{suggestions.length}  ·  Tab complete  ·  ↑/↓ scroll</Text>
+        <Text color={theme.chrome}>Commands · Tab to complete</Text>
         {visibleSuggestions.map(([command, description], index) => {
           const absoluteIndex = suggestionStart + index;
           return (
@@ -229,39 +235,43 @@ export function Composer({
         })}
         {suggestionStart > 0 || suggestionStart + visibleSuggestions.length < suggestions.length ? <Text color={theme.chrome}>  {suggestionStart > 0 ? "↑ more" : ""}{suggestionStart > 0 && suggestionStart + visibleSuggestions.length < suggestions.length ? "  ·  " : ""}{suggestionStart + visibleSuggestions.length < suggestions.length ? "↓ more" : ""}</Text> : null}
       </Box> : null}
-      {confirmation ? <Box flexDirection="column" borderStyle="single" borderLeft borderColor={theme.warning} paddingLeft={1} marginBottom={1}>
-        <Text color={theme.warning} bold>Approval required  ·  {confirmation.name}</Text>
+      {confirmation ? <Box flexDirection="column" borderStyle="single" borderLeft borderColor={approvalColor} paddingLeft={1} marginBottom={1}>
+        <Text color={approvalColor} bold>◆ Approval required  ·  {confirmation.name}</Text>
         {confirmation.name !== "apply_changes" && confirmation.name !== "approve_plan" ? <Text>{confirmation.input}</Text> : null}
         <Text color={theme.muted}>{confirmation.name === "apply_changes" ? "Review the diff above" : confirmation.name === "approve_plan" ? "Review the plan above" : "Review this action"}  ·  Y approve  ·  N reject</Text>
       </Box> : null}
       {question ? <Box flexDirection="column" borderStyle="single" borderLeft borderColor={theme.brand} paddingLeft={1} marginBottom={1}>
-        <Text color={theme.brand} bold>Question from Luma</Text>
+        <Text color={questionColor} bold>◆ Question from Luma</Text>
         <Text>{question.prompt}</Text>
         {question.choices.length > 0 ? <Text color={theme.muted}>Options: {question.choices.join("  ·  ")}</Text> : null}
         <Text color={theme.muted}>Type your answer and press Enter  ·  Esc/Ctrl+C cancel request</Text>
       </Box> : null}
-      <PromptHeader status={status} activeTool={activeTool} toolCalls={toolCalls} turns={turns} />
+      <Box marginTop={1} flexDirection="row" width="100%" alignItems="center">
+        <PromptHeader status={status} activeTool={activeTool} usage={usage} lastPromptTokens={lastPromptTokens} draftTokensEstimate={draftTokensEstimate} />
+      </Box>
 
-      {attachments.length > 0 ? <Box flexDirection="row" marginTop={1}>
-        {attachments.map((attachment, index) => <Box key={`${attachment.name}-${index}`} marginRight={1}>
-          <Text color={theme.chrome}>[{attachment.name}]</Text>
-        </Box>)}
-      </Box> : null}
       {attachmentError ? <Text color={theme.error}>{attachmentError}</Text> : null}
 
-      <Box marginTop={1} flexDirection="row" alignItems="center">
-        <Box ref={attachmentTriggerRef} borderStyle="single" borderColor={theme.chrome} paddingX={1} marginRight={1}>
-          <Text color={theme.muted}>+</Text>
-        </Box>
-        {attachmentMode ? <Text color={theme.warning}>Attach workspace file path: </Text> : <Text color={theme.accent} bold>{glyphs.input}{" "}</Text>}
-
-        <Text>
+      <Box width="100%" marginTop={1} borderStyle="round" borderColor={confirmation ? theme.warning : theme.border} paddingX={1} paddingY={0} flexDirection="column">
+        <Box flexDirection="row" alignItems="center">
+          <Box ref={attachmentTriggerRef} marginRight={1}>
+            <Text color={theme.chrome}>+</Text>
+          </Box>
+          {attachmentMode ? <Text color={theme.warning}>Attach file: </Text> : <Text color={theme.brand} bold>{glyphs.input}{" "}</Text>}
+          <Text>
           {beforeCursor}
-          <Text color={theme.accent} bold>▏</Text>
-          {afterCursor}
-        </Text>
+          {cursorFrame % 2 === 0 ? <Text color={theme.brand} bold>▏</Text> : <Text> </Text>}
+            {afterCursor}
+          </Text>
+        </Box>
+        {attachments.length > 0 ? <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
+          {attachments.map((attachment, index) => <Text key={`${attachment.name}-${index}`} color={theme.muted}>▧ {attachment.name} <Text color={theme.chrome}>⌫</Text></Text>)}
+        </Box> : null}
       </Box>
-      <Text color={theme.chrome}>{question ? "Enter answer  ·  Esc/Ctrl+C cancel request" : attachmentMode ? "Enter attach  ·  Esc cancel  ·  path relative to workspace" : status === "cancelling" ? "Waiting for cancellation…" : status === "thinking" || status === "working" || status === "streaming" || status === "waiting" ? "Esc/Ctrl+C cancel request  ·  /cancel" : "Enter send  ·  + attach file  ·  Ctrl+X remove last file  ·  Ctrl+G model  ·  Ctrl+F full screen"}</Text>
+      <Box width="100%" marginTop={0} flexDirection="row" justifyContent="space-between" flexWrap="wrap">
+        <Text color={theme.chrome}>{question ? "Enter to answer · Esc to cancel" : attachmentMode ? "Enter to attach · Esc to cancel" : status === "cancelling" ? "Cancelling…" : status === "thinking" || status === "working" || status === "streaming" || status === "waiting" ? "Esc to stop" : "Enter to send"}</Text>
+        <Text color={theme.chrome}>{"/ commands  ·  Ctrl+G model  ·  Ctrl+F fullscreen"}</Text>
+      </Box>
     </Box>
   );
 }

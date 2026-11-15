@@ -191,6 +191,8 @@ export function useSession(initialSetup = false) {
         setState((current) => ({
           ...current,
           session: event.data.session.info,
+          usage: event.data.session.usage,
+          lastPromptTokens: null,
           messages: event.data.session.messages.map((message) => ({
             id: crypto.randomUUID(),
             role: message.role,
@@ -204,6 +206,19 @@ export function useSession(initialSetup = false) {
         break;
 
       case "agent":
+        if (event.data.event.type === "Usage") {
+          const usage = event.data.event.data;
+          setState((current) => ({
+            ...current,
+            lastPromptTokens: usage.prompt_tokens,
+            usage: {
+              prompt_tokens: current.usage.prompt_tokens + usage.prompt_tokens,
+              completion_tokens: current.usage.completion_tokens + usage.completion_tokens,
+              total_tokens: current.usage.total_tokens + usage.total_tokens,
+              cost_usd_micros: current.usage.cost_usd_micros + Math.round(usage.cost_usd * 1_000_000),
+            },
+          }));
+        }
         handleAgentEvent(event.data.event);
         break;
 

@@ -1,4 +1,4 @@
-import { Box, Text, measureElement, useApp, useInput, useStdin, useStdout } from "ink";
+import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { userError } from "./errors";
 import type { DOMElement } from "ink";
 import { useEffect, useRef, useState } from "react";
@@ -10,9 +10,10 @@ import { useSession } from "./session";
 import { Message } from "./components/Message";
 import { Composer } from "./components/Composer";
 import { Header } from "./components/Header";
-import { Mascot } from "./components/Mascot";
 import { ModelPicker } from "./components/ModelPicker";
 import { theme } from "./theme";
+import { useTerminalMouse } from "./hooks/useTerminalMouse";
+import { useTerminalFullscreen } from "./hooks/useTerminalFullscreen";
 import { formatChatPrompt, type ChatAttachment } from "../../shared/attachments";
 
 export function App({ initialSetup = false }: { initialSetup?: boolean }) {
@@ -25,15 +26,16 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
   const [attachmentMode, setAttachmentMode] = useState(false);
   const [attachmentError, setAttachmentError] = useState("");
   const [fullScreen, setFullScreen] = useState(false);
-  const [, refreshFullScreen] = useState(0);
+  const [transcriptOffset, setTranscriptOffset] = useState(0);
   const rootElement = useRef<DOMElement>(null);
   const toolActivityTriggers = useRef<Array<{ id: string; element: DOMElement }>>([]);
   toolActivityTriggers.current = [];
   const attachmentTrigger = useRef<DOMElement>(null);
-  const terminalOriginRow = useRef(0);
-  const { isRawModeSupported } = useStdin();
   const { stdout } = useStdout();
   const recentMessages = state.messages;
+  const messageWindowSize = Math.max(5, (stdout.rows || 24) - 12);
+  const messageEnd = transcriptOffset > 0 ? Math.max(0, recentMessages.length - transcriptOffset) : recentMessages.length;
+  const visibleMessages = recentMessages.slice(Math.max(0, messageEnd - messageWindowSize), messageEnd);
   const hasConversation = state.messages.some(
     (message) => message.role !== "system",
   );
@@ -41,6 +43,10 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
   useEffect(() => {
     if (!state.question) setInput("");
   }, [state.question]);
+
+  useEffect(() => {
+    if (recentMessages.length === 0) setTranscriptOffset(0);
+  }, [recentMessages.length]);
 
   useInput((input, key) => {
     if ((key.ctrl || key.meta) && input.toLowerCase() === "c") {
@@ -65,60 +71,32 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
       }));
       return;
     }
-    // Ink strips the leading ESC from unknown CSI sequences before dispatching
-    // them to useInput handlers.
-    const cursorReport = /^\u001B?\[(\d+);(\d+)R$/.exec(input);
-    if (cursorReport) {
-      const rootHeight = rootElement.current ? measureElement(rootElement.current).height : 0;
-      terminalOriginRow.current = stdout.isTTY && rootHeight >= stdout.rows
-        ? 0
-        : Math.max(0, Number(cursorReport[1]) - rootHeight - 1);
+    if (!state.modelPicker && key.end) { setTranscriptOffset(0); return; }
+    if (!state.modelPicker && key.home) { setTranscriptOffset(Math.max(0, recentMessages.length - 1)); return; }
+    if (!state.modelPicker && key.pageUp) { setTranscriptOffset((offset) => Math.min(Math.max(0, recentMessages.length - 1), offset + messageWindowSize)); return; }
+    if (!state.modelPicker && key.pageDown) { setTranscriptOffset((offset) => Math.max(0, offset - messageWindowSize)); return; }
+  });
+
+  useTerminalMouse(rootElement, (event, contains) => {
+    if (event.action === "wheel") {
+      if (state.modelPicker || !contains(rootElement.current)) return;
+      setTranscriptOffset((offset) => Math.max(0, Math.min(Math.max(0, recentMessages.length - 1), offset + (event.wheelDirection === "down" ? -3 : 3))));
       return;
     }
-
-    const match = /^\u001B?\[<(\d+);(\d+);(\d+)([Mm])$/.exec(input);
-    if (!match || match[4] !== "M" || Number(match[1]) !== 0) return;
-    const x = Number(match[2]) - 1;
-    const y = Number(match[3]) - 1 - terminalOriginRow.current;
-    const hit = (element: DOMElement | null) => {
-      if (!element) return false;
-      let top = 0;
-      let left = 0;
-      for (let node: DOMElement | undefined = element; node; node = node.parentNode) {
-        top += node.yogaNode?.getComputedTop() ?? 0;
-        left += node.yogaNode?.getComputedLeft() ?? 0;
-      }
-      const { width, height } = measureElement(element);
-      return x >= left && x < left + width && y >= top && y < top + height;
-    };
-    const toolTrigger = toolActivityTriggers.current.find(({ element }) => hit(element));
+    if (event.action !== "press" || event.button !== 0) return;
+    const toolTrigger = toolActivityTriggers.current.find(({ element }) => contains(element));
     if (toolTrigger) setExpandedToolGroups((current) => ({
       ...current,
       [toolTrigger.id]: !(current[toolTrigger.id] ?? false),
     }));
-    else if (hit(attachmentTrigger.current)) {
+    else if (contains(attachmentTrigger.current)) {
       setAttachmentMode(true);
       setAttachmentError("");
       setInput("");
     }
   });
 
-  useEffect(() => {
-    if (!isRawModeSupported || !stdout.isTTY) return;
-    stdout.write("\u001B[?1000h\u001B[?1006h\u001B[6n");
-    return () => {
-      stdout.write("\u001B[?1000l\u001B[?1006l");
-    };
-  }, [isRawModeSupported, stdout]);
-
-  useEffect(() => {
-    if (!fullScreen || !stdout.isTTY) return;
-    stdout.write("\u001B[?1049h\u001B[2J\u001B[H");
-    refreshFullScreen((value) => value + 1);
-    return () => {
-      stdout.write("\u001B[?1049l");
-    };
-  }, [fullScreen, stdout]);
+  useTerminalFullscreen(fullScreen);
 
   async function attachFile(pathInput: string) {
     try {
@@ -157,8 +135,8 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
   }
 
   return (
-    <Box ref={rootElement} flexDirection="column" paddingX={1}>
-      <Header session={state.session} />
+    <Box ref={rootElement} flexDirection="column" width="100%" paddingX={fullScreen ? 2 : 1} height={fullScreen && stdout.isTTY ? Math.max(1, stdout.rows - 1) : undefined}>
+      <Header session={state.session} fullScreen={fullScreen} />
 
       {state.modelPicker ? <ModelPicker
         providers={state.modelPicker.providers}
@@ -173,53 +151,47 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
         onClose={closeModelPicker}
       /> : null}
 
-      <Box flexDirection="column">
+      <Box flexDirection="column" width="100%" flexGrow={fullScreen ? 1 : 0} minHeight={0} overflow={fullScreen ? "hidden" : "visible"}>
         {!hasConversation ? (
-          <Box flexDirection="row" alignItems="flex-start" marginTop={2} marginBottom={1} gap={1}>
-            <Box marginTop={0}>
-              <Mascot compact />
-            </Box>
-            <Box flexDirection="column" flexGrow={1}>
-              <Text color="white" bold>What are we working on?</Text>
-              <Text color={theme.muted}>Ask Luma to explore, explain, or change this codebase.</Text>
-              <Box marginTop={1} flexDirection="column" gap={0}>
-                <Text color={theme.chrome}>A few ways to get started</Text>
-                <Text><Text color={theme.brand}>›</Text> Find a bug or explain unfamiliar code</Text>
-                <Text><Text color={theme.brand}>›</Text> Build a feature or refactor a module</Text>
-                <Text><Text color={theme.brand}>›</Text> Run checks and investigate a failure</Text>
-              </Box>
-            </Box>
+          <Box flexDirection="column" marginTop={2} marginBottom={1}>
+            <Text color={theme.text} bold>What are we working on?</Text>
+            <Text color={theme.muted}>Ask Luma to explore, explain, or change this codebase.</Text>
           </Box>
         ) : null}
-        {recentMessages.map((message, index) => {
+        {transcriptOffset > 0 ? <Text color={theme.chrome}>↑ Viewing older messages · scroll down or press End for latest</Text> : null}
+        {visibleMessages.map((message, index) => {
           if (message.role === "tool") {
-            if (recentMessages[index - 1]?.role === "tool") return null;
-            const group = recentMessages.slice(index).filter((item, offset, all) => offset === 0 || all.slice(0, offset).every((entry) => entry.role === "tool"))
+            if (visibleMessages[index - 1]?.role === "tool") return null;
+            const group = visibleMessages.slice(index).filter((item, offset, all) => offset === 0 || all.slice(0, offset).every((entry) => entry.role === "tool"))
               .filter((item) => item.role === "tool");
             const expanded = expandedToolGroups[message.id] ?? false;
             return <Box key={`tool-group-${message.id}`} flexDirection="column" marginTop={1}>
               <Box ref={(element) => { if (element) toolActivityTriggers.current.push({ id: message.id, element }); }}>
-                <Text color={theme.muted} bold>{expanded ? "⌄" : "›"} {group.length} tool{group.length === 1 ? "" : "s"} ran · click or Cmd/Ctrl+O</Text>
+                <Text color={theme.chrome}>{expanded ? "⌄" : "›"} {group.length} tool{group.length === 1 ? "" : "s"} · Cmd/Ctrl+O for details</Text>
               </Box>
               {expanded ? group.map((tool) => <Message key={tool.id} message={tool} running={tool.content.startsWith(`${state.activeTool}:`)} />) : null}
             </Box>;
           }
-          return <Message key={message.id} message={message} detailsExpanded={false} />;
+          const isStreamingMessage = message.role === "assistant"
+            && state.status === "streaming"
+            && message.id === recentMessages[recentMessages.length - 1]?.id;
+          return <Message key={message.id} message={message} streaming={isStreamingMessage} detailsExpanded={false} />;
         })}
       </Box>
 
+      <Box width="100%" marginTop={1}>
       <Composer
         disabled={Boolean(state.modelPicker)}
         status={state.status}
         activeTool={state.activeTool}
+        usage={state.usage}
+        lastPromptTokens={state.lastPromptTokens}
         confirmation={state.confirmation}
         onConfirm={(allowed) => confirm(allowed)}
         question={state.question}
         onAnswer={answerQuestion}
         onCancelQuestion={cancel}
         onCancelRequest={cancel}
-        toolCalls={state.messages.filter((message) => message.role === "tool").length}
-        turns={state.messages.filter((message) => message.role === "user").length}
         value={input}
         onChange={setInput}
         onOpenModelPicker={openModelPicker}
@@ -240,11 +212,14 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
             return;
           }
           if (!input.trim() && attachments.length === 0) return;
+          setTranscriptOffset(0);
           send(formatChatPrompt(input.trim() || "Please inspect the attached files.", attachments));
           setInput("");
           setAttachments([]);
         }}
       />
+      </Box>
+      {fullScreen ? <Text color={theme.chrome}>FULL SCREEN  ·  Ctrl+F to return  ·  scroll to browse history</Text> : null}
     </Box>
   );
 }
