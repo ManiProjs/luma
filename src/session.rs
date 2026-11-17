@@ -78,6 +78,9 @@ pub enum AgentCommand {
     /// Submit a line of user input. May be a slash command.
     Submit(String),
 
+    /// Compact older model-context entries without creating a user turn.
+    CompactContext,
+
     /// Answer a pending [`AgentEvent::ConfirmationRequired`].
     Confirm { allowed: bool },
 
@@ -355,6 +358,7 @@ pub struct Session {
     last_event: Option<AgentEvent>,
     pending: Option<Pending>,
     chat_id: String,
+    title: Option<String>,
     summary: Option<String>,
     #[cfg(not(test))]
     chat_created_at: u64,
@@ -391,6 +395,7 @@ impl Session {
             last_event: None,
             pending: None,
             chat_id: crate::chats::new_id(),
+            title: None,
             summary: None,
             #[cfg(not(test))]
             chat_created_at: std::time::SystemTime::now()
@@ -423,6 +428,53 @@ impl Session {
 
     pub fn state(&self) -> &SessionState {
         &self.state
+    }
+
+    /// Execute a mutating command-palette action through the same session
+    /// semantics used by slash commands. The caller owns transport replies.
+    pub async fn apply_run_command(&mut self, id: &str, query: Option<&str>) -> Result<String> {
+        match id {
+            "history_delete" => {
+                let chat_id = query
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("history deletion requires a conversation ID")
+                    })?;
+                self.submit(format!("/history delete {}", chat_id.trim()))?;
+            }
+            "history_prune" => {
+                if query.map(str::trim) != Some("confirm") {
+                    anyhow::bail!("type confirm to permanently prune saved conversations");
+                }
+                self.submit("/history prune".into())?;
+            }
+            "summary" => {
+                #[derive(serde::Deserialize)]
+                struct SummaryRequest {
+                    id: String,
+                    summary: String,
+                }
+                let request: SummaryRequest = serde_json::from_str(query.ok_or_else(|| {
+                    anyhow::anyhow!("summary update requires an ID and summary")
+                })?)?;
+                if request.id != self.chat_id {
+                    anyhow::bail!("summary can only be updated for the active conversation");
+                }
+                self.save_summary(&request.summary)?;
+            }
+            "rename" => {
+                let title = query.unwrap_or_default();
+                self.rename_active_conversation(title);
+            }
+            _ => anyhow::bail!("unsupported session RunCommand: {id}"),
+        }
+
+        Ok(self
+            .state
+            .messages
+            .last()
+            .map(|message| message.content.clone())
+            .unwrap_or_default())
     }
 
     pub fn request_cancellation(&self) -> RequestCancellation {
@@ -462,6 +514,8 @@ impl Session {
     pub async fn apply(&mut self, command: AgentCommand) -> Result<Option<String>> {
         match command {
             AgentCommand::Submit(text) => self.submit(text),
+
+            AgentCommand::CompactContext => self.submit_compact(),
 
             AgentCommand::Confirm { allowed } => {
                 self.confirm(allowed).await?;
@@ -519,6 +573,10 @@ impl Session {
             return Ok(None);
         }
 
+        if text.eq_ignore_ascii_case("/compact") {
+            return self.submit_compact();
+        }
+
         if text == "/history" || text == "/history list" {
             let output = crate::chats::list()?
                 .into_iter()
@@ -535,34 +593,7 @@ impl Session {
         }
 
         if text == "/history prune" {
-            if self.state.busy {
-                self.push_system("Cancel the current request before pruning saved chats.");
-            } else {
-                match crate::chats::prune() {
-                    Ok(removed) => {
-                        self.state.messages.clear();
-                        self.state.input_history.clear();
-                        self.state.fresh = true;
-                        self.state.status = DEFAULT_STATUS.into();
-                        self.chat_id = crate::chats::new_id();
-                        self.summary = None;
-                        #[cfg(not(test))]
-                        {
-                            self.chat_created_at = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs();
-                        }
-                        self.push_system(format!(
-                            "Permanently removed {removed} saved chat{} and started a fresh conversation.",
-                            if removed == 1 { "" } else { "s" }
-                        ));
-                    }
-                    Err(error) => {
-                        self.push_system(format!("Could not prune saved chats: {error:#}"))
-                    }
-                }
-            }
+            self.prune_history_with(crate::chats::prune);
             return Ok(None);
         }
 
@@ -614,6 +645,17 @@ impl Session {
                 self.info.workspace,
                 self.state.messages.len(),
                 if self.state.busy { "running" } else { "idle" },
+            ));
+            return Ok(None);
+        }
+
+        if text == "/usage" {
+            self.push_system(format!(
+                "Session usage\nPrompt: {} tokens\nCompletion: {} tokens\nTotal: {} tokens\nEstimated cost: ${:.6}",
+                self.state.usage.prompt_tokens,
+                self.state.usage.completion_tokens,
+                self.state.usage.total_tokens,
+                self.state.usage.cost_usd_micros as f64 / 1_000_000.0,
             ));
             return Ok(None);
         }
@@ -909,6 +951,7 @@ impl Session {
             self.last_event = None;
             self.pending = None;
             self.chat_id = archive.id;
+            self.title = archive.title;
             self.summary = archive.summary;
             #[cfg(not(test))]
             {
@@ -921,11 +964,17 @@ impl Session {
             return Ok(None);
         }
 
+        if let Some(title) = text.strip_prefix("/rename ") {
+            self.rename_active_conversation(title);
+            return Ok(None);
+        }
+        if text == "/rename" {
+            self.rename_active_conversation("");
+            return Ok(None);
+        }
+
         if let Some(summary) = text.strip_prefix("/summary:add ") {
-            crate::chats::add_summary(&self.chat_id, summary.to_owned())?;
-            self.summary = Some(summary.trim().to_owned());
-            self.push_system("Summary saved for this chat.");
-            self.persist();
+            self.save_summary(summary)?;
             return Ok(None);
         }
         if text == "/summary:add" {
@@ -948,6 +997,7 @@ impl Session {
                 self.state.fresh = true;
                 self.state.status = DEFAULT_STATUS.into();
                 self.chat_id = crate::chats::new_id();
+                self.title = None;
                 self.summary = None;
                 #[cfg(not(test))]
                 {
@@ -1001,6 +1051,17 @@ impl Session {
         self.persist();
 
         Ok(Some(text))
+    }
+
+    fn submit_compact(&mut self) -> Result<Option<String>> {
+        if self.state.busy || self.state.confirmation.is_some() || self.state.question.is_some() {
+            anyhow::bail!("resolve or cancel the active request before compacting its context");
+        }
+        self.cancel.reset();
+        self.state.busy = true;
+        self.state.status = BUSY_STATUS.into();
+        self.started_at = Some(Instant::now());
+        Ok(Some("\0LUMA_COMPACT".into()))
     }
 
     /// Answer a pending confirmation.
@@ -1333,6 +1394,65 @@ impl Session {
         self.state.messages.push(message);
     }
 
+    fn prune_history_with(&mut self, prune: impl FnOnce() -> Result<usize>) {
+        if self.state.busy {
+            self.push_system("Cancel the current request before pruning saved chats.");
+            return;
+        }
+
+        match prune() {
+            Ok(removed) => {
+                self.state.messages.clear();
+                self.state.input_history.clear();
+                self.state.fresh = true;
+                self.state.status = DEFAULT_STATUS.into();
+                self.chat_id = crate::chats::new_id();
+                self.title = None;
+                self.summary = None;
+                #[cfg(not(test))]
+                {
+                    self.chat_created_at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                }
+                self.push_system(format!(
+                    "Permanently removed {removed} saved chat{} and started a fresh conversation.",
+                    if removed == 1 { "" } else { "s" }
+                ));
+            }
+            Err(error) => self.push_system(format!("Could not prune saved chats: {error:#}")),
+        }
+    }
+
+    fn save_summary(&mut self, summary: &str) -> Result<()> {
+        if summary.trim().is_empty() {
+            anyhow::bail!("summary cannot be empty");
+        }
+
+        // Save first; only publish the new in-memory value after the archive
+        // replacement succeeds. chats::save uses a temp file + rename.
+        crate::chats::add_summary(&self.chat_id, summary.to_owned())?;
+        self.summary = Some(summary.trim().to_owned());
+        self.push_system("Summary saved for this chat.");
+        Ok(())
+    }
+
+    fn rename_active_conversation(&mut self, title: &str) {
+        let title = title.trim();
+        if title.is_empty() {
+            self.push_system("Usage: /rename <conversation title>");
+            return;
+        }
+
+        self.title = Some(title.chars().take(120).collect());
+        self.persist();
+        self.push_system(format!(
+            "Conversation renamed to: {}",
+            self.title.as_deref().unwrap_or(title)
+        ));
+    }
+
     fn push_system(&mut self, text: impl Into<String>) {
         self.push(MessageLine::new(MessageRole::System, text.into()));
         self.persist();
@@ -1358,6 +1478,7 @@ impl Session {
                 updated_at: now,
                 info: self.info.clone(),
                 messages: self.state.messages.iter().map(MessageLine::view).collect(),
+                title: self.title.clone(),
                 summary: self.summary.clone(),
             };
             if let Err(error) = crate::chats::save(&archive) {
@@ -1378,13 +1499,17 @@ impl Session {
             "Commands:",
             "  /help    show this message",
             "  /cancel  cancel the active request",
+            "  /compact compact older model-context messages now",
             "  /clear   clear the transcript",
             "  /new     start a fresh conversation",
+            "  /copy    copy the latest assistant response",
+            "  /rename <title> rename the active conversation",
             "  /history [list] list recent saved chats",
             "  /history show <id> inspect an archived chat",
             "  /history delete <id> delete an archived chat",
             "  /history prune permanently delete every saved chat and start fresh",
             "  /status  show model, workspace and session status",
+            "  /usage   show session token and cost totals",
             "  /workspace show the active workspace",
             "  /version show the Luma version",
             "  /doctor  inspect the active model, workspace and session",
@@ -1469,6 +1594,61 @@ mod tests {
     }
 
     #[test]
+    fn compact_command_is_forwarded_without_creating_a_user_turn() {
+        let (mut session, _rx) = session();
+        assert_eq!(
+            session.submit("/compact".into()).unwrap().as_deref(),
+            Some("\0LUMA_COMPACT")
+        );
+        assert!(session.state().messages.is_empty());
+        assert!(session.state().busy);
+    }
+
+    #[tokio::test]
+    async fn typed_compaction_reserves_the_session_and_rejects_a_second_request() {
+        let (mut session, _rx) = session();
+        assert_eq!(
+            session
+                .apply(AgentCommand::CompactContext)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("\0LUMA_COMPACT")
+        );
+        assert!(session.state().busy);
+        assert!(session.submit("another prompt".into()).is_err());
+    }
+
+    #[test]
+    fn slash_compaction_reserves_the_session_against_duplicate_and_immediate_prompts() {
+        let (mut session, _rx) = session();
+        assert_eq!(
+            session.submit("/compact".into()).unwrap().as_deref(),
+            Some("\0LUMA_COMPACT")
+        );
+        assert!(session.state().busy);
+        assert!(session.submit("/compact".into()).is_err());
+        assert!(session.submit("immediate prompt".into()).is_err());
+    }
+
+    #[test]
+    fn compaction_resets_a_previously_cancelled_request_token() {
+        let (mut session, _rx) = session();
+        assert_eq!(
+            session.submit("work".into()).unwrap().as_deref(),
+            Some("work")
+        );
+        session.cancel();
+        session.handle_event(AgentEvent::Cancelled);
+        session.handle_event(AgentEvent::Finished);
+        assert_eq!(
+            session.submit("/compact".into()).unwrap().as_deref(),
+            Some("\0LUMA_COMPACT")
+        );
+        assert!(session.state().busy);
+    }
+
+    #[test]
     fn summary_command_without_arguments_shows_usage_locally() {
         let (mut session, _rx) = session();
         assert_eq!(session.submit("/summary:add".into()).unwrap(), None);
@@ -1481,6 +1661,199 @@ mod tests {
                 .content
                 .contains("Usage: /summary:add")
         );
+    }
+
+    #[tokio::test]
+    async fn run_command_cannot_delete_the_active_conversation() {
+        let (mut session, _rx) = session();
+        let id = session.chat_id.clone();
+        let output = session
+            .apply_run_command("history_delete", Some(&id))
+            .await
+            .unwrap();
+        assert_eq!(session.chat_id, id);
+        assert!(output.contains("Cannot delete the active chat"));
+    }
+
+    #[tokio::test]
+    async fn run_command_prune_uses_the_slash_commands_busy_guard() {
+        let (mut session, _rx) = session();
+        session.submit("in flight".into()).unwrap();
+        let id = session.chat_id.clone();
+
+        let output = session
+            .apply_run_command("history_prune", Some("confirm"))
+            .await
+            .unwrap();
+
+        assert!(output.contains("Cancel the current request"));
+        assert_eq!(session.chat_id, id);
+        assert!(session.state().busy);
+    }
+
+    #[test]
+    fn pruning_while_busy_does_not_touch_archives_or_reset_session() {
+        let (mut session, _rx) = session();
+        session.submit("in flight".into()).unwrap();
+        let id = session.chat_id.clone();
+        let called = std::cell::Cell::new(false);
+
+        session.prune_history_with(|| {
+            called.set(true);
+            Ok(0)
+        });
+
+        assert!(!called.get());
+        assert_eq!(session.chat_id, id);
+        assert!(session.state().busy);
+        assert!(
+            session
+                .state()
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("Cancel the current request")
+        );
+    }
+
+    #[test]
+    fn successful_prune_resets_the_active_session() {
+        let (mut session, _rx) = session();
+        session.state.messages.push(MessageLine::new(
+            MessageRole::User,
+            "old conversation".into(),
+        ));
+        session.state.input_history.push("old input".into());
+        session.state.fresh = false;
+        session.title = Some("old title".into());
+        session.summary = Some("old summary".into());
+        let old_id = session.chat_id.clone();
+
+        session.prune_history_with(|| Ok(3));
+
+        assert_ne!(session.chat_id, old_id);
+        assert!(session.state.fresh);
+        assert!(!session.state.busy);
+        assert!(session.state.input_history.is_empty());
+        assert!(session.title.is_none());
+        assert!(session.summary.is_none());
+        assert_eq!(session.state.messages.len(), 1);
+        assert!(
+            session.state.messages[0]
+                .content
+                .contains("removed 3 saved chats")
+        );
+    }
+
+    #[tokio::test]
+    async fn summary_update_changes_memory_only_after_archive_save_succeeds() {
+        let (mut session, _rx) = session();
+        let request = serde_json::json!({
+            "id": session.chat_id,
+            "summary": "new summary",
+        })
+        .to_string();
+        assert!(
+            session
+                .apply_run_command("summary", Some(&request))
+                .await
+                .is_err()
+        );
+        assert!(session.summary.is_none());
+
+        let archive = crate::chats::ChatArchive {
+            id: session.chat_id.clone(),
+            created_at: 1,
+            updated_at: 1,
+            info: session.info.clone(),
+            messages: Vec::new(),
+            title: None,
+            summary: None,
+        };
+        crate::chats::save(&archive).unwrap();
+
+        let request = serde_json::json!({
+            "id": session.chat_id,
+            "summary": "  new summary  ",
+        })
+        .to_string();
+        session
+            .apply_run_command("summary", Some(&request))
+            .await
+            .unwrap();
+
+        assert_eq!(session.summary.as_deref(), Some("new summary"));
+        assert_eq!(
+            crate::chats::load(&session.chat_id)
+                .unwrap()
+                .summary
+                .as_deref(),
+            Some("new summary")
+        );
+        std::fs::remove_file(crate::chats::chats_dir().join(format!("{}.json", session.chat_id)))
+            .unwrap();
+    }
+
+    #[test]
+    fn usage_command_reports_session_token_and_cost_totals() {
+        let (mut session, _rx) = session();
+        session.state.usage.add(10, 20, 30, 0.125);
+        assert_eq!(session.submit("/usage".into()).unwrap(), None);
+        let output = &session.state.messages.last().unwrap().content;
+        assert!(output.contains("Prompt: 10 tokens"));
+        assert!(output.contains("Completion: 20 tokens"));
+        assert!(output.contains("Total: 30 tokens"));
+        assert!(output.contains("$0.125000"));
+    }
+
+    #[test]
+    fn rename_command_updates_the_active_conversation_title() {
+        let (mut session, _rx) = session();
+        assert_eq!(
+            session
+                .submit("/rename   Focused refactor  ".into())
+                .unwrap(),
+            None
+        );
+        assert_eq!(session.title.as_deref(), Some("Focused refactor"));
+        assert!(
+            session
+                .state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("Focused refactor")
+        );
+        assert_eq!(session.submit("/rename".into()).unwrap(), None);
+        assert!(
+            session
+                .state
+                .messages
+                .last()
+                .unwrap()
+                .content
+                .contains("Usage: /rename")
+        );
+    }
+
+    #[tokio::test]
+    async fn rename_run_command_uses_the_authoritative_session_title() {
+        let (mut session, _rx) = session();
+        let output = session
+            .apply_run_command("rename", Some("  Focused desktop rename  "))
+            .await
+            .unwrap();
+
+        assert_eq!(session.title.as_deref(), Some("Focused desktop rename"));
+        assert!(output.contains("Focused desktop rename"));
+        let too_long = "x".repeat(140);
+        session
+            .apply_run_command("rename", Some(&too_long))
+            .await
+            .unwrap();
+        assert_eq!(session.title.as_deref().unwrap().chars().count(), 120);
     }
 
     #[test]
@@ -1512,6 +1885,7 @@ mod tests {
                     elapsed_ms: None,
                 },
             ],
+            title: Some("Archived title".into()),
             summary: Some("kept summary".into()),
         };
         crate::chats::save(&archive).unwrap();
@@ -1520,6 +1894,7 @@ mod tests {
 
         assert!(replay.starts_with("\0LUMA_RESTORE:"));
         assert_eq!(session.chat_id, id);
+        assert_eq!(session.title.as_deref(), Some("Archived title"));
         assert_eq!(session.info.model, "qwen3");
         assert_eq!(session.state.messages.len(), 2);
         assert_eq!(session.state.messages[0].content, "previous question");

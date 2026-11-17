@@ -7,40 +7,357 @@ pub enum Command {
     Unknown,
 }
 
-#[cfg(feature = "tui")]
-const COMMANDS: &[&str] = &[
-    "/help",
-    "/cancel",
-    "/clear",
-    "/new",
-    "/quit",
-    "/init",
-    "/model",
-    "/model session",
-    "/tools",
-    "/skills",
-    "/plugins",
-    "/mcp",
-    "/teammates",
-    "/agents",
-    "/tasks",
-    "/approvals",
-    "/schedules",
-    "/memory",
-    "/history",
-    "/restore",
-    "/summary:add",
-    "/status",
-    "/workspace",
-    "/history list",
-    "/history show",
-    "/history delete",
-    "/history prune",
-    "/plan",
-    "/resume",
-    "/version",
-    "/doctor",
-];
+/// A command advertised by Luma Core to every interactive client. Keep the
+/// registry here so Ink, desktop, and future clients share names and intent.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CommandDescriptor {
+    pub id: String,
+    pub command: String,
+    pub description: String,
+    pub category: String,
+    pub shortcut: Option<String>,
+}
+
+pub fn registry() -> Vec<CommandDescriptor> {
+    const ITEMS: &[(&str, &str, &str, &str, Option<&str>)] = &[
+        (
+            "help",
+            "/help",
+            "Show all available commands",
+            "General",
+            None,
+        ),
+        (
+            "command_palette",
+            "/commands",
+            "Open the command palette",
+            "General",
+            Some("Ctrl+K"),
+        ),
+        (
+            "new",
+            "/new",
+            "Start a fresh conversation",
+            "Conversation",
+            Some("Ctrl+N"),
+        ),
+        (
+            "clear",
+            "/clear",
+            "Clear the current conversation",
+            "Conversation",
+            None,
+        ),
+        (
+            "copy",
+            "/copy",
+            "Copy the latest assistant response",
+            "Conversation",
+            None,
+        ),
+        (
+            "rename",
+            "/rename",
+            "Rename the active conversation",
+            "Conversation",
+            None,
+        ),
+        (
+            "compact",
+            "/compact",
+            "Compact the active model context",
+            "Conversation",
+            None,
+        ),
+        (
+            "cancel",
+            "/cancel",
+            "Cancel the active request",
+            "Conversation",
+            Some("Esc"),
+        ),
+        (
+            "history",
+            "/history",
+            "Search saved conversations",
+            "Conversation",
+            None,
+        ),
+        (
+            "history_show",
+            "/history show",
+            "Inspect a saved conversation",
+            "Conversation",
+            None,
+        ),
+        (
+            "history_list",
+            "/history list",
+            "List saved conversations",
+            "Conversation",
+            None,
+        ),
+        (
+            "history_delete",
+            "/history delete",
+            "Delete a saved conversation",
+            "Conversation",
+            None,
+        ),
+        (
+            "history_prune",
+            "/history prune",
+            "Delete all saved conversations",
+            "Conversation",
+            None,
+        ),
+        (
+            "restore",
+            "/restore",
+            "Restore a saved conversation",
+            "Conversation",
+            None,
+        ),
+        (
+            "summary",
+            "/summary:add",
+            "Save a conversation summary",
+            "Conversation",
+            None,
+        ),
+        (
+            "model",
+            "/model",
+            "Choose the active model",
+            "Models",
+            Some("Ctrl+G"),
+        ),
+        (
+            "model_session",
+            "/model session",
+            "Choose a model for this session only",
+            "Models",
+            None,
+        ),
+        (
+            "workspace",
+            "/workspace",
+            "Inspect the active workspace",
+            "Workspace",
+            None,
+        ),
+        (
+            "files",
+            "/files",
+            "Browse workspace files",
+            "Workspace",
+            None,
+        ),
+        (
+            "find_files",
+            "/find",
+            "Find and open workspace files by fuzzy path",
+            "Workspace",
+            None,
+        ),
+        (
+            "search",
+            "/search",
+            "Search workspace files and saved conversations",
+            "Workspace",
+            None,
+        ),
+        (
+            "git",
+            "/git",
+            "Inspect branches, changes, and history",
+            "Git",
+            None,
+        ),
+        (
+            "teammates",
+            "/teammates",
+            "Open the Teammate control center",
+            "Teammates",
+            None,
+        ),
+        (
+            "agents",
+            "/agents",
+            "Alias for the Teammate control center",
+            "Teammates",
+            None,
+        ),
+        (
+            "tasks",
+            "/tasks",
+            "Monitor queued and running tasks",
+            "Teammates",
+            None,
+        ),
+        (
+            "approvals",
+            "/approvals",
+            "Review pending approvals",
+            "Teammates",
+            None,
+        ),
+        (
+            "schedules",
+            "/schedules",
+            "Manage scheduled teammate work",
+            "Teammates",
+            None,
+        ),
+        (
+            "memory",
+            "/memory",
+            "Inspect saved memories",
+            "Teammates",
+            None,
+        ),
+        (
+            "plugins",
+            "/plugins",
+            "Manage installed plugins",
+            "Extensions",
+            None,
+        ),
+        ("mcp", "/mcp", "Manage MCP connections", "Extensions", None),
+        (
+            "skills",
+            "/skills",
+            "Browse available skills",
+            "Extensions",
+            None,
+        ),
+        (
+            "tools",
+            "/tools",
+            "List tools available to the active agent",
+            "Extensions",
+            None,
+        ),
+        (
+            "status",
+            "/status",
+            "Show session and runtime status",
+            "Diagnostics",
+            None,
+        ),
+        (
+            "usage",
+            "/usage",
+            "Show session token and cost totals",
+            "Diagnostics",
+            None,
+        ),
+        (
+            "monitor",
+            "/monitor",
+            "Open the live system monitor",
+            "Diagnostics",
+            None,
+        ),
+        (
+            "doctor",
+            "/doctor",
+            "Run workspace and runtime diagnostics",
+            "Diagnostics",
+            None,
+        ),
+        (
+            "version",
+            "/version",
+            "Show the installed Luma version",
+            "Diagnostics",
+            None,
+        ),
+        (
+            "init",
+            "/init",
+            "Inspect this workspace and create its project guide",
+            "Workspace",
+            None,
+        ),
+        (
+            "plan",
+            "/plan",
+            "Create a plan without implementing it",
+            "Conversation",
+            None,
+        ),
+        (
+            "resume",
+            "/resume",
+            "Resume an interrupted workspace task",
+            "Conversation",
+            None,
+        ),
+        ("exit", "/exit", "Exit Luma", "General", Some("Ctrl+C")),
+        (
+            "fullscreen",
+            "/fullscreen",
+            "Toggle terminal fullscreen",
+            "View",
+            Some("Ctrl+F"),
+        ),
+        ("quit", "/quit", "Exit Luma", "General", Some("Ctrl+C")),
+    ];
+    ITEMS
+        .iter()
+        .map(
+            |(id, command, description, category, shortcut)| CommandDescriptor {
+                id: (*id).into(),
+                command: (*command).into(),
+                description: (*description).into(),
+                category: (*category).into(),
+                shortcut: shortcut.map(str::to_owned),
+            },
+        )
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::registry;
+    use std::collections::HashSet;
+
+    #[test]
+    fn core_command_registry_has_unique_ids_and_slash_commands() {
+        let commands = registry();
+        let ids = commands
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect::<HashSet<_>>();
+        let names = commands
+            .iter()
+            .map(|item| item.command.as_str())
+            .collect::<HashSet<_>>();
+        assert_eq!(ids.len(), commands.len());
+        assert_eq!(names.len(), commands.len());
+        assert!(
+            commands
+                .iter()
+                .any(|item| item.id == "compact" && item.command == "/compact")
+        );
+        assert!(
+            commands
+                .iter()
+                .any(|item| item.id == "git" && item.command == "/git")
+        );
+        assert!(
+            commands
+                .iter()
+                .any(|item| item.id == "find_files" && item.command == "/find")
+        );
+        assert!(
+            commands
+                .iter()
+                .any(|item| item.id == "tasks" && item.command == "/tasks")
+        );
+    }
+}
 
 impl Command {
     pub fn parse(input: &str) -> Option<Self> {
@@ -75,10 +392,11 @@ pub fn suggestions(input: &str) -> Vec<String> {
 
     let input = input.to_lowercase();
 
-    COMMANDS
+    registry()
         .iter()
+        .map(|item| item.command.as_str())
         .filter(|command| command.starts_with(&input))
-        .map(|command| command.to_string())
+        .map(str::to_owned)
         .collect()
 }
 

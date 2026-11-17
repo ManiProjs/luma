@@ -58,9 +58,24 @@ pub enum ClientMessage {
         index: usize,
     },
 
+    /// Run an explicit context compaction without adding a transcript turn.
+    CompactContext,
+
     // -- Introspection -------------------------------------------------
     /// Ask for the full current session state. The reply is a [`ServerEvent::Session`].
     GetSession,
+
+    /// Return the Core-owned command registry used by interactive clients.
+    GetCommands {
+        request_id: String,
+    },
+
+    /// Execute a safe, named Core command for an interactive workspace view.
+    RunCommand {
+        request_id: String,
+        id: String,
+        query: Option<String>,
+    },
 
     // -- Setup ---------------------------------------------------------
     GetSetupConfig {
@@ -340,7 +355,8 @@ impl ClientMessage {
             | Self::AnswerQuestion { .. }
             | Self::Cancel
             | Self::Rollback { .. }
-            | Self::ToggleExpanded { .. } => None,
+            | Self::ToggleExpanded { .. }
+            | Self::CompactContext => None,
 
             Self::GetSetupConfig { request_id }
             | Self::SaveSetupConfig { request_id, .. }
@@ -392,6 +408,8 @@ impl ClientMessage {
             | Self::EventTriggerSetEnabled { request_id, .. }
             | Self::EventsSince { request_id, .. }
             | Self::RuntimeCapabilities { request_id } => Some(request_id),
+            Self::GetCommands { request_id } => Some(request_id),
+            Self::RunCommand { request_id, .. } => Some(request_id),
         }
     }
 }
@@ -400,6 +418,7 @@ impl From<AgentCommand> for ClientMessage {
     fn from(command: AgentCommand) -> Self {
         match command {
             AgentCommand::Submit(text) => Self::Prompt { text },
+            AgentCommand::CompactContext => Self::CompactContext,
             AgentCommand::Confirm { allowed } => Self::Confirm { allowed },
             AgentCommand::AnswerQuestion {
                 question_id,
@@ -421,6 +440,7 @@ impl ClientMessage {
     pub fn into_command(self) -> Option<AgentCommand> {
         match self {
             Self::Prompt { text } => Some(AgentCommand::Submit(text)),
+            Self::CompactContext => Some(AgentCommand::CompactContext),
             Self::Confirm { allowed } => Some(AgentCommand::Confirm { allowed }),
             Self::AnswerQuestion {
                 question_id,
@@ -434,6 +454,8 @@ impl ClientMessage {
             Self::ToggleExpanded { index } => Some(AgentCommand::ToggleExpanded { index }),
 
             Self::GetSession
+            | Self::GetCommands { .. }
+            | Self::RunCommand { .. }
             | Self::GetSetupConfig { .. }
             | Self::SaveSetupConfig { .. }
             | Self::GetProviders { .. }
@@ -515,6 +537,18 @@ pub enum ServerEvent {
     /// Full session state, in reply to `GetSession`.
     Session {
         session: crate::session::SessionView,
+    },
+
+    /// Core-owned command metadata for palette and autocomplete clients.
+    Commands {
+        request_id: String,
+        commands: Vec<crate::commands::CommandDescriptor>,
+    },
+
+    CommandOutput {
+        request_id: String,
+        id: String,
+        content: String,
     },
 
     // -- Setup ---------------------------------------------------------
@@ -733,6 +767,7 @@ mod tests {
     fn every_agent_command_has_a_wire_form() {
         let commands = [
             AgentCommand::Submit("hi".into()),
+            AgentCommand::CompactContext,
             AgentCommand::Confirm { allowed: true },
             AgentCommand::AnswerQuestion {
                 question_id: "q-1".into(),
@@ -769,9 +804,50 @@ mod tests {
     }
 
     #[test]
+    fn command_registry_request_has_a_correlated_response() {
+        let message = ClientMessage::GetCommands {
+            request_id: "commands-1".into(),
+        };
+        let decoded = decode(&encode(&message).unwrap()).unwrap();
+        assert_eq!(decoded.request_id(), Some("commands-1"));
+        let event = ServerEvent::Commands {
+            request_id: "commands-1".into(),
+            commands: crate::commands::registry(),
+        };
+        let value = serde_json::to_value(event).unwrap();
+        assert_eq!(value["type"], "commands");
+        assert!(
+            value["data"]["commands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item["command"] == "/compact")
+        );
+        let run = ClientMessage::RunCommand {
+            request_id: "run-1".into(),
+            id: "git".into(),
+            query: Some("status".into()),
+        };
+        assert_eq!(
+            decode(&encode(&run).unwrap()).unwrap().request_id(),
+            Some("run-1")
+        );
+        let output = ServerEvent::CommandOutput {
+            request_id: "run-1".into(),
+            id: "git".into(),
+            content: "branch main".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(output).unwrap()["type"],
+            "command_output"
+        );
+    }
+
+    #[test]
     fn conversation_messages_carry_no_request_id() {
         assert!(ClientMessage::Cancel.request_id().is_none());
         assert!(ClientMessage::GetSession.request_id().is_none());
+        assert!(ClientMessage::CompactContext.request_id().is_none());
     }
 
     #[test]

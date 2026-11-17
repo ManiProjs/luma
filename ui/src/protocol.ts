@@ -12,6 +12,7 @@ export type {
   AgentKind,
   AgentRecord,
   AgentStatus,
+  CommandDescriptor,
   ApprovalRecord,
   AppConfig,
   MemoryEntry,

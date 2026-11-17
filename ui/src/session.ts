@@ -15,6 +15,7 @@ const client = new LumaClient();
 export function useSession(initialSetup = false) {
   const [state, setState] = useState<UiState>(initialState);
   const pendingModel = useRef<{ provider: string; model: string } | null>(null);
+  const commandIdRef = useRef<string | null>(null);
 
   function addMessage(
     role: "user" | "assistant" | "error" | "system",
@@ -205,6 +206,41 @@ export function useSession(initialSetup = false) {
         }));
         break;
 
+      case "commands":
+        setState((current) => ({ ...current, commands: event.data.commands }));
+        break;
+
+      case "command_output":
+        setState((current) => ({
+          ...current,
+          commandOutput: { id: event.data.id, content: event.data.content },
+          commandLoading: false,
+          commandError: null,
+        }));
+        break;
+
+      case "runtime_notice":
+        setState((current) => ({
+          ...current,
+          runtimeNotices: [
+            ...current.runtimeNotices.filter((notice) => notice.event_id !== event.data.event.event_id),
+            event.data.event,
+          ].slice(-4),
+        }));
+        break;
+
+      case "task_saved":
+        if (commandIdRef.current === "tasks") {
+          client.send({ type: "run_command", data: { request_id: crypto.randomUUID(), id: "tasks", query: null } });
+        }
+        break;
+
+      case "approval_resolved":
+        if (commandIdRef.current === "approvals") {
+          client.send({ type: "run_command", data: { request_id: crypto.randomUUID(), id: "approvals", query: null } });
+        }
+        break;
+
       case "agent":
         if (event.data.event.type === "Usage") {
           const usage = event.data.event.data;
@@ -267,6 +303,7 @@ export function useSession(initialSetup = false) {
         addMessage("error", event.data.message);
         setState((current) => ({
           ...current,
+          ...(current.commandLoading ? { commandLoading: false, commandError: event.data.message } : {}),
           ...(event.data.category === "initialization_failed" ? { connection: "failed" as const, connectionError: event.data.message } : {}),
           status: "error",
           modelPicker: current.modelPicker ? {
@@ -322,6 +359,7 @@ export function useSession(initialSetup = false) {
       void client.connect().then(() => {
         if (mounted) {
           client.send({ type: "get_session" });
+          client.send({ type: "get_commands", data: { request_id: crypto.randomUUID() } });
           if (initialSetup) openModelPicker();
         }
       }).catch((error) => {
@@ -401,6 +439,27 @@ export function useSession(initialSetup = false) {
       }
     },
     openModelPicker,
+    runCommand(id: string, query: string | null = null) {
+      commandIdRef.current = id;
+      setState((current) => ({ ...current, commandLoading: true, commandError: null, commandOutput: null }));
+      try {
+        client.send({ type: "run_command", data: { request_id: crypto.randomUUID(), id, query } });
+      } catch (error) {
+        setState((current) => ({ ...current, commandLoading: false, commandError: userError(error) }));
+      }
+    },
+    dismissRuntimeNotice(eventId: string) {
+      setState((current) => ({
+        ...current,
+        runtimeNotices: current.runtimeNotices.filter((notice) => notice.event_id !== eventId),
+      }));
+    },
+    commandAction(action: "task_cancel" | "task_retry" | "approval_resolve", id: string, allowed?: boolean) {
+      const request_id = crypto.randomUUID();
+      if (action === "task_cancel") client.send({ type: "task_cancel", data: { request_id, id } });
+      else if (action === "task_retry") client.send({ type: "task_retry", data: { request_id, id } });
+      else client.send({ type: "approval_resolve", data: { request_id, id, allowed: Boolean(allowed) } });
+    },
     confirm(allowed: boolean) {
       client.send({ type: "confirm", data: { allowed } });
       setState((current) => ({ ...current, confirmation: null, status: "working" }));

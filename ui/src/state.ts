@@ -16,7 +16,7 @@ export type PlanItem = {
   status: "pending" | "active" | "done";
 };
 
-import type { SessionInfo } from "./protocol";
+import type { CommandDescriptor, RuntimeEvent, SessionInfo } from "./protocol";
 export type { SessionInfo } from "./protocol";
 
 export type UiSessionInfo = SessionInfo & {
@@ -50,6 +50,11 @@ export interface UiState {
   activeTool: string | null;
   confirmation: { name: string; input: string } | null;
   question: { question_id: string; prompt: string; choices: string[] } | null;
+  commands: CommandDescriptor[];
+  commandOutput: { id: string; content: string } | null;
+  commandLoading: boolean;
+  commandError: string | null;
+  runtimeNotices: RuntimeEvent[];
   modelPicker: {
     scope: "global" | "session";
     stage: "providers" | "models";
@@ -82,5 +87,10 @@ export const initialState: UiState = {
   activeTool: null,
   confirmation: null,
   question: null,
+  commands: [],
+  commandOutput: null,
+  commandLoading: false,
+  commandError: null,
+  runtimeNotices: [],
   modelPicker: null,
 };

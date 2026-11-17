@@ -19,19 +19,24 @@ import SetupWizard from "./setup/SetupWizard";
 import ModelPickerDialog from "./components/ModelPickerDialog";
 import ExtensionsPanel from "./components/ExtensionsPanel";
 import RichResponse from "./components/RichResponse";
+import CommandPalette from "./components/CommandPalette";
+import CommandOutputDialog from "./components/CommandOutputDialog";
+import CommandQueryDialog from "./components/CommandQueryDialog";
+import RuntimeNoticeCenter from "./components/RuntimeNoticeCenter";
 
 import type { SetupConfig, SetupModel, SetupProvider } from "./stores/setupStore";
 import { useSetupStore } from "./stores/setupStore";
 
 import { useWorkspaceStore, type Chat } from "./stores/workspaceStore";
 import { MascotAvatar } from "./components/MascotAvatar";
-import type { AgentConfiguration, AgentRecord, ApprovalRecord, MemoryEntry, MemoryScope, ScheduleRecord, EventTriggerRecord, TaskRecord, RuntimeEvent } from "../../shared/protocol";
+import type { AgentConfiguration, AgentRecord, ApprovalRecord, CommandDescriptor, MemoryEntry, MemoryScope, ScheduleRecord, EventTriggerRecord, TaskRecord, RuntimeEvent } from "../../shared/protocol";
 import { formatChatPrompt, type ChatAttachment } from "../../shared/attachments";
 import { MascotCustomizer } from "./components/MascotCustomizer";
 import { getProfileDisplayName, useProfileStore } from "./stores/profileStore";
 
 type AppMode = "agent" | "ide" | "changes" | "teammates";
 type SettingsSection = "appearance" | "general" | "gateway" | "behavior" | "extensions";
+type NavigationSnapshot = { mode: AppMode; chatId: string | null; settingsOpen: boolean; settingsSection: SettingsSection };
 type TitlebarStatus = { text: string; color: "blue" | "green" | "amber" | "red" | "muted" };
 type TeammateToolRun = { id: string; name: string; input: string; durationMs?: number; failed?: boolean; diff?: string };
 type TeammateTimelineSegment =
@@ -59,6 +64,14 @@ export type GitChange = {
   additions?: number;
   deletions?: number;
 };
+
+function parseGitChangesOutput(output: string): { branch: string; files: GitChange[] } {
+  const parsed: unknown = JSON.parse(output);
+  if (typeof parsed !== "object" || parsed === null || typeof (parsed as { branch?: unknown }).branch !== "string" || !Array.isArray((parsed as { files?: unknown }).files)) {
+    throw new Error("Luma Core returned an invalid Git status response.");
+  }
+  return parsed as { branch: string; files: GitChange[] };
+}
 
 const SLASH_COMMANDS = [
   { command: "/help", description: "Show available commands" },
@@ -1296,6 +1309,7 @@ function Sidebar({ mode, onOpenChat, onOpenTeammates, onProjectFolderChange, tea
 
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [projectsOpen, setProjectsOpen] = useState(() => {
     try { return window.localStorage.getItem("luma.projects-section-open") !== "false"; }
     catch { return true; }
@@ -1346,14 +1360,13 @@ function Sidebar({ mode, onOpenChat, onOpenTeammates, onProjectFolderChange, tea
   }, [syncHistory]);
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (mode === "teammates" || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
-      event.preventDefault();
-      setSearchOpen((value) => !value);
+    const focusHistorySearch = () => {
+      setSearchOpen(true);
+      window.requestAnimationFrame(() => searchInputRef.current?.focus());
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [mode]);
+    window.addEventListener("luma:focus-history-search", focusHistorySearch);
+    return () => window.removeEventListener("luma:focus-history-search", focusHistorySearch);
+  }, []);
 
   const projectById = useMemo(() => {
     const map = new Map<string, string>();
@@ -1658,7 +1671,7 @@ function Sidebar({ mode, onOpenChat, onOpenTeammates, onProjectFolderChange, tea
           <span className="ml-auto text-[11px] font-normal text-[var(--luma-text-muted)]">{window.luma.platform === "darwin" ? "⌘ N" : "Ctrl N"}</span>
         </button>
         <button type="button" onClick={() => setSearchOpen((value) => !value)} aria-pressed={searchOpen} className="luma-sidebar-search">
-          <SearchIcon /> <span>Search</span><kbd>{window.luma.platform === "darwin" ? "⌘K" : "Ctrl K"}</kbd>
+          <SearchIcon /> <span>Search</span>
         </button>
       </div>}
 
@@ -1668,6 +1681,7 @@ function Sidebar({ mode, onOpenChat, onOpenTeammates, onProjectFolderChange, tea
       {searchOpen && (
         <div className="px-2.5 pb-2">
           <input
+            ref={searchInputRef}
             aria-label="Search chats"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -2387,6 +2401,7 @@ function Composer({
   showToolActivity,
   onShowToolActivityChange,
   onOpenSettings,
+  commands,
 }: {
   thinking: boolean;
   preparing: boolean;
@@ -2405,6 +2420,7 @@ function Composer({
   showToolActivity: boolean;
   onShowToolActivityChange: (value: boolean) => void;
   onOpenSettings: () => void;
+  commands: CommandDescriptor[];
 }) {
   const [selectedCommand, setSelectedCommand] = useState(0);
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
@@ -2415,8 +2431,9 @@ function Composer({
   const matches = useMemo(() => {
     if (suggestionsDismissed || !value.startsWith("/")) return [];
     const query = value.toLowerCase();
-    return SLASH_COMMANDS.filter((item) => item.command.startsWith(query));
-  }, [suggestionsDismissed, value]);
+    const source = commands.length ? commands : SLASH_COMMANDS;
+    return source.filter((item) => item.command.startsWith(query));
+  }, [commands, suggestionsDismissed, value]);
 
   useEffect(() => setSelectedCommand(0), [value]);
   function chooseCommand(command: string) {
@@ -2590,7 +2607,7 @@ function Composer({
   );
 }
 
-function AgentView({ onChangeModel, sendWithEnter, onSendWithEnterChange, autoScrollToLatest, onAutoScrollToLatestChange, showToolActivity, onShowToolActivityChange, onOpenSettings, workspacePath, onToggleInspector, inspectorVisible, onOpenEditor, handoffPrompt, onHandoffConsumed, titlebarStatus }: { onChangeModel: (scope: "global" | "session") => void; sendWithEnter: boolean; onSendWithEnterChange: (value: boolean) => void; autoScrollToLatest: boolean; onAutoScrollToLatestChange: (value: boolean) => void; showToolActivity: boolean; onShowToolActivityChange: (value: boolean) => void; onOpenSettings: () => void; workspacePath: string; onToggleInspector: () => void; inspectorVisible: boolean; onOpenEditor: () => void; handoffPrompt: string; onHandoffConsumed: () => void; titlebarStatus: TitlebarStatus | null }) {
+function AgentView({ onChangeModel, sendWithEnter, onSendWithEnterChange, autoScrollToLatest, onAutoScrollToLatestChange, showToolActivity, onShowToolActivityChange, onOpenSettings, workspacePath, onToggleInspector, inspectorVisible, onOpenEditor, handoffPrompt, onHandoffConsumed, titlebarStatus, commands }: { onChangeModel: (scope: "global" | "session") => void; sendWithEnter: boolean; onSendWithEnterChange: (value: boolean) => void; autoScrollToLatest: boolean; onAutoScrollToLatestChange: (value: boolean) => void; showToolActivity: boolean; onShowToolActivityChange: (value: boolean) => void; onOpenSettings: () => void; workspacePath: string; onToggleInspector: () => void; inspectorVisible: boolean; onOpenEditor: () => void; handoffPrompt: string; onHandoffConsumed: () => void; titlebarStatus: TitlebarStatus | null; commands: CommandDescriptor[] }) {
   const [draft, setDraft] = useState("");
   const [detailsExpanded, setDetailsExpanded] = useState(false);
   const [toolGroupExpansion, setToolGroupExpansion] = useState<Record<string, boolean>>({});
@@ -2618,6 +2635,18 @@ function AgentView({ onChangeModel, sendWithEnter, onSendWithEnterChange, autoSc
   }, [handoffPrompt, onHandoffConsumed]);
 
   useEffect(() => {
+    const copyLatestResponse = () => {
+      const latest = [...messages].reverse().find((message) => message.role === "assistant");
+      if (!latest) return;
+      void navigator.clipboard.writeText(latest.content).catch((error: unknown) => {
+        window.alert(error instanceof Error ? error.message : "Could not access the system clipboard.");
+      });
+    };
+    window.addEventListener("luma:copy-last-response", copyLatestResponse);
+    return () => window.removeEventListener("luma:copy-last-response", copyLatestResponse);
+  }, [messages]);
+
+  useEffect(() => {
     if (!autoScrollToLatest) return;
     const container = transcriptScrollRef.current;
     if (container) container.scrollTop = container.scrollHeight;
@@ -2642,6 +2671,7 @@ function AgentView({ onChangeModel, sendWithEnter, onSendWithEnterChange, autoSc
   }, [messages]);
 
   const chats = useWorkspaceStore((state) => state.chats);
+  const openChatIds = useWorkspaceStore((state) => state.openChatIds);
   const activeChatId = useWorkspaceStore((state) => state.activeChatId);
   const isPendingNewChat = useWorkspaceStore((state) => state.isPendingNewChat);
   const draftChat = useWorkspaceStore((state) => state.draft);
@@ -2650,12 +2680,13 @@ function AgentView({ onChangeModel, sendWithEnter, onSendWithEnterChange, autoSc
   const setChatMessages = useWorkspaceStore((state) => state.setChatMessages);
   const startNewChat = useWorkspaceStore((state) => state.startNewChat);
   const selectChat = useWorkspaceStore((state) => state.selectChat);
+  const closeChatTab = useWorkspaceStore((state) => state.closeChatTab);
   const activeChat = chats.find((chat) => chat.id === activeChatId);
 
   useEffect(() => {
     let active = true;
-    const refreshBranch = () => void window.luma.getGitChanges().then((result) => {
-      if (active) setBranch(result.branch);
+    const refreshBranch = () => void window.luma.runCommand("git", "status_json").then((output) => {
+      if (active) setBranch(parseGitChangesOutput(output).branch);
     }).catch(() => {
       if (active) setBranch("");
     });
@@ -2762,7 +2793,26 @@ function AgentView({ onChangeModel, sendWithEnter, onSendWithEnterChange, autoSc
           <button type="button" className="luma-inspector-icon-button" onClick={onToggleInspector} aria-label={inspectorVisible ? "Hide inspector" : "Show inspector"} title={inspectorVisible ? "Hide inspector" : "Show inspector"}><PanelCloseIcon /></button>
         </div>
       </header>
-      <div ref={transcriptScrollRef} className="min-h-0 flex-1 overflow-auto">
+      <nav className="luma-session-tabs shrink-0" aria-label="Open conversations">
+        <div className="luma-session-tabs-list" role="tablist" aria-label="Code conversations">
+          {openChatIds.map((chatId) => {
+            const chat = chats.find((item) => item.id === chatId);
+            if (!chat && chatId !== activeChatId) return null;
+            const title = chat?.title || "New session";
+            const active = chatId === activeChatId;
+            return (
+              <div className="luma-session-tab" key={chatId} data-active={active} role="presentation">
+                <button type="button" id={`luma-session-tab-${chatId}`} role="tab" aria-selected={active} aria-controls="luma-code-transcript" title={title} onClick={() => selectChat(chatId)}>
+                  <span>{title}</span>
+                </button>
+                <button type="button" className="luma-session-tab-close" aria-label={`Close ${title}`} title={`Close ${title}`} onClick={() => closeChatTab(chatId)}><span aria-hidden="true">×</span></button>
+              </div>
+            );
+          })}
+        </div>
+        <button type="button" className="luma-session-tab-new" onClick={() => startNewChat()} title="New tab" aria-label="New tab">＋</button>
+      </nav>
+      <div id="luma-code-transcript" ref={transcriptScrollRef} className="min-h-0 flex-1 overflow-auto" role="tabpanel" aria-labelledby={activeChatId ? `luma-session-tab-${activeChatId}` : undefined}>
         {showEmptyState && (
           <>
             <EmptyAgentState onPrompt={setDraft} />
@@ -2825,6 +2875,7 @@ function AgentView({ onChangeModel, sendWithEnter, onSendWithEnterChange, autoSc
         showToolActivity={showToolActivity}
         onShowToolActivityChange={onShowToolActivityChange}
         onOpenSettings={onOpenSettings}
+        commands={commands}
       />
     </div>
   );
@@ -3275,8 +3326,10 @@ function ChangesView({ onOpenFile }: { onOpenFile: (path: string) => void }) {
   const [files, setFiles] = useState<GitChange[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [diff, setDiff] = useState("");
+  const [diffStaged, setDiffStaged] = useState(false);
   const [loading, setLoading] = useState(true);
   const [diffLoading, setDiffLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
@@ -3284,7 +3337,7 @@ function ChangesView({ onOpenFile }: { onOpenFile: (path: string) => void }) {
     setLoading(true);
     setError(null);
     try {
-      const result = await window.luma.getGitChanges();
+      const result = parseGitChangesOutput(await window.luma.runCommand("git", "status_json"));
       setBranch(result.branch);
       setFiles(result.files);
       setSelected((current) => current && result.files.some((file) => file.path === current)
@@ -3305,12 +3358,42 @@ function ChangesView({ onOpenFile }: { onOpenFile: (path: string) => void }) {
     if (!selected) { setDiff(""); return; }
     let active = true;
     setDiffLoading(true);
-    window.luma.getGitDiff(selected)
+    window.luma.runCommand("git", `${diffStaged ? "diff-staged" : "diff"}:${selected}`)
       .then((value) => { if (active) setDiff(value); })
       .catch((cause: unknown) => { if (active) setDiff(cause instanceof Error ? cause.message : String(cause)); })
       .finally(() => { if (active) setDiffLoading(false); });
     return () => { active = false; };
-  }, [selected, refreshVersion]);
+  }, [selected, refreshVersion, diffStaged]);
+
+  async function toggleStageSelected() {
+    const file = files.find((item) => item.path === selected);
+    if (!file || busy) return;
+    const staged = file.indexStatus !== " " && file.indexStatus !== "?";
+    setBusy(true);
+    try {
+      await window.luma.runCommand("git", `${staged ? "unstage" : "stage"}:${file.path}`);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revertSelected() {
+    const file = files.find((item) => item.path === selected);
+    if (!file || file.kind === "untracked" || file.kind === "added" || file.kind === "renamed" || busy) return;
+    if (!window.confirm(`Discard changes to ${file.path}? This restores that tracked file from HEAD.`)) return;
+    setBusy(true);
+    try {
+      await window.luma.runCommand("git", `revert:${file.path}`);
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const statusLabel = (file: GitChange) => file.kind === "untracked" ? "?" : file.kind === "added" ? "A" : file.kind === "deleted" ? "D" : file.kind === "renamed" ? "R" : "M";
 
@@ -3345,8 +3428,11 @@ function ChangesView({ onOpenFile }: { onOpenFile: (path: string) => void }) {
             ))}
           </aside>
           <div className="flex min-w-0 flex-1 flex-col">
-            <div className="flex h-10 shrink-0 items-center border-b border-[var(--luma-border)] px-3">
+            <div className="flex h-10 shrink-0 items-center gap-2 border-b border-[var(--luma-border)] px-3">
               <span className="min-w-0 flex-1 truncate text-[12px] text-[var(--luma-text-secondary)]">{selected}</span>
+              {selected && <button type="button" onClick={() => void toggleStageSelected()} disabled={busy} className="luma-btn-ghost h-7 px-2">{busy ? "Working…" : files.find((file) => file.path === selected)?.indexStatus !== " " && files.find((file) => file.path === selected)?.indexStatus !== "?" ? "Unstage" : "Stage"}</button>}
+              {selected && <button type="button" onClick={() => setDiffStaged((value) => !value)} aria-pressed={diffStaged} className="luma-btn-ghost h-7 px-2">{diffStaged ? "Staged diff" : "Worktree diff"}</button>}
+              {selected && <button type="button" onClick={() => void revertSelected()} disabled={busy || !files.some((file) => file.path === selected && file.kind !== "untracked" && file.kind !== "added" && file.kind !== "renamed")} className="luma-btn-ghost h-7 px-2">Revert</button>}
               {selected && <button type="button" onClick={() => onOpenFile(selected)} className="luma-btn-ghost h-7 px-2">Open in IDE</button>}
             </div>
             <div className="min-h-0 flex-1 overflow-auto p-3">
@@ -3361,7 +3447,7 @@ function ChangesView({ onOpenFile }: { onOpenFile: (path: string) => void }) {
   );
 }
 
-type CodeInspectorTab = "changes" | "files" | "terminal";
+type CodeInspectorTab = "changes" | "history" | "branches" | "files" | "terminal";
 
 function EmbeddedTerminal({ workspacePath }: { workspacePath: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -3480,21 +3566,24 @@ function CodeInspector({ workspacePath, onOpenFile }: {
   const [selected, setSelected] = useState<string | null>(null);
   const [diff, setDiff] = useState("");
   const [diffLoading, setDiffLoading] = useState(false);
+  const [diffStaged, setDiffStaged] = useState(false);
   const [tree, setTree] = useState<WorkspaceNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [treeLoading, setTreeLoading] = useState(false);
+  const [gitViewOutput, setGitViewOutput] = useState("");
+  const [gitViewLoading, setGitViewLoading] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [diffRefreshVersion, setDiffRefreshVersion] = useState(0);
   const tabButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
-  const tabs = ["changes", "files", "terminal"] as const;
+  const tabs = ["changes", "history", "branches", "files", "terminal"] as const;
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const result = await window.luma.getGitChanges();
+      const result = parseGitChangesOutput(await window.luma.runCommand("git", "status_json"));
       setBranch(result.branch);
       setFiles(result.files);
       setSelected((current) => current && result.files.some((file) => file.path === current)
@@ -3516,13 +3605,13 @@ function CodeInspector({ workspacePath, onOpenFile }: {
     let active = true;
     setDiffLoading(true);
     setDiff("");
-    window.luma.getGitDiff(selected).then((value) => {
+    window.luma.runCommand("git", `${diffStaged ? "diff-staged" : "diff"}:${selected}`).then((value) => {
       if (active) setDiff(value);
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : String(reason));
     }).finally(() => { if (active) setDiffLoading(false); });
     return () => { active = false; };
-  }, [selected, tab, diffRefreshVersion]);
+  }, [selected, tab, diffRefreshVersion, diffStaged]);
 
   useEffect(() => {
     if (tab !== "files") return;
@@ -3536,12 +3625,29 @@ function CodeInspector({ workspacePath, onOpenFile }: {
     return () => { active = false; };
   }, [tab, workspacePath, refreshKey]);
 
+  useEffect(() => {
+    if (tab !== "history" && tab !== "branches") return;
+    let active = true;
+    setError("");
+    setGitViewLoading(true);
+    setGitViewOutput("");
+    window.luma.runCommand("git", tab === "history" ? "log" : "branches").then((value) => {
+      if (active) setGitViewOutput(value);
+    }).catch((reason: unknown) => {
+      if (active) setError(reason instanceof Error ? reason.message : String(reason));
+    }).finally(() => { if (active) setGitViewLoading(false); });
+    return () => { active = false; };
+  }, [tab, workspacePath, refreshKey]);
+
   async function stageSelected() {
     if (!selected || busy) return;
+    const selectedChange = files.find((file) => file.path === selected);
+    if (!selectedChange) return;
+    const isStaged = selectedChange.indexStatus !== " " && selectedChange.indexStatus !== "?";
     setBusy(true);
     setError("");
     try {
-      await window.luma.stageWorkspaceFile(selected);
+      await window.luma.runCommand("git", `${isStaged ? "unstage" : "stage"}:${selected}`);
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -3558,7 +3664,7 @@ function CodeInspector({ workspacePath, onOpenFile }: {
     setBusy(true);
     setError("");
     try {
-      await window.luma.revertWorkspaceFile(file.path);
+      await window.luma.runCommand("git", `revert:${file.path}`);
       await refresh();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -3568,6 +3674,8 @@ function CodeInspector({ workspacePath, onOpenFile }: {
   }
 
   const statusLabel = (file: GitChange) => file.kind === "untracked" ? "?" : file.kind === "added" ? "A" : file.kind === "deleted" ? "D" : file.kind === "renamed" ? "R" : "M";
+  const selectedChange = files.find((file) => file.path === selected);
+  const selectedIsStaged = Boolean(selectedChange && selectedChange.indexStatus !== " " && selectedChange.indexStatus !== "?");
 
   return (
     <aside className="luma-code-inspector" aria-label="Workspace inspector">
@@ -3605,7 +3713,7 @@ function CodeInspector({ workspacePath, onOpenFile }: {
         </div>
         <div className="luma-inspector-actions">
           <button type="button" onClick={() => void revertSelected()} disabled={!selected || !files.some((file) => file.path === selected && file.kind !== "untracked" && file.kind !== "added" && file.kind !== "renamed") || busy} title="Discard changes to the selected tracked file">Revert selected</button>
-          <button type="button" onClick={() => void stageSelected()} disabled={!selected || busy} title="Stage only the selected file">{busy ? "Working…" : "Stage selected"}</button>
+          <button type="button" onClick={() => void stageSelected()} disabled={!selected || busy} title={selectedIsStaged ? "Unstage the selected file while preserving working-tree changes" : "Stage only the selected file"}>{busy ? "Working…" : selectedIsStaged ? "Unstage selected" : "Stage selected"}</button>
         </div>
         {loading && files.length === 0 ? <p className="luma-inspector-empty">Checking repository changes…</p> : files.length === 0 ? <p className="luma-inspector-empty">No changes in this workspace.</p> : <>
           <div className="luma-inspector-change-list">
@@ -3616,9 +3724,12 @@ function CodeInspector({ workspacePath, onOpenFile }: {
               {file.kind === "untracked" && <span className="luma-change-kind">new</span>}
             </button>)}
           </div>
-          <div className="luma-inspector-diff-header"><span className="min-w-0 flex-1 truncate">{selected ?? "Diff preview"}</span>{selected && <button type="button" onClick={() => onOpenFile(selected)}>Open</button>}</div>
+          <div className="luma-inspector-diff-header"><span className="min-w-0 flex-1 truncate">{selected ?? "Diff preview"}</span>{selected && <button type="button" aria-pressed={diffStaged} onClick={() => setDiffStaged((value) => !value)}>{diffStaged ? "Staged diff" : "Worktree diff"}</button>}{selected && <button type="button" onClick={() => onOpenFile(selected)}>Open</button>}</div>
           <pre className="luma-inspector-diff">{diffLoading ? "Loading diff…" : diff || (selected ? "No textual diff available." : "Select a file to inspect its diff.")}</pre>
         </>}
+      </> : tab === "history" || tab === "branches" ? <>
+        <div className="luma-inspector-summary"><div className="min-w-0 flex-1"><strong>{tab === "history" ? "Recent commits" : "Branches"}</strong><span>{branch || "Current repository"}</span></div><button type="button" onClick={() => setRefreshKey((value) => value + 1)} title="Refresh Git view">↻</button></div>
+        <pre className="luma-inspector-diff">{gitViewLoading ? "Loading Git data…" : gitViewOutput || `No ${tab === "history" ? "commits" : "branches"} found.`}</pre>
       </> : tab === "files" ? <>
         <div className="luma-inspector-summary"><div className="min-w-0 flex-1"><strong>Workspace files</strong><span title={workspacePath}>{workspacePath || "No workspace selected"}</span></div><button type="button" onClick={() => setRefreshKey((value) => value + 1)} title="Refresh files">↻</button></div>
         <div className="luma-inspector-file-tree">{treeLoading ? <p className="luma-inspector-empty">Loading files…</p> : tree.length ? <WorkspaceTree nodes={tree} selectedFile={null} onFileSelect={onOpenFile} /> : <p className="luma-inspector-empty">No files found.</p>}</div>
@@ -3656,6 +3767,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [cancellingTasks, setCancellingTasks] = useState<string[]>([]);
   const [teammateSearchOpen, setTeammateSearchOpen] = useState(false);
   const [teammateSearch, setTeammateSearch] = useState("");
+  const teammateSearchRef = useRef<HTMLInputElement>(null);
   const [inspectorVisible, setInspectorVisible] = useState(() => {
     try { return window.localStorage.getItem("luma.teammates-inspector-visible") !== "false"; }
     catch { return true; }
@@ -3753,14 +3865,28 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   }, [inspectorVisible, inspectorTab, activeTab, selectedAgentId, selectedTaskId]);
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      if (event.key.toLowerCase() !== "k") return;
-      event.preventDefault();
-      setTeammateSearchOpen((value) => !value);
+    const openTeammateSection = (event: Event) => {
+      const section = (event as CustomEvent<"tasks" | "approvals">).detail;
+      if (section === "approvals") {
+        setActiveTab("settings");
+        setSettingsSection("access");
+      } else {
+        setActiveTab("chat");
+        setInspectorVisible(true);
+        setInspectorTab("tasks");
+      }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("luma:teammates-section", openTeammateSection);
+    return () => window.removeEventListener("luma:teammates-section", openTeammateSection);
+  }, []);
+
+  useEffect(() => {
+    const focusTeammateSearch = () => {
+      setTeammateSearchOpen(true);
+      window.requestAnimationFrame(() => teammateSearchRef.current?.focus());
+    };
+    window.addEventListener("luma:focus-teammate-search", focusTeammateSearch);
+    return () => window.removeEventListener("luma:focus-teammate-search", focusTeammateSearch);
   }, []);
 
   useEffect(() => {
@@ -4036,9 +4162,9 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
       <div className="luma-teammate-sidebar-transition">
         <div className="luma-teammate-sidebar-actions">
           <button type="button" disabled={busy || !agents.length} onClick={() => { if (!selectedAgentId && agents[0]) setSelectedAgentId(agents[0].id); setSelectedTaskId("__new__"); setActiveTab("chat"); setSubmittingTaskId(null); }}><PlusIcon /> New task <kbd>{window.luma.platform === "darwin" ? "⌘N" : "Ctrl N"}</kbd></button>
-          <button type="button" aria-pressed={teammateSearchOpen} onClick={() => setTeammateSearchOpen((value) => !value)}><SearchIcon /> Search <kbd>{window.luma.platform === "darwin" ? "⌘K" : "Ctrl K"}</kbd></button>
+          <button type="button" aria-pressed={teammateSearchOpen} onClick={() => setTeammateSearchOpen((value) => !value)}><SearchIcon /> Search</button>
         </div>
-        {teammateSearchOpen && <input className="luma-input luma-teammate-search" autoFocus aria-label="Search teammates" value={teammateSearch} onChange={(event) => setTeammateSearch(event.target.value)} placeholder="Search teammates" />}
+        {teammateSearchOpen && <input ref={teammateSearchRef} className="luma-input luma-teammate-search" autoFocus aria-label="Search teammates" value={teammateSearch} onChange={(event) => setTeammateSearch(event.target.value)} placeholder="Search teammates" />}
         <div className="luma-teammate-sidebar-heading"><span>Your team</span></div>
         {agents.length === 0 && <p className="px-1 py-3 text-[11px] text-[var(--luma-text-muted)]">No teammates yet. Add one to give it a persistent identity and workspace.</p>}
         <div className="mt-3 space-y-1">
@@ -4703,8 +4829,19 @@ export default function App() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
+  const navigationBack = useRef<NavigationSnapshot[]>([]);
+  const navigationForward = useRef<NavigationSnapshot[]>([]);
+  const currentNavigation = useRef<NavigationSnapshot | null>(null);
+  const navigationJump = useRef(false);
+  const [, setNavigationVersion] = useState(0);
   const [codeHandoffPrompt, setCodeHandoffPrompt] = useState("");
   const [modelPickerScope, setModelPickerScope] = useState<"global" | "session" | null>(null);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [commands, setCommands] = useState<CommandDescriptor[]>([]);
+  const [commandsLoading, setCommandsLoading] = useState(false);
+  const [commandOutput, setCommandOutput] = useState<{ title: string; content: string } | null>(null);
+  const [commandQuery, setCommandQuery] = useState<CommandDescriptor | null>(null);
+  const [runtimeNotices, setRuntimeNotices] = useState<RuntimeEvent[]>([]);
 
   const [connected, setConnected] = useState(false);
   const [titlebarStatus, setTitlebarStatus] = useState<TitlebarStatus | null>(null);
@@ -4717,8 +4854,63 @@ export default function App() {
 
   const [setupConfig, setSetupConfig] = useState<SetupConfig | null>(null);
   const activeProjectId = useWorkspaceStore((state) => state.activeProjectId);
+  const activeChatId = useWorkspaceStore((state) => state.activeChatId);
   const setProjectWorkspace = useWorkspaceStore((state) => state.setProjectWorkspace);
   const selectProject = useWorkspaceStore((state) => state.selectProject);
+
+  useEffect(() => {
+    const savedChatId = activeChatId && useWorkspaceStore.getState().chats.some((chat) => chat.id === activeChatId)
+      ? activeChatId
+      : null;
+    const next: NavigationSnapshot = { mode, chatId: savedChatId, settingsOpen, settingsSection };
+    const previous = currentNavigation.current;
+    if (!previous) {
+      currentNavigation.current = next;
+      return;
+    }
+    if (navigationJump.current) {
+      navigationJump.current = false;
+      currentNavigation.current = next;
+      setNavigationVersion((version) => version + 1);
+      return;
+    }
+    if (previous.mode === next.mode && previous.chatId === next.chatId && previous.settingsOpen === next.settingsOpen && previous.settingsSection === next.settingsSection) return;
+    navigationBack.current.push(previous);
+    if (navigationBack.current.length > 50) navigationBack.current.shift();
+    navigationForward.current = [];
+    currentNavigation.current = next;
+    setNavigationVersion((version) => version + 1);
+  }, [activeChatId, mode, settingsOpen, settingsSection]);
+
+  const applyNavigationSnapshot = useCallback((snapshot: NavigationSnapshot) => {
+    navigationJump.current = true;
+    currentNavigation.current = snapshot;
+    setMode(snapshot.mode);
+    setSettingsOpen(snapshot.settingsOpen);
+    setSettingsSection(snapshot.settingsSection);
+    if (snapshot.chatId) {
+      const store = useWorkspaceStore.getState();
+      if (store.chats.some((chat) => chat.id === snapshot.chatId)) store.selectChat(snapshot.chatId);
+    } else {
+      const store = useWorkspaceStore.getState();
+      if (store.activeChatId && store.chats.some((chat) => chat.id === store.activeChatId)) store.startNewChat();
+    }
+    setNavigationVersion((version) => version + 1);
+  }, []);
+
+  const navigateBack = useCallback(() => {
+    const previous = navigationBack.current.pop();
+    if (!previous) return;
+    if (currentNavigation.current) navigationForward.current.push(currentNavigation.current);
+    applyNavigationSnapshot(previous);
+  }, [applyNavigationSnapshot]);
+
+  const navigateForward = useCallback(() => {
+    const next = navigationForward.current.pop();
+    if (!next) return;
+    if (currentNavigation.current) navigationBack.current.push(currentNavigation.current);
+    applyNavigationSnapshot(next);
+  }, [applyNavigationSnapshot]);
 
   useEffect(() => {
     if (!setupComplete || tourChecked.current) return;
@@ -4756,6 +4948,94 @@ export default function App() {
       setWorkspaceSwitching(false);
     }
   }, []);
+
+  const openCommandPalette = useCallback(() => {
+    setCommandPaletteOpen(true);
+    setCommandsLoading(true);
+    void window.luma.getCommands().then(setCommands).catch((error) => {
+      console.error("Unable to load Core commands", error);
+      setCommands([]);
+    }).finally(() => setCommandsLoading(false));
+  }, []);
+
+  const refreshCommandOutput = useCallback(async () => {
+    if (commandOutput?.title !== "/monitor") return;
+    try {
+      const content = await window.luma.runCommand("monitor");
+      setCommandOutput({ title: "/monitor", content });
+    } catch (error) {
+      setCommandOutput({ title: "/monitor", content: error instanceof Error ? error.message : String(error) });
+    }
+  }, [commandOutput?.title]);
+
+  const runPaletteCommand = useCallback(async (descriptor: CommandDescriptor) => {
+    const command = descriptor.command.trim().toLowerCase();
+    setCommandPaletteOpen(false);
+    if (command === "/model" || command === "/model session") {
+      setModelPickerScope(command === "/model session" ? "session" : "global");
+    } else if (command === "/new" || command === "/clear") {
+      if (modeRef.current === "teammates") window.dispatchEvent(new Event("luma:new-teammate-task"));
+      else { useWorkspaceStore.getState().startNewChat(); setMode("agent"); }
+    } else if (command === "/workspace") {
+      try {
+        const content = await window.luma.runCommand(descriptor.id);
+        setCommandOutput({ title: descriptor.command, content });
+      } catch (error) {
+        setCommandOutput({ title: descriptor.command, content: error instanceof Error ? error.message : String(error) });
+      }
+    } else if (command === "/teammates" || command === "/agents") {
+      setMode("teammates");
+    } else if (command === "/tasks" || command === "/approvals") {
+      setMode("teammates");
+      window.setTimeout(() => window.dispatchEvent(new CustomEvent("luma:teammates-section", { detail: command === "/tasks" ? "tasks" : "approvals" })), 0);
+    } else if (command === "/files") {
+      setMode("ide");
+    } else if (command === "/git") {
+      setMode("agent");
+      setCodeInspectorVisible(true);
+    } else if (["/find", "/search", "/history", "/history show", "/history delete", "/restore", "/plan", "/rename", "/summary:add"].includes(command)) {
+      setCommandQuery(descriptor);
+    } else if (["/status", "/version", "/doctor", "/monitor", "/tools", "/skills", "/plugins", "/mcp", "/schedules", "/memory", "/history list"].includes(command)) {
+      try {
+        const content = await window.luma.runCommand(descriptor.id);
+        setCommandOutput({ title: descriptor.command, content });
+      } catch (error) {
+        setCommandOutput({ title: descriptor.command, content: error instanceof Error ? error.message : String(error) });
+      }
+    } else if (command === "/history prune") {
+      if (window.confirm("Permanently delete every saved Luma conversation? This cannot be undone.")) {
+        try {
+          await window.luma.prompt("/history prune");
+          const remaining = await window.luma.getHistory();
+          if (remaining.length === 0) {
+            useWorkspaceStore.getState().clearHistory();
+            await window.luma.getSession();
+            setCommandOutput({ title: descriptor.command, content: "Saved conversations were pruned and a fresh conversation was started." });
+          } else {
+            useWorkspaceStore.getState().syncHistory(remaining);
+            setCommandOutput({ title: descriptor.command, content: "The active request prevented pruning. Cancel it, then try again." });
+          }
+        } catch (error) {
+          setCommandOutput({ title: descriptor.command, content: error instanceof Error ? error.message : String(error) });
+        }
+      }
+    } else if (command === "/compact") {
+      await window.luma.prompt("/compact");
+    } else if (command === "/copy") {
+      window.dispatchEvent(new Event("luma:copy-last-response"));
+    } else if (command === "/cancel") {
+      await window.luma.cancel();
+    } else if (command === "/fullscreen") {
+      await window.luma.toggleFullscreen();
+    } else if (command === "/help" || command === "/commands") {
+      openCommandPalette();
+    } else if (command === "/quit" || command === "/exit") {
+      await window.luma.quit();
+    } else {
+      // The descriptor came from Core's registry, so Core owns this command.
+      await window.luma.prompt(descriptor.command);
+    }
+  }, [chooseWorkspaceForCurrentScope, openCommandPalette]);
 
   const handleProjectFolderChange = useCallback(async (projectId: string, path: string) => {
     setProjectWorkspace(projectId, path);
@@ -4834,6 +5114,9 @@ export default function App() {
       try {
         const config = await window.luma.getSetupConfig();
         if (!mounted) return;
+        void window.luma.getCommands().then((items) => { if (mounted) setCommands(items); }).catch((reason) => {
+          console.warn("Unable to load Core command registry", reason);
+        });
         if (config) {
           setSetupConfig(config);
           setSetupComplete(true);
@@ -4850,8 +5133,14 @@ export default function App() {
 
     const unsubscribe = window.luma.onEvent((event: unknown) => {
       if (typeof event !== "object" || event === null) return;
-      const message = event as { type?: string; data?: { message?: string; category?: string } };
+      const message = event as { type?: string; data?: { message?: string; category?: string; event?: RuntimeEvent } };
       if (message.type === "ready") void handleReady();
+      if (message.type === "runtime_notice" && message.data?.event) {
+        const notice = message.data.event;
+        setRuntimeNotices((current) => current.some((item) => item.event_id === notice.event_id)
+          ? current
+          : [notice, ...current].slice(0, 25));
+      }
       if (message.type === "error" && message.data?.category === "initialization_failed") {
         setConnected(false);
         setConnectionError(message.data.message ?? "Luma Core failed to start.");
@@ -4903,6 +5192,44 @@ export default function App() {
     });
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey && event.key === "ArrowLeft") {
+        event.preventDefault();
+        navigateBack();
+        return;
+      }
+      if (event.altKey && event.key === "ArrowRight") {
+        event.preventDefault();
+        navigateForward();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+        event.preventDefault();
+        if (modeRef.current === "teammates") {
+          window.dispatchEvent(new Event("luma:new-teammate-task"));
+        } else {
+          useWorkspaceStore.getState().startNewChat();
+          setMode("agent");
+        }
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "g") {
+        const activeElement = document.activeElement;
+        const isEditing = activeElement instanceof HTMLElement && (
+          activeElement.isContentEditable
+          || activeElement.matches("textarea, select, [role='textbox'], input:not([type='button']):not([type='checkbox']):not([type='radio']):not([type='submit']):not([type='reset'])")
+        );
+        if (isEditing || event.isComposing) return;
+        event.preventDefault();
+        setSettingsOpen(false);
+        setModelPickerScope("global");
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        if (commandPaletteOpen) setCommandPaletteOpen(false);
+        else openCommandPalette();
+        return;
+      }
       if ((event.metaKey || event.ctrlKey) && event.key === ",") {
         event.preventDefault();
         setSettingsOpen(true);
@@ -4927,7 +5254,7 @@ export default function App() {
       unsubscribeTitlebarStatus();
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [chooseWorkspaceForCurrentScope]);
+  }, [chooseWorkspaceForCurrentScope, commandPaletteOpen, navigateBack, navigateForward, openCommandPalette]);
 
   if (connectionState !== "connected") {
     return <CoreConnectionScreen
@@ -4998,6 +5325,75 @@ export default function App() {
     >
       {/* Live region for screen reader announcements */}
       <div id="luma-announcer" aria-live="polite" className="sr-only" />
+      {commandPaletteOpen && <CommandPalette commands={commands} loading={commandsLoading} onClose={() => setCommandPaletteOpen(false)} onSelect={(command) => void runPaletteCommand(command)} />}
+      <RuntimeNoticeCenter
+        notices={runtimeNotices}
+        onDismiss={(eventId) => setRuntimeNotices((current) => current.filter((notice) => notice.event_id !== eventId))}
+        onDismissAll={() => setRuntimeNotices([])}
+      />
+      {commandOutput && <CommandOutputDialog title={commandOutput.title} content={commandOutput.content} onClose={() => setCommandOutput(null)} onOpenFile={(path) => { setSelectedFile(path); setMode("ide"); setCommandOutput(null); }} onRefresh={commandOutput.title === "/monitor" ? refreshCommandOutput : undefined} />}
+      {commandQuery && <CommandQueryDialog
+        title={({
+          "/search": "Search workspace",
+          "/history": "Search conversations",
+          "/history show": "Inspect saved conversation",
+          "/history delete": "Delete saved conversation",
+          "/restore": "Restore saved conversation",
+          "/plan": "Plan a task",
+          "/rename": "Rename conversation",
+          "/summary:add": "Save conversation summary",
+        } as Record<string, string>)[commandQuery.command] ?? "Run command"}
+        placeholder={({
+          "/search": "Search text or filename…",
+          "/history": "Search text; optional workspace:, model:, tool: filters…",
+          "/history show": "Conversation ID…",
+          "/history delete": "Conversation ID…",
+          "/restore": "Conversation ID…",
+          "/plan": "Describe the task to plan…",
+          "/rename": "New conversation title…",
+          "/summary:add": "Write a concise summary…",
+        } as Record<string, string>)[commandQuery.command] ?? "Enter a value…"}
+        onClose={() => setCommandQuery(null)}
+        onRun={(query) => {
+          const selected = commandQuery;
+          setCommandQuery(null);
+          const run = async () => {
+            if (selected.command === "/restore") {
+              await window.luma.restoreChat(query);
+              setCommandOutput({ title: selected.command, content: `Restoring conversation ${query}.` });
+              return;
+            }
+            if (selected.command === "/plan") {
+              await window.luma.prompt(`/plan ${query}`);
+              return;
+            }
+            if (selected.command === "/rename") {
+              const content = await window.luma.runCommand("rename", query);
+              setCommandOutput({ title: selected.command, content });
+              return;
+            }
+            if (selected.command === "/summary:add") {
+              await window.luma.prompt(`/summary:add ${query}`);
+              setCommandOutput({ title: selected.command, content: "Summary saved to the active conversation." });
+              return;
+            }
+            if (selected.command === "/history delete") {
+              const before = await window.luma.getHistory();
+              await window.luma.prompt(`/history delete ${query}`);
+              const history = await window.luma.getHistory();
+              useWorkspaceStore.getState().syncHistory(history);
+              const existed = before.some((chat) => chat.id === query);
+              const remains = history.some((chat) => chat.id === query);
+              const content = !existed ? `Saved conversation ${query} was not found.` : remains ? "The active conversation cannot be deleted. Start a new conversation first." : `Deleted saved conversation ${query}.`;
+              setCommandOutput({ title: selected.command, content });
+              return;
+            }
+            const content = await window.luma.runCommand(selected.id, query);
+            setCommandOutput({ title: selected.command, content });
+          };
+          void run().catch((error) => setCommandOutput({ title: selected.command, content: error instanceof Error ? error.message : String(error) }));
+        }}
+      />}
       {tourOpen && <DesktopTour onFinish={finishTour} />}
 
       <SettingsPanel
@@ -5052,7 +5448,7 @@ export default function App() {
           <div key={`${mode}:${workspacePath}`} className="luma-view-transition h-full min-w-0">
           {mode === "teammates" && <TeammatesPanel onSidebarChange={setTeammatesSidebar} onOpenFile={(path) => { setSelectedFile(path); setMode("ide"); }} onHandoffToCode={(prompt) => { setCodeHandoffPrompt(prompt); setMode("agent"); }} sendWithEnter={sendWithEnter} onSendWithEnterChange={setSendWithEnter} autoScrollToLatest={autoScrollToLatest} onAutoScrollToLatestChange={setAutoScrollToLatest} showToolActivity={showToolActivity} onShowToolActivityChange={setShowToolActivity} onOpenSettings={() => { setSettingsSection("behavior"); setSettingsOpen(true); }} titlebarStatus={titlebarStatus} />}
           {mode === "agent" && <div className="luma-code-workspace flex h-full min-w-0">
-            <div className="min-w-0 flex-1"><AgentView onChangeModel={setModelPickerScope} sendWithEnter={sendWithEnter} onSendWithEnterChange={setSendWithEnter} autoScrollToLatest={autoScrollToLatest} onAutoScrollToLatestChange={setAutoScrollToLatest} showToolActivity={showToolActivity} onShowToolActivityChange={setShowToolActivity} onOpenSettings={() => { setSettingsSection("behavior"); setSettingsOpen(true); }} workspacePath={workspacePath} onToggleInspector={() => setCodeInspectorVisible((visible) => !visible)} inspectorVisible={codeInspectorVisible} onOpenEditor={() => setMode("ide")} handoffPrompt={codeHandoffPrompt} onHandoffConsumed={() => setCodeHandoffPrompt("")} titlebarStatus={titlebarStatus} /></div>
+            <div className="min-w-0 flex-1"><AgentView onChangeModel={setModelPickerScope} sendWithEnter={sendWithEnter} onSendWithEnterChange={setSendWithEnter} autoScrollToLatest={autoScrollToLatest} onAutoScrollToLatestChange={setAutoScrollToLatest} showToolActivity={showToolActivity} onShowToolActivityChange={setShowToolActivity} onOpenSettings={() => { setSettingsSection("behavior"); setSettingsOpen(true); }} workspacePath={workspacePath} onToggleInspector={() => setCodeInspectorVisible((visible) => !visible)} inspectorVisible={codeInspectorVisible} onOpenEditor={() => setMode("ide")} handoffPrompt={codeHandoffPrompt} onHandoffConsumed={() => setCodeHandoffPrompt("")} titlebarStatus={titlebarStatus} commands={commands} /></div>
             {codeInspectorVisible && <CodeInspector workspacePath={workspacePath} onOpenFile={(path) => { setSelectedFile(path); setMode("ide"); }} />}
           </div>}
 

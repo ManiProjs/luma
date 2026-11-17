@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { parseServerEvent, type ServerEvent, type AgentConfiguration, type AgentKind, type AgentRecord, type ApprovalRecord, type ChatSummary, type MemoryEntry, type MemoryScope, type ScheduleRecord, type EventTriggerRecord, type TaskRecord, type RuntimeEvent, type PluginEntry, type InstalledPlugin, type McpServerConfig } from "../../shared/protocol";
+import { parseServerEvent, type ServerEvent, type AgentConfiguration, type AgentKind, type AgentRecord, type ApprovalRecord, type ChatSummary, type CommandDescriptor, type MemoryEntry, type MemoryScope, type ScheduleRecord, type EventTriggerRecord, type TaskRecord, type RuntimeEvent, type PluginEntry, type InstalledPlugin, type McpServerConfig } from "../../shared/protocol";
 import type { ChatAttachment } from "../../shared/attachments";
 
 export type LumaAgentEvent = ServerEvent;
@@ -36,10 +36,6 @@ contextBridge.exposeInMainWorld("luma", {
   setWorkspace: (path: string) => invoke("luma:set-workspace", path),
   chooseWorkspace: () => invoke("luma:choose-workspace"),
   listWorkspaceFiles: () => invoke("luma:list-workspace-files"),
-  getGitChanges: () => invoke("luma:get-git-changes"),
-  getGitDiff: (path: string) => invoke("luma:get-git-diff", path),
-  stageWorkspaceFile: (path: string) => invoke("luma:stage-workspace-file", path),
-  revertWorkspaceFile: (path: string) => invoke("luma:revert-workspace-file", path),
   openWorkspaceTerminal: () => invoke("luma:open-workspace-terminal"),
   startTerminal: (cols: number, rows: number): Promise<{ id: string }> => invoke("luma:terminal-start", cols, rows),
   writeTerminal: (id: string, data: string): Promise<{ ok: boolean }> => invoke("luma:terminal-write", id, data),
@@ -113,6 +109,7 @@ contextBridge.exposeInMainWorld("luma", {
   answerQuestion: (questionId: string, answer: string) => invoke("luma:answer-question", questionId, answer),
 
   cancel: () => invoke("luma:cancel"),
+  toggleFullscreen: (): Promise<boolean> => invoke("luma:toggle-fullscreen"),
 
   getStatus: () => invoke("luma:status"),
   retryConnection: () => invoke("luma:retry-connection"),
@@ -125,6 +122,8 @@ contextBridge.exposeInMainWorld("luma", {
   openGatewayLog: (): Promise<{ ok: boolean }> => invoke("luma:open-gateway-log"),
   getSession: () => invoke("luma:get-session"),
   getHistory: (): Promise<ChatSummary[]> => invoke("luma:get-history"),
+  getCommands: (): Promise<CommandDescriptor[]> => invoke("luma:get-commands"),
+  runCommand: (id: string, query?: string | null): Promise<string> => invoke("luma:run-command", id, query ?? null),
   restoreChat: (id: string) => invoke("luma:restore-chat", id),
   clearSession: () => invoke("luma:clear-session"),
   quit: () => invoke("luma:quit"),

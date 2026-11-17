@@ -39,10 +39,10 @@ pub fn default_registry() -> ToolRegistry {
         CountLines, FileMetadata, FindTodos, GitBlame, GitBranches, GitLog, GitShow, InspectProject,
     };
     use filesystem::{
-        list_directory::ListDirectory, patch_file::PatchFile, read_file::ReadFile,
-        search_files::SearchFiles, write_file::WriteFile,
+        find_files::FindFiles, list_directory::ListDirectory, patch_file::PatchFile,
+        read_file::ReadFile, search_files::SearchFiles, write_file::WriteFile,
     };
-    use git::{GitDiff, GitStatus};
+    use git::{GitChanges, GitDiff, GitRevert, GitStage, GitStatus, GitUnstage};
     use observability::ExecutionMetrics;
     use shell::RunCommand;
     use skills::{ListSkills, LoadSkill, ProposeSkill};
@@ -51,12 +51,17 @@ pub fn default_registry() -> ToolRegistry {
     let mut tools = ToolRegistry::new();
     tools.register(ReadFile);
     tools.register(ListDirectory);
+    tools.register(FindFiles);
     tools.register(RunCommand);
     tools.register(SearchFiles);
     tools.register(WriteFile);
     tools.register(PatchFile);
     tools.register(GitStatus);
     tools.register(GitDiff);
+    tools.register(GitChanges);
+    tools.register(GitStage);
+    tools.register(GitUnstage);
+    tools.register(GitRevert);
     tools.register(FindSymbols::default());
     tools.register(FindReferences::default());
     tools.register(AnalyzeCodebase::default());

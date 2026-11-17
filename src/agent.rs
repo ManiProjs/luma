@@ -57,6 +57,7 @@ fn restore_agent_history(context: &mut Context, history: &History) {
         let role = match message.role.as_str() {
             "user" => MessageRole::User,
             "assistant" => MessageRole::Assistant,
+            "observation" | "tool" => MessageRole::Observation,
             "system" => MessageRole::System,
             _ => continue,
         };
@@ -64,7 +65,36 @@ fn restore_agent_history(context: &mut Context, history: &History) {
     }
 }
 
+fn history_from_context(context: &Context, previous: &History) -> History {
+    let mut history = previous.empty_like();
+    history.messages.extend(
+        context
+            .messages()
+            .iter()
+            .filter(|message| message.role != MessageRole::System)
+            .map(|message| HistoryMessage {
+                role: match message.role {
+                    MessageRole::User => "user",
+                    MessageRole::Assistant => "assistant",
+                    MessageRole::Observation => "observation",
+                    MessageRole::System => "system",
+                }
+                .into(),
+                content: message.content.clone(),
+            }),
+    );
+    history
+}
+
 fn restore_task_checkpoint(context: &mut Context, checkpoint: &crate::tasks::TaskCheckpoint) {
+    // A compacted Code history already contains a model summary of older
+    // observations and every observation recorded after that compaction.
+    // Replaying the task checkpoint wholesale would resurrect summarized data.
+    let has_compacted_history = context.messages().iter().any(|message| {
+        message
+            .content
+            .starts_with("Conversation summary (compacted by Luma):")
+    });
     context.add(
         MessageRole::System,
         format!(
@@ -73,17 +103,63 @@ fn restore_task_checkpoint(context: &mut Context, checkpoint: &crate::tasks::Tas
             checkpoint.completed_actions.join(", ")
         ),
     );
-    for observation in &checkpoint.observations {
-        context.add(MessageRole::Observation, observation.clone());
+    if !has_compacted_history {
+        for observation in &checkpoint.observations {
+            let already_restored = context.messages().iter().any(|message| {
+                message.role == MessageRole::Observation && message.content == *observation
+            });
+            if !already_restored {
+                context.add(MessageRole::Observation, observation.clone());
+            }
+        }
     }
     context.add(MessageRole::User, checkpoint.request.clone());
 }
 
 fn restore_archived_messages(messages: Vec<crate::session::MessageView>) -> Vec<Message> {
+    // A successful compaction is archived as a system transcript entry. When
+    // restoring that chat, keep the summary and latest four conversational
+    // entries in model context; older entries are replaced. Live system
+    // instructions are reattached separately by Context::restore.
+    let summary_index = messages.iter().rposition(|message| {
+        message.role == crate::session::MessageRole::System
+            && message
+                .content
+                .starts_with("Conversation summary (compacted by Luma):")
+    });
+    let messages = if let Some(summary_index) = summary_index {
+        // The summary replaces older context, but the chat may have continued
+        // since it was created. Keep the latest four conversational entries
+        // across the entire archive, and merge the summary back at its
+        // original chronological position. Earlier summaries are superseded.
+        let mut retained_indices = messages
+            .iter()
+            .enumerate()
+            .filter(|(_, message)| message.role != crate::session::MessageRole::System)
+            .map(|(index, _)| index)
+            .rev()
+            .take(4)
+            .collect::<Vec<_>>();
+        retained_indices.push(summary_index);
+        retained_indices.sort_unstable();
+        retained_indices
+            .into_iter()
+            .map(|index| messages[index].clone())
+            .collect::<Vec<_>>()
+    } else {
+        messages
+    };
     messages
         .into_iter()
         .map(|message| {
             let (role, content) = match message.role {
+                crate::session::MessageRole::System
+                    if message
+                        .content
+                        .starts_with("Conversation summary (compacted by Luma):") =>
+                {
+                    (MessageRole::Assistant, message.content)
+                }
                 crate::session::MessageRole::System => (MessageRole::System, message.content),
                 crate::session::MessageRole::User => (MessageRole::User, message.content),
                 crate::session::MessageRole::Assistant => (MessageRole::Assistant, message.content),
@@ -352,30 +428,164 @@ mod change_preview_tests {
 
     #[test]
     fn teammate_history_is_restored_into_the_live_context_in_order() {
-        let history = History {
-            messages: vec![
-                HistoryMessage {
-                    role: "user".into(),
-                    content: "Earlier request".into(),
-                },
-                HistoryMessage {
-                    role: "assistant".into(),
-                    content: "Earlier answer".into(),
-                },
-                HistoryMessage {
-                    role: "tool".into(),
-                    content: "Internal tool output".into(),
-                },
-            ],
-        };
+        let history = History::from_messages(vec![
+            HistoryMessage {
+                role: "user".into(),
+                content: "Earlier request".into(),
+            },
+            HistoryMessage {
+                role: "assistant".into(),
+                content: "Earlier answer".into(),
+            },
+            HistoryMessage {
+                role: "tool".into(),
+                content: "Internal tool output".into(),
+            },
+        ]);
         let mut context = Context::new();
         context.add(MessageRole::System, "workspace context");
         restore_agent_history(&mut context, &history);
         let messages = context.messages();
-        assert_eq!(messages.len(), 3);
+        assert_eq!(messages.len(), 4);
         assert_eq!(messages[0].role, MessageRole::System);
         assert_eq!(messages[1].content, "Earlier request");
         assert_eq!(messages[2].content, "Earlier answer");
+        assert_eq!(messages[3].role, MessageRole::Observation);
+        assert_eq!(messages[3].content, "Internal tool output");
+    }
+
+    #[test]
+    fn compacted_history_round_trip_restores_exact_tail_including_observations() {
+        let mut context = Context::new();
+        context.add(MessageRole::System, "live workspace instructions");
+        for index in 0..6 {
+            context.add(MessageRole::User, format!("request {index}"));
+            context.add(MessageRole::Assistant, format!("answer {index}"));
+        }
+        context.add(MessageRole::Observation, "latest tool observation");
+        context.replace_with_summary("important decision and next steps".into());
+
+        let history = history_from_context(&context, &History::from_messages(Vec::new()));
+        let serialized = serde_json::to_string(&history).unwrap();
+        let reloaded: History = serde_json::from_str(&serialized).unwrap();
+        let mut restored = Context::new();
+        restored.add(MessageRole::System, "live workspace instructions");
+        restore_agent_history(&mut restored, &reloaded);
+
+        let expected = context
+            .messages()
+            .iter()
+            .filter(|message| message.role != MessageRole::System)
+            .map(|message| (message.role, message.content.as_str()))
+            .collect::<Vec<_>>();
+        let actual = restored
+            .messages()
+            .iter()
+            .filter(|message| message.role != MessageRole::System)
+            .map(|message| (message.role, message.content.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+        assert_eq!(
+            actual
+                .iter()
+                .filter(|(role, content)| *role == MessageRole::Assistant
+                    && content.starts_with("Conversation summary (compacted by Luma):"))
+                .count(),
+            1,
+            "the summary must be persisted exactly once"
+        );
+        assert!(actual.iter().any(|(role, content)| {
+            *role == MessageRole::Observation && *content == "latest tool observation"
+        }));
+    }
+
+    #[test]
+    fn restoring_a_compacted_chat_keeps_the_latest_four_entries_across_later_turns() {
+        let view = |role, content: &str| crate::session::MessageView {
+            role,
+            content: content.into(),
+            tool: None,
+            running: false,
+            succeeded: None,
+            expanded: false,
+            elapsed_ms: None,
+        };
+        let restored = restore_archived_messages(vec![
+            view(crate::session::MessageRole::User, "old request"),
+            view(crate::session::MessageRole::Assistant, "old answer"),
+            view(crate::session::MessageRole::User, "mid request"),
+            view(crate::session::MessageRole::Assistant, "mid answer"),
+            view(crate::session::MessageRole::User, "latest request"),
+            view(crate::session::MessageRole::Assistant, "latest answer"),
+            view(
+                crate::session::MessageRole::System,
+                "Conversation summary (compacted by Luma):\nimportant decision",
+            ),
+            view(
+                crate::session::MessageRole::User,
+                "after compaction request",
+            ),
+            view(
+                crate::session::MessageRole::Assistant,
+                "after compaction answer",
+            ),
+        ]);
+        assert_eq!(restored.len(), 5);
+        assert_eq!(restored[0].content, "latest request");
+        assert_eq!(restored[1].content, "latest answer");
+        assert_eq!(restored[2].role, MessageRole::Assistant);
+        assert!(restored[2].content.contains("important decision"));
+        assert_eq!(restored[3].content, "after compaction request");
+        assert_eq!(restored[4].content, "after compaction answer");
+    }
+
+    #[test]
+    fn restoring_repeated_compactions_keeps_latest_summary_and_four_entries_in_order() {
+        let view = |role, content: &str| crate::session::MessageView {
+            role,
+            content: content.into(),
+            tool: None,
+            running: false,
+            succeeded: None,
+            expanded: false,
+            elapsed_ms: None,
+        };
+        let restored = restore_archived_messages(vec![
+            view(crate::session::MessageRole::User, "before first summary"),
+            view(
+                crate::session::MessageRole::System,
+                "Conversation summary (compacted by Luma):\nfirst summary",
+            ),
+            view(
+                crate::session::MessageRole::User,
+                "between summaries request",
+            ),
+            view(
+                crate::session::MessageRole::Assistant,
+                "between summaries answer",
+            ),
+            view(
+                crate::session::MessageRole::System,
+                "Conversation summary (compacted by Luma):\nlatest summary",
+            ),
+            view(crate::session::MessageRole::User, "after latest request"),
+            view(
+                crate::session::MessageRole::Assistant,
+                "after latest answer",
+            ),
+        ]);
+
+        assert_eq!(restored.len(), 5);
+        assert_eq!(restored[0].content, "between summaries request");
+        assert_eq!(restored[1].content, "between summaries answer");
+        assert!(restored[2].content.contains("latest summary"));
+        assert_eq!(restored[3].content, "after latest request");
+        assert_eq!(restored[4].content, "after latest answer");
+        assert!(
+            restored
+                .iter()
+                .all(|message| !message.content.contains("first summary"))
+        );
     }
 
     #[test]
@@ -401,6 +611,50 @@ mod change_preview_tests {
         assert_eq!(messages[1].content, "found the implementation");
         assert_eq!(messages[2].content, "tests pass");
         assert_eq!(messages[3].content, "finish the feature");
+    }
+
+    #[test]
+    fn task_resume_does_not_reintroduce_observations_replaced_by_compaction() {
+        let checkpoint = crate::tasks::TaskCheckpoint {
+            schema_version: 1,
+            workspace: "/tmp/project".into(),
+            request: "continue after compaction".into(),
+            plan: None,
+            plan_approved: true,
+            observations: vec![
+                "summarized old observation".into(),
+                "new observation".into(),
+            ],
+            completed_actions: Vec::new(),
+            status: crate::tasks::TaskStatus::Interrupted,
+            updated_at: 42,
+        };
+        let mut context = Context::new();
+        context.add(
+            MessageRole::Assistant,
+            "Conversation summary (compacted by Luma):\nold observation was summarized",
+        );
+        context.add(MessageRole::Observation, "new observation");
+        restore_task_checkpoint(&mut context, &checkpoint);
+
+        let messages = context.messages();
+        assert!(
+            !messages
+                .iter()
+                .any(|message| { message.content == "summarized old observation" })
+        );
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| message.content == "new observation")
+                .count(),
+            1
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| { message.content == "continue after compaction" })
+        );
     }
 
     #[test]
@@ -729,6 +983,23 @@ where
             return Ok(());
         }
 
+        if input == "\0LUMA_COMPACT" {
+            tx.send(AgentEvent::Status {
+                state: AgentStatus::Thinking,
+            })
+            .await?;
+            if let Some(message) = self.compact_context(cancel).await? {
+                tx.send(AgentEvent::SystemMessage(message)).await?;
+                self.emit_context_usage(tx).await?;
+                // Once the compacted history is atomically persisted, a late
+                // cancellation must not report the committed operation as cancelled.
+                self.finish(tx, &CancellationToken::new()).await?;
+            } else {
+                self.finish(tx, cancel).await?;
+            }
+            return Ok(());
+        }
+
         if let Some(snapshot) = input.strip_prefix("\0LUMA_RESUME:") {
             let mut checkpoint: crate::tasks::TaskCheckpoint = serde_json::from_str(snapshot)?;
             checkpoint.normalize();
@@ -786,6 +1057,85 @@ where
         }
         tx.send(AgentEvent::Finished).await?;
         Ok(())
+    }
+
+    async fn compact_context(&mut self, cancel: &CancellationToken) -> Result<Option<String>> {
+        const RETAIN_RECENT: usize = 4;
+        let conversation = self
+            .context
+            .messages()
+            .iter()
+            .filter(|message| {
+                message.role != MessageRole::System
+                    && !message
+                        .content
+                        .starts_with("Earlier conversation was compacted")
+            })
+            .collect::<Vec<_>>();
+        if conversation.len() <= RETAIN_RECENT {
+            return Ok(Some(
+                "Context is already compact; no older conversation needs summarizing.".into(),
+            ));
+        }
+
+        let transcript = conversation
+            .iter()
+            .map(|message| {
+                let role = match message.role {
+                    MessageRole::User => "USER",
+                    MessageRole::Assistant => "ASSISTANT",
+                    MessageRole::Observation => "TOOL / OBSERVATION",
+                    MessageRole::System => "SYSTEM",
+                };
+                format!("{role}: {}", message.content)
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let messages = vec![
+            Message {
+                role: MessageRole::System,
+                content: "You are compacting an active coding-agent conversation. Produce a concise but information-dense memory for future turns. Preserve user goals, decisions, constraints, preferences, exact paths/symbols/commands, current implementation state, completed work, failures, unresolved questions, and next steps. Do not invent facts. Distinguish confirmed facts from hypotheses. Do not include greetings or explain that you are summarizing.".into(),
+            },
+            Message { role: MessageRole::User, content: transcript },
+        ];
+        let mut stream = tokio::select! {
+            _ = cancel.cancelled() => return Ok(None),
+            result = self.model.stream(CompletionRequest { messages }) => result?,
+        };
+        let mut summary = String::new();
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => return Ok(None),
+                chunk = stream.next() => match chunk {
+                    Some(Ok(chunk)) => summary.push_str(&chunk),
+                    Some(Err(error)) => return Err(error),
+                    None => break,
+                }
+            }
+        }
+        let summary = summary.trim();
+        if cancel.is_cancelled() {
+            return Ok(None);
+        }
+        if summary.is_empty() {
+            anyhow::bail!(
+                "the model returned an empty context summary; the original context was kept"
+            );
+        }
+        let summary = summary.chars().take(12_000).collect::<String>();
+
+        // Persist the compacted history before replacing in-memory state. If
+        // persistence fails, the live context remains completely untouched.
+        let mut compacted_context = self.context.clone();
+        let (removed, characters) = compacted_context.replace_with_summary(summary.clone());
+        let compacted_history = history_from_context(&compacted_context, &self.history);
+        compacted_history.save()?;
+
+        self.context = compacted_context;
+        self.history = compacted_history;
+        Ok(Some(format!(
+            "Conversation summary (compacted by Luma):\n{summary}\n\nCompacted model context: summarized {removed} older messages ({characters} characters), preserved the latest {RETAIN_RECENT} messages and every system instruction."
+        )))
     }
 
     // ========================================================================
@@ -1393,6 +1743,13 @@ project structure, dependencies, or test results.
         );
         self.context
             .add(MessageRole::Observation, observation.clone());
+        self.history.messages.push(HistoryMessage {
+            role: "observation".into(),
+            content: observation.clone(),
+        });
+        if let Err(error) = self.history.save() {
+            tracing::warn!(%error, "could not persist tool observation in history");
+        }
         if let Some(checkpoint) = self.checkpoint.as_mut() {
             checkpoint.observations.push(observation);
         }

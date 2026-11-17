@@ -40,7 +40,7 @@ type PendingRequest = {
     | "agents" | "agent_saved" | "agent_deleted" | "tasks" | "task_saved" | "task_deleted" | "approvals" | "approval_resolved"
     | "memory" | "memory_saved" | "memory_deleted" | "schedules" | "schedule_saved" | "schedule_deleted" | "event_triggers" | "event_trigger_saved" | "event_trigger_deleted" | "runtime_events"
     | "plugins" | "plugin_saved" | "plugin_deleted" | "mcp_servers" | "mcp_saved" | "mcp_deleted"
-    | "history_list";
+    | "history_list" | "commands" | "command_output";
   resolve: (value: ServerEvent) => void;
   reject: (reason?: unknown) => void;
 };
@@ -241,97 +241,6 @@ async function assertInsideWorkspace(filePath: string): Promise<string> {
     throw new Error("Workspace symlinks cannot access files outside the selected folder.");
   }
   return realPath;
-}
-
-type GitChange = {
-  path: string;
-  indexStatus: string;
-  worktreeStatus: string;
-  kind: "added" | "modified" | "deleted" | "renamed" | "untracked";
-  additions?: number;
-  deletions?: number;
-};
-
-function runGit(args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("git", ["-C", workspaceRoot, ...args], { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk: string) => { stdout += chunk; });
-    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
-    child.once("error", reject);
-    child.once("close", (code) => {
-      if (code === 0) resolve(stdout);
-      else reject(new Error(stderr.trim() || `git ${args[0]} exited with code ${code ?? "unknown"}.`));
-    });
-  });
-}
-
-async function getGitChanges(): Promise<{ branch: string; files: GitChange[] }> {
-  const branch = (await runGit(["branch", "--show-current"])).trim() || "HEAD";
-  const [status, numstat] = await Promise.all([
-    runGit(["status", "--porcelain=v1", "--untracked-files=all"]),
-    runGit(["diff", "HEAD", "--no-renames", "--numstat"]).catch(() => ""),
-  ]);
-  const fileStats = new Map<string, { additions: number; deletions: number }>();
-  for (const line of numstat.split(/\r?\n/).filter(Boolean)) {
-    const [added, removed, ...pathParts] = line.split("\t");
-    const filePath = pathParts.join("\t");
-    if (!filePath || added === "-" || removed === "-") continue;
-    fileStats.set(filePath, { additions: Number(added), deletions: Number(removed) });
-  }
-  const files = status.split(/\r?\n/).filter(Boolean).map((line): GitChange => {
-    const indexStatus = line[0] ?? " ";
-    const worktreeStatus = line[1] ?? " ";
-    const rawPath = line.slice(3);
-    const renamed = rawPath.includes(" -> ");
-    const filePath = renamed ? rawPath.slice(rawPath.lastIndexOf(" -> ") + 4) : rawPath;
-    const code = indexStatus === "?" ? "?" : indexStatus !== " " ? indexStatus : worktreeStatus;
-    const kind: GitChange["kind"] = code === "?" ? "untracked" : code === "A" ? "added" : code === "D" ? "deleted" : code === "R" || renamed ? "renamed" : "modified";
-    return { path: filePath, indexStatus, worktreeStatus, kind, ...fileStats.get(filePath) };
-  });
-  return { branch, files };
-}
-
-async function getGitDiff(relativePath: string): Promise<string> {
-  const target = resolveWorkspacePath(relativePath);
-  const stat = await fs.lstat(target).catch(() => null);
-  if (!stat) {
-    // A deleted tracked file still has a useful diff; Git resolves it by path.
-    return runGit(["diff", "HEAD", "--no-ext-diff", "--unified=3", "--", relativePath]);
-  }
-  const tracked = await runGit(["ls-files", "--error-unmatch", "--", relativePath]).then(() => true, () => false);
-  if (!tracked) {
-    if (!stat.isFile()) return "Untracked directory. Select a file inside it to inspect its contents.";
-    if (stat.size > 2 * 1024 * 1024) throw new Error("Untracked files larger than 2 MiB are not previewed.");
-    const bytes = await fs.readFile(await assertInsideWorkspace(target));
-    if (bytes.includes(0)) throw new Error("Binary files do not have a text diff preview.");
-    const content = bytes.toString("utf8");
-    return `New file: ${relativePath}\n\n${content.split("\n").map((line) => `+${line}`).join("\n")}`;
-  }
-  return runGit(["diff", "HEAD", "--no-ext-diff", "--unified=3", "--", relativePath]);
-}
-
-async function assertSafeGitPath(relativePath: string): Promise<void> {
-  const target = resolveWorkspacePath(relativePath);
-  const stat = await fs.lstat(target).catch(() => null);
-  if (stat) {
-    await assertInsideWorkspace(target);
-    return;
-  }
-  await assertInsideWorkspace(path.dirname(target));
-}
-
-async function stageWorkspaceFile(relativePath: string): Promise<void> {
-  await assertSafeGitPath(relativePath);
-  await runGit(["add", "--", relativePath]);
-}
-
-async function revertWorkspaceFile(relativePath: string): Promise<void> {
-  await assertSafeGitPath(relativePath);
-  const tracked = await runGit(["ls-files", "--error-unmatch", "--", relativePath]).then(() => true, () => false);
-  if (!tracked) throw new Error("Only tracked files can be reverted from this view.");
-  await runGit(["restore", "--source=HEAD", "--staged", "--worktree", "--", relativePath]);
 }
 
 function openWorkspaceTerminal(): Promise<void> {
@@ -958,6 +867,24 @@ app.whenReady().then(async () => {
     return response.data.chats;
   });
 
+  handleIpc("luma:get-commands", async () => {
+    const response = await requestLuma("commands", (request_id) => ({
+      type: "get_commands",
+      data: { request_id },
+    }));
+    if (response.type !== "commands") throw new Error("Unexpected response to get_commands.");
+    return response.data.commands;
+  });
+
+  handleIpc("luma:run-command", async (_event, id: string, query?: string | null) => {
+    const response = await requestLuma("command_output", (request_id) => ({
+      type: "run_command",
+      data: { request_id, id, query: query ?? null },
+    }));
+    if (response.type !== "command_output") throw new Error("Unexpected response to run_command.");
+    return response.data.content;
+  });
+
   handleIpc("luma:restore-chat", (_event, id: string) => {
     sendToLuma({ type: "prompt", data: { text: `/restore ${id}` } });
     sendToLuma({ type: "get_session" });
@@ -1024,21 +951,6 @@ app.whenReady().then(async () => {
     return { path: workspaceRoot, canceled: false };
   });
   handleIpc("luma:list-workspace-files", async () => readWorkspaceTree(workspaceRoot));
-  handleIpc("luma:get-git-changes", async () => getGitChanges());
-  handleIpc("luma:get-git-diff", async (_event, relativePath: string) => {
-    if (typeof relativePath !== "string" || !relativePath.trim()) throw new Error("A file path is required.");
-    return getGitDiff(relativePath);
-  });
-  handleIpc("luma:stage-workspace-file", async (_event, relativePath: string) => {
-    if (typeof relativePath !== "string" || !relativePath.trim()) throw new Error("A file path is required.");
-    await stageWorkspaceFile(relativePath);
-    return { ok: true };
-  });
-  handleIpc("luma:revert-workspace-file", async (_event, relativePath: string) => {
-    if (typeof relativePath !== "string" || !relativePath.trim()) throw new Error("A file path is required.");
-    await revertWorkspaceFile(relativePath);
-    return { ok: true };
-  });
   handleIpc("luma:open-workspace-terminal", async () => {
     await openWorkspaceTerminal();
     return { ok: true };
@@ -1128,7 +1040,7 @@ app.whenReady().then(async () => {
       system_prompt: "", specialization: null, mascot: "auto", use_global_context: true, provider: null, model: null, endpoint: null, workspace: workspaceRoot,
       skills: [],
       allowed_workspaces: [workspaceRoot], enabled_tools: [],
-      permissions: { allowed_tools: ["read_file", "list_directory", "search_files", "git_status", "git_diff", "find_symbols", "find_references", "git_log", "git_show", "git_blame", "git_branches", "file_metadata", "find_todos", "count_lines", "inspect_project", "list_skills", "load_skill"], denied_tools: [], auto_approve_read_only: true, require_approval_for_mutations: true, allow_network: false },
+      permissions: { allowed_tools: ["read_file", "list_directory", "search_files", "find_files", "git_status", "git_diff", "git_changes", "find_symbols", "find_references", "git_log", "git_show", "git_blame", "git_branches", "file_metadata", "find_todos", "count_lines", "inspect_project", "list_skills", "load_skill"], denied_tools: [], auto_approve_read_only: true, require_approval_for_mutations: true, allow_network: false },
       max_concurrent_tasks: 1, recover_interrupted_tasks: false,
     };
     const response = await requestLuma("agent_saved", (request_id) => ({ type: "agent_create", data: {
@@ -1539,6 +1451,13 @@ app.whenReady().then(async () => {
     return {
       ok: true,
     };
+  });
+
+  handleIpc("luma:toggle-fullscreen", async () => {
+    const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+    if (!target) return false;
+    target.setFullScreen(!target.isFullScreen());
+    return target.isFullScreen();
   });
 
   createWindow();

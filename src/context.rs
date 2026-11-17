@@ -13,7 +13,7 @@ pub struct Message {
     pub content: String,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Context {
     messages: Vec<Message>,
 }
@@ -109,6 +109,61 @@ impl Context {
         )
     }
 
+    /// Replace older conversation turns with a model-generated summary while
+    /// retaining every live system instruction and the newest four messages.
+    /// Returns the number of replaced entries and their character count.
+    pub fn replace_with_summary(&mut self, summary: String) -> (usize, usize) {
+        const RETAIN_RECENT: usize = 4;
+        let mut systems = Vec::new();
+        let mut conversation = Vec::new();
+        for message in self.messages.drain(..) {
+            if message.role == MessageRole::System {
+                systems.push(message);
+            } else if message.content != COMPACTION_MARKER
+                && !message
+                    .content
+                    .starts_with("Conversation summary (compacted by Luma):")
+            {
+                conversation.push(message);
+            }
+        }
+        let remove_count = conversation.len().saturating_sub(RETAIN_RECENT);
+        let removed_chars = conversation
+            .iter()
+            .take(remove_count)
+            .map(|message| message.content.chars().count())
+            .sum();
+        let mut recent = conversation.split_off(remove_count);
+        let system_chars = systems
+            .iter()
+            .map(|message| message.content.chars().count())
+            .sum::<usize>();
+        let summary_content = format!("Conversation summary (compacted by Luma):\n{summary}");
+        let summary_content = bounded_message(&summary_content);
+        let summary_chars = summary_content.chars().count();
+        let marker_chars = COMPACTION_MARKER.chars().count();
+        let recent_budget =
+            MAX_CONTEXT_CHARS.saturating_sub(system_chars + summary_chars + marker_chars);
+        let per_message_budget = recent_budget / recent.len().max(1);
+        for message in &mut recent {
+            message.content = bounded_message_to(&message.content, per_message_budget);
+        }
+        self.messages = systems;
+        if remove_count > 0 {
+            self.messages.push(Message {
+                role: MessageRole::Observation,
+                content: COMPACTION_MARKER.into(),
+            });
+            self.messages.push(Message {
+                role: MessageRole::Assistant,
+                content: summary_content,
+            });
+        }
+        self.messages.extend(recent);
+        self.compact();
+        (remove_count, removed_chars)
+    }
+
     /// Retain every system instruction and the newest conversational messages.
     /// The marker tells the model that older turns existed but were omitted.
     fn compact(&mut self) {
@@ -120,7 +175,11 @@ impl Context {
         let mut compacted = already_compacted;
         while self.messages.len() > MAX_CONTEXT_MESSAGES || self.total_chars() > MAX_CONTEXT_CHARS {
             let Some(index) = self.messages.iter().position(|message| {
-                message.role != MessageRole::System && message.content != COMPACTION_MARKER
+                message.role != MessageRole::System
+                    && message.content != COMPACTION_MARKER
+                    && !message
+                        .content
+                        .starts_with("Conversation summary (compacted by Luma):")
             }) else {
                 break;
             };
@@ -152,7 +211,11 @@ impl Context {
                 || self.total_chars() + marker_chars > MAX_CONTEXT_CHARS
             {
                 let Some(index) = self.messages.iter().position(|message| {
-                    message.role != MessageRole::System && message.content != COMPACTION_MARKER
+                    message.role != MessageRole::System
+                        && message.content != COMPACTION_MARKER
+                        && !message
+                            .content
+                            .starts_with("Conversation summary (compacted by Luma):")
                 }) else {
                     break;
                 };
@@ -162,7 +225,11 @@ impl Context {
         // The marker itself must not push the context over the configured limit.
         while self.messages.len() > MAX_CONTEXT_MESSAGES || self.total_chars() > MAX_CONTEXT_CHARS {
             let Some(index) = self.messages.iter().position(|message| {
-                message.role != MessageRole::System && message.content != COMPACTION_MARKER
+                message.role != MessageRole::System
+                    && message.content != COMPACTION_MARKER
+                    && !message
+                        .content
+                        .starts_with("Conversation summary (compacted by Luma):")
             }) else {
                 break;
             };
@@ -183,6 +250,26 @@ fn bounded_message(content: &str) -> String {
     let output: String = chars.by_ref().take(MAX_MESSAGE_CHARS).collect();
     if chars.next().is_some() {
         format!("{output}\n[message truncated by Luma]")
+    } else {
+        output
+    }
+}
+
+fn bounded_message_to(content: &str, max_chars: usize) -> String {
+    let mut chars = content.chars();
+    let output: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        const MARKER: &str = "\n[message truncated by Luma]";
+        let marker_len = MARKER.chars().count();
+        if max_chars > marker_len {
+            let prefix = output
+                .chars()
+                .take(max_chars - marker_len)
+                .collect::<String>();
+            format!("{prefix}{MARKER}")
+        } else {
+            output
+        }
     } else {
         output
     }
@@ -285,6 +372,61 @@ mod tests {
         assert!(messages.iter().any(|message| message.content == "turn 89"));
         assert!(!messages.iter().any(|message| message.content == "turn 0"));
         assert!(messages.len() <= MAX_CONTEXT_MESSAGES);
+        assert!(context.total_chars() <= MAX_CONTEXT_CHARS);
+    }
+
+    #[test]
+    fn summary_replacement_keeps_system_instructions_summary_and_latest_turns() {
+        let mut context = Context::new();
+        context.add(MessageRole::System, "workspace policy");
+        for index in 0..9 {
+            context.add(MessageRole::User, format!("turn {index}"));
+        }
+        let (removed, _) = context.replace_with_summary("decided to use Rust".into());
+        assert_eq!(removed, 5);
+        let messages = context.messages();
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.content == "workspace policy")
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.content.contains("decided to use Rust"))
+        );
+        assert!(messages.iter().any(|message| message.content == "turn 8"));
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.content == COMPACTION_MARKER)
+        );
+        assert!(messages.iter().all(|message| message.content != "turn 0"));
+    }
+
+    #[test]
+    fn manual_compaction_budgets_large_recent_messages_instead_of_dropping_them() {
+        let mut context = Context {
+            messages: std::iter::once(super::Message {
+                role: MessageRole::System,
+                content: "system".to_owned() + &"s".repeat(MAX_SYSTEM_CONTEXT_CHARS - 6),
+            })
+            .chain((0..9).map(|index| super::Message {
+                role: MessageRole::User,
+                content: format!("recent-{index}-{}", "x".repeat(MAX_MESSAGE_CHARS - 10)),
+            }))
+            .collect(),
+        };
+        let (removed, _) = context.replace_with_summary("dense summary".repeat(1_000));
+        assert_eq!(removed, 5);
+        let recent = context
+            .messages()
+            .iter()
+            .filter(|message| message.role == MessageRole::User)
+            .collect::<Vec<_>>();
+        assert_eq!(recent.len(), 4);
+        assert!(recent[0].content.starts_with("recent-5-"));
+        assert!(recent[3].content.starts_with("recent-8-"));
         assert!(context.total_chars() <= MAX_CONTEXT_CHARS);
     }
 

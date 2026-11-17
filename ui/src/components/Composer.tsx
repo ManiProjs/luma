@@ -9,6 +9,7 @@ import { useMotionFrame } from "../hooks/useMotionFrame";
 
 import type { Status } from "../state";
 import type { ChatAttachment } from "../../../shared/attachments";
+import type { CommandDescriptor } from "../protocol";
 
 type Props = {
   status: Status;
@@ -32,43 +33,8 @@ type Props = {
   onCancelQuestion: () => void;
   onCancelRequest: () => void;
   disabled?: boolean;
+  commands: CommandDescriptor[];
 };
-
-const COMMANDS = [
-  ["/help", "Show available commands"],
-  ["/cancel", "Cancel the current request"],
-  ["/fullscreen", "Toggle the full-screen terminal view"],
-  ["/clear", "Clear the current conversation"],
-  ["/new", "Start a fresh conversation"],
-  ["/quit", "Exit Luma"],
-  ["/exit", "Exit Luma"],
-  ["/init", "Inspect this workspace and create GALAXY.md"],
-  ["/model", "Choose the global model"],
-  ["/model session", "Choose a model for this session"],
-  ["/tools", "List tools enabled in this session"],
-  ["/skills", "Discover available Agent Skills"],
-  ["/plugins", "List installed Luma plugins"],
-  ["/mcp", "List configured MCP servers"],
-  ["/teammates", "List persistent Teammates agents"],
-  ["/agents", "Alias for /teammates"],
-  ["/tasks", "List recent persistent tasks"],
-  ["/approvals", "List pending tool approvals"],
-  ["/schedules", "List scheduled teammate work"],
-  ["/memory", "List saved user and project memories"],
-  ["/history", "List recent saved conversations"],
-  ["/history list", "List recent saved conversations"],
-  ["/history show", "Inspect a saved conversation by ID"],
-  ["/history delete", "Delete a saved conversation by ID"],
-  ["/history prune", "Delete all saved conversations"],
-  ["/restore", "Restore a saved conversation by ID"],
-  ["/summary:add", "Save a summary for this conversation"],
-  ["/plan", "Create a plan without implementing it"],
-  ["/resume", "Resume the interrupted workspace task"],
-  ["/status", "Show model, workspace, and session status"],
-  ["/workspace", "Show the active workspace"],
-  ["/version", "Show the Luma version"],
-  ["/doctor", "Run session diagnostics"],
-] as const;
 
 export function Composer({
   status,
@@ -92,12 +58,13 @@ export function Composer({
   onCancelQuestion,
   onCancelRequest,
   disabled = false,
+  commands,
 }: Props) {
   const [cursor, setCursor] = useState(value.length);
   const [selectedSuggestion, setSelectedSuggestion] = useState(0);
   const commandPrefix = value.slice(0, cursor);
   const suggestions = !question && commandPrefix.startsWith("/")
-    ? COMMANDS.filter(([command]) => command.startsWith(commandPrefix.toLowerCase()))
+    ? commands.filter(({ command }) => command.startsWith(commandPrefix.toLowerCase())).map(({ command, description }) => [command, description] as const)
     : [];
   const selectedCommandColor = usePulseColor(suggestions.length > 0, theme.brand, "#B4CFFF");
   const approvalColor = usePulseColor(Boolean(confirmation), theme.warning, "#f0d69b");

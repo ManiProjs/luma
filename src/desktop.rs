@@ -99,6 +99,8 @@ impl DesktopServer {
                     "permission_profiles".into(),
                     "restart_reconciliation".into(),
                     "persistent_gateway".into(),
+                    "core_command_registry".into(),
+                    "manual_context_compaction".into(),
                 ],
             },
         )
@@ -199,39 +201,43 @@ impl DesktopServer {
                 self.change_session_model(request_id, model, stdout).await
             }
 
+            ClientMessage::RunCommand {
+                request_id,
+                id,
+                query,
+            } if matches!(
+                id.as_str(),
+                "history_delete" | "history_prune" | "summary" | "rename"
+            ) =>
+            {
+                self.run_session_command(request_id, id, query, stdout)
+                    .await
+            }
+
+            ClientMessage::HistoryDelete { request_id, id } => {
+                self.run_typed_history_delete(request_id, id, stdout).await
+            }
+
+            ClientMessage::HistoryPrune { request_id } => {
+                self.run_typed_history_prune(request_id, stdout).await
+            }
+
+            ClientMessage::SummaryAdd {
+                request_id,
+                id,
+                summary,
+            } => {
+                self.run_typed_summary_add(request_id, id, summary, stdout)
+                    .await
+            }
+
             ClientMessage::StartDashboard {
                 request_id,
                 host,
                 port,
             } => self.start_dashboard(request_id, host, port, stdout).await,
 
-            message @ (ClientMessage::AgentsList { .. }
-            | ClientMessage::AgentCreate { .. }
-            | ClientMessage::AgentDelete { .. }
-            | ClientMessage::AgentUpdate { .. }
-            | ClientMessage::AgentSetStatus { .. }
-            | ClientMessage::TasksList { .. }
-            | ClientMessage::TaskCreate { .. }
-            | ClientMessage::TaskCancel { .. }
-            | ClientMessage::TaskAnswerQuestion { .. }
-            | ClientMessage::TaskRetry { .. }
-            | ClientMessage::ApprovalsList { .. }
-            | ClientMessage::ApprovalResolve { .. }
-            | ClientMessage::MemoryList { .. }
-            | ClientMessage::MemoryAdd { .. }
-            | ClientMessage::MemoryDelete { .. }
-            | ClientMessage::SchedulesList { .. }
-            | ClientMessage::ScheduleCreate { .. }
-            | ClientMessage::ScheduleDelete { .. }
-            | ClientMessage::ScheduleSetEnabled { .. }
-            | ClientMessage::EventTriggersList { .. }
-            | ClientMessage::EventTriggerCreate { .. }
-            | ClientMessage::EventTriggerDelete { .. }
-            | ClientMessage::EventTriggerSetEnabled { .. }
-            | ClientMessage::EventsSince { .. }
-            | ClientMessage::RuntimeCapabilities { .. }) => {
-                self.serve_runtime(message, stdout).await
-            }
+            message if is_runtime_message(&message) => self.serve_runtime(message, stdout).await,
 
             message if message.request_id().is_some() => serve(message, stdout).await,
 
@@ -864,6 +870,171 @@ impl DesktopServer {
         .await
     }
 
+    async fn run_session_command<W>(
+        &mut self,
+        request_id: String,
+        id: String,
+        query: Option<String>,
+        stdout: &mut W,
+    ) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        match self.session.apply_run_command(&id, query.as_deref()).await {
+            Ok(content) => {
+                write_event(
+                    stdout,
+                    ServerEvent::CommandOutput {
+                        request_id,
+                        id,
+                        content,
+                    },
+                )
+                .await?;
+                write_event(
+                    stdout,
+                    ServerEvent::Session {
+                        session: self.session.view(),
+                    },
+                )
+                .await
+            }
+            Err(error) => {
+                report_error(
+                    stdout,
+                    Some(request_id),
+                    error.to_string(),
+                    ErrorCategory::Transient,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn run_typed_history_delete<W>(
+        &mut self,
+        request_id: String,
+        id: String,
+        stdout: &mut W,
+    ) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        match self
+            .session
+            .apply_run_command("history_delete", Some(&id))
+            .await
+        {
+            Ok(content) => {
+                let deleted = content.starts_with("Deleted chat ");
+                write_event(
+                    stdout,
+                    ServerEvent::HistoryDeleted {
+                        request_id,
+                        id,
+                        deleted,
+                    },
+                )
+                .await?;
+                self.write_session_snapshot(stdout).await
+            }
+            Err(error) => {
+                report_error(
+                    stdout,
+                    Some(request_id),
+                    error.to_string(),
+                    ErrorCategory::Transient,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn run_typed_history_prune<W>(&mut self, request_id: String, stdout: &mut W) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        match self
+            .session
+            .apply_run_command("history_prune", Some("confirm"))
+            .await
+        {
+            Ok(content) if content.starts_with("Cancel the current request") => {
+                report_error(stdout, Some(request_id), content, ErrorCategory::Transient).await
+            }
+            Ok(content) => {
+                let removed = content
+                    .split_whitespace()
+                    .nth(2)
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or_default();
+                write_event(
+                    stdout,
+                    ServerEvent::HistoryPruned {
+                        request_id,
+                        removed,
+                    },
+                )
+                .await?;
+                self.write_session_snapshot(stdout).await
+            }
+            Err(error) => {
+                report_error(
+                    stdout,
+                    Some(request_id),
+                    error.to_string(),
+                    ErrorCategory::Transient,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn run_typed_summary_add<W>(
+        &mut self,
+        request_id: String,
+        id: String,
+        summary: String,
+        stdout: &mut W,
+    ) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        let query = serde_json::json!({ "id": id, "summary": summary }).to_string();
+        match self
+            .session
+            .apply_run_command("summary", Some(&query))
+            .await
+        {
+            Ok(_) => {
+                write_event(stdout, ServerEvent::SummarySaved { request_id, id }).await?;
+                self.write_session_snapshot(stdout).await
+            }
+            Err(error) => {
+                report_error(
+                    stdout,
+                    Some(request_id),
+                    error.to_string(),
+                    ErrorCategory::Transient,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn write_session_snapshot<W>(&self, stdout: &mut W) -> Result<()>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        write_event(
+            stdout,
+            ServerEvent::Session {
+                session: self.session.view(),
+            },
+        )
+        .await
+    }
+
     async fn start_dashboard<W>(
         &mut self,
         request_id: String,
@@ -1031,6 +1202,311 @@ impl DesktopServer {
     }
 }
 
+fn is_runtime_message(message: &ClientMessage) -> bool {
+    matches!(
+        message,
+        ClientMessage::AgentsList { .. }
+            | ClientMessage::AgentCreate { .. }
+            | ClientMessage::AgentDelete { .. }
+            | ClientMessage::AgentUpdate { .. }
+            | ClientMessage::AgentSetStatus { .. }
+            | ClientMessage::TasksList { .. }
+            | ClientMessage::TaskCreate { .. }
+            | ClientMessage::TaskCancel { .. }
+            | ClientMessage::TaskAnswerQuestion { .. }
+            | ClientMessage::TaskRetry { .. }
+            | ClientMessage::TaskRename { .. }
+            | ClientMessage::TaskDelete { .. }
+            | ClientMessage::ApprovalsList { .. }
+            | ClientMessage::ApprovalResolve { .. }
+            | ClientMessage::MemoryList { .. }
+            | ClientMessage::MemoryAdd { .. }
+            | ClientMessage::MemoryDelete { .. }
+            | ClientMessage::SchedulesList { .. }
+            | ClientMessage::ScheduleCreate { .. }
+            | ClientMessage::ScheduleDelete { .. }
+            | ClientMessage::ScheduleSetEnabled { .. }
+            | ClientMessage::EventTriggersList { .. }
+            | ClientMessage::EventTriggerCreate { .. }
+            | ClientMessage::EventTriggerDelete { .. }
+            | ClientMessage::EventTriggerSetEnabled { .. }
+            | ClientMessage::EventsSince { .. }
+            | ClientMessage::RuntimeCapabilities { .. }
+    )
+}
+
+// ============================================================
+// Core-owned interactive commands
+// ============================================================
+
+fn execute_core_command(id: &str, query: Option<&str>) -> Result<String> {
+    use crate::tools::{Tool, developer, filesystem, git};
+    use serde_json::json;
+    let workspace = std::env::current_dir()?.canonicalize()?;
+    let scoped_path = |value: Option<&str>| -> Result<String> {
+        let candidate = value.map_or_else(|| workspace.clone(), |value| workspace.join(value));
+        let canonical = candidate.canonicalize()?;
+        if !canonical.starts_with(&workspace) {
+            anyhow::bail!("workspace command path must stay inside the active workspace");
+        }
+        Ok(canonical.display().to_string())
+    };
+
+    match id {
+        "git" => {
+            let path = workspace.display().to_string();
+            let view = query.unwrap_or("status");
+            if let Some(file) = view.strip_prefix("stage:") {
+                return git::GitStage.execute(&json!({"path": path, "file": file}).to_string());
+            }
+            if let Some(file) = view.strip_prefix("unstage:") {
+                return git::GitUnstage.execute(&json!({"path": path, "file": file}).to_string());
+            }
+            if let Some(file) = view.strip_prefix("revert:") {
+                return git::GitRevert.execute(&json!({"path": path, "file": file}).to_string());
+            }
+            if let Some(file) = view.strip_prefix("diff:") {
+                return git::GitDiff.execute(&json!({"path": path, "file": file}).to_string());
+            }
+            if let Some(file) = view.strip_prefix("diff-staged:") {
+                return git::GitDiff
+                    .execute(&json!({"path": path, "file": file, "staged": true}).to_string());
+            }
+            match view {
+                "status" => git::GitStatus.execute(&json!({"path": path}).to_string()),
+                "status_json" => git::GitChanges.execute(&json!({"path": path}).to_string()),
+                "diff" => git::GitDiff.execute(&json!({"path": path}).to_string()),
+                "diff_staged" => {
+                    git::GitDiff.execute(&json!({"path": path, "staged": true}).to_string())
+                }
+                "log" => developer::GitLog.execute(&json!({"path": path, "limit": 20}).to_string()),
+                "branches" => developer::GitBranches.execute(&json!({"path": path}).to_string()),
+                other => {
+                    anyhow::bail!(
+                        "unknown Git view: {other}; use status, status_json, diff, log, branches, stage:<file>, unstage:<file>, or revert:<file>"
+                    )
+                }
+            }
+        }
+        "files" => {
+            let path = scoped_path(query)?;
+            filesystem::list_directory::ListDirectory
+                .execute(&json!({"path": path, "depth": 3}).to_string())
+        }
+        "search" => {
+            let pattern = query
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| anyhow::anyhow!("workspace search requires a non-empty query"))?;
+            let files = filesystem::search_files::SearchFiles.execute(
+                &json!({"path": workspace.display().to_string(), "pattern": pattern}).to_string(),
+            )?;
+            let files = serde_json::from_str::<serde_json::Value>(&files)
+                .unwrap_or_else(|_| serde_json::Value::String(files));
+            let conversations = crate::chats::search(pattern)?;
+            Ok(serde_json::to_string_pretty(&json!({
+                "workspace_files": files,
+                "conversations": conversations,
+            }))?)
+        }
+        "find_files" => {
+            let pattern = query
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| anyhow::anyhow!("file finder requires a non-empty query"))?;
+            filesystem::find_files::FindFiles.execute(
+                &json!({"path": workspace.display().to_string(), "query": pattern, "limit": 40})
+                    .to_string(),
+            )
+        }
+        "read_file" => {
+            let path = scoped_path(query)?;
+            filesystem::read_file::ReadFile.execute(&path)
+        }
+        "doctor" => developer::InspectProject
+            .execute(&json!({"path": workspace.display().to_string()}).to_string()),
+        "help" | "commands" => Ok(crate::commands::registry()
+            .into_iter()
+            .map(|item| format!("{}  —  {}", item.command, item.description))
+            .collect::<Vec<_>>()
+            .join("\n")),
+        "status" => {
+            let config = crate::config::load_or_default()?;
+            Ok(format!(
+                "Luma Core v{}\nWorkspace: {}\nProvider: {}\nModel: {}",
+                env!("CARGO_PKG_VERSION"),
+                workspace.display(),
+                config.model.provider,
+                config.model.name
+            ))
+        }
+        "workspace" => Ok(format!("Active workspace: {}", workspace.display())),
+        "version" => Ok(format!("Luma Core v{}", env!("CARGO_PKG_VERSION"))),
+        "tools" => Ok(crate::tools::default_registry().names().join("\n")),
+        "skills" => crate::tools::skills::ListSkills.execute("{}"),
+        "plugins" => Ok(serde_json::to_string_pretty(
+            &crate::plugins::PluginManager.list()?,
+        )?),
+        "mcp" => {
+            let servers = crate::mcp::McpManager
+                .list()?
+                .into_iter()
+                .map(|server| {
+                    json!({
+                        "id": server.id,
+                        "name": server.name,
+                        "transport": server.transport,
+                        "url": server.url,
+                        "command": server.command,
+                        "args": server.args,
+                        "enabled": server.enabled,
+                    })
+                })
+                .collect::<Vec<_>>();
+            Ok(serde_json::to_string_pretty(&servers)?)
+        }
+        "restore" | "history_show" => {
+            let id = query
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| anyhow::anyhow!("this command requires a saved conversation ID"))?;
+            Ok(serde_json::to_string_pretty(&crate::chats::load(id)?)?)
+        }
+        "history_list" => Ok(serde_json::to_string_pretty(&crate::chats::list()?)?),
+        "history_delete" => {
+            let _ = query;
+            anyhow::bail!(
+                "history deletion must run through the active session command so it can protect the current conversation"
+            )
+        }
+        "history_prune" => {
+            let _ = query;
+            anyhow::bail!(
+                "history pruning must run through the active session command so it can reset the current conversation"
+            )
+        }
+        "summary" => {
+            let _ = query;
+            anyhow::bail!(
+                "summary updates must run through the active session so its in-memory state stays synchronized"
+            )
+        }
+        "teammates" | "agents" => {
+            let runtime = crate::runtime::RuntimeStore::open_default()?;
+            Ok(serde_json::to_string_pretty(&runtime.list_agents()?)?)
+        }
+        "tasks" => {
+            let runtime = crate::runtime::RuntimeStore::open_default()?;
+            Ok(serde_json::to_string_pretty(
+                &runtime.list_tasks(None, 100)?,
+            )?)
+        }
+        "approvals" => {
+            let runtime = crate::runtime::RuntimeStore::open_default()?;
+            Ok(serde_json::to_string_pretty(
+                &runtime.list_pending_approvals()?,
+            )?)
+        }
+        "schedules" => {
+            let runtime = crate::runtime::RuntimeStore::open_default()?;
+            Ok(serde_json::to_string_pretty(
+                &runtime.list_schedules(None)?,
+            )?)
+        }
+        "memory" => {
+            let runtime = crate::runtime::RuntimeStore::open_default()?;
+            let workspace_id = workspace.display().to_string();
+            let user = runtime.list_memory(crate::runtime::MemoryScope::User, "user", query, 50)?;
+            let project = runtime.list_memory(
+                crate::runtime::MemoryScope::Project,
+                &workspace_id,
+                query,
+                50,
+            )?;
+            Ok(serde_json::to_string_pretty(
+                &json!({"user": user, "project": project}),
+            )?)
+        }
+        "monitor" => {
+            crate::tools::observability::ExecutionMetrics::default().execute(query.unwrap_or("{}"))
+        }
+        "history" => {
+            if let Some(query) = query.filter(|value| !value.trim().is_empty()) {
+                Ok(serde_json::to_string_pretty(&crate::chats::search(query)?)?)
+            } else {
+                Ok(serde_json::to_string_pretty(&crate::chats::list()?)?)
+            }
+        }
+        _ => anyhow::bail!("unsupported Core command: {id}"),
+    }
+}
+
+#[cfg(test)]
+mod core_command_tests {
+    use super::{execute_core_command, is_runtime_message};
+    use crate::protocol::ClientMessage;
+
+    #[test]
+    fn task_rename_and_delete_are_dispatched_to_runtime() {
+        let rename = ClientMessage::TaskRename {
+            request_id: "rename-1".into(),
+            id: "task-1".into(),
+            title: "Renamed task".into(),
+        };
+        let delete = ClientMessage::TaskDelete {
+            request_id: "delete-1".into(),
+            id: "task-1".into(),
+        };
+
+        assert!(is_runtime_message(&rename));
+        assert!(is_runtime_message(&delete));
+    }
+
+    #[test]
+    fn core_commands_expose_version_help_and_git_views() {
+        assert!(
+            execute_core_command("version", None)
+                .unwrap()
+                .contains(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(
+            execute_core_command("help", None)
+                .unwrap()
+                .contains("/compact")
+        );
+        assert!(execute_core_command("git", Some("status")).is_ok());
+        assert!(execute_core_command("git", Some("status_json")).is_ok());
+    }
+
+    #[test]
+    fn workspace_commands_reject_paths_outside_the_active_workspace() {
+        let error = execute_core_command("files", Some("../")).unwrap_err();
+        assert!(error.to_string().contains("inside the active workspace"));
+        assert!(execute_core_command("search", Some("  ")).is_err());
+    }
+
+    #[test]
+    fn core_file_finder_returns_ranked_workspace_relative_results() {
+        let output = execute_core_command("find_files", Some("desktop")).unwrap();
+        let results: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let first = results.as_array().and_then(|items| items.first()).unwrap();
+        assert!(first["path"].as_str().unwrap().starts_with("desktop/"));
+        assert!(first["score"].as_i64().unwrap() > 0);
+        assert!(execute_core_command("find_files", Some(" ")).is_err());
+    }
+
+    #[test]
+    fn mutating_history_commands_require_the_session_dispatcher() {
+        assert!(execute_core_command("history_delete", Some("../history.json")).is_err());
+        assert!(execute_core_command("history_delete", Some(" ")).is_err());
+        assert!(execute_core_command("history_prune", None).is_err());
+        assert!(execute_core_command("history_prune", Some("yes")).is_err());
+        assert!(
+            execute_core_command("summary", Some("{}"))
+                .unwrap_err()
+                .to_string()
+                .contains("active session")
+        );
+    }
+}
+
 // ============================================================
 // Setup and introspection
 // ============================================================
@@ -1040,6 +1516,34 @@ where
     W: AsyncWriteExt + Unpin,
 {
     match message {
+        ClientMessage::GetCommands { request_id } => {
+            write_event(
+                stdout,
+                ServerEvent::Commands {
+                    request_id,
+                    commands: crate::commands::registry(),
+                },
+            )
+            .await?;
+        }
+
+        ClientMessage::RunCommand {
+            request_id,
+            id,
+            query,
+        } => {
+            let content = execute_core_command(&id, query.as_deref())?;
+            write_event(
+                stdout,
+                ServerEvent::CommandOutput {
+                    request_id,
+                    id,
+                    content,
+                },
+            )
+            .await?;
+        }
+
         ClientMessage::GetSetupConfig { request_id } => match crate::config::load_or_default() {
             Ok(config) => {
                 write_event(stdout, ServerEvent::SetupConfig { request_id, config }).await?;
@@ -1190,69 +1694,35 @@ where
             }
         },
 
-        ClientMessage::HistoryDelete { request_id, id } => match chats::delete(&id) {
-            Ok(deleted) => {
-                write_event(
-                    stdout,
-                    ServerEvent::HistoryDeleted {
-                        request_id,
-                        id,
-                        deleted,
-                    },
-                )
-                .await?;
-            }
-            Err(error) => {
-                report_error(
-                    stdout,
-                    Some(request_id),
-                    error.to_string(),
-                    ErrorCategory::Transient,
-                )
-                .await?;
-            }
-        },
+        ClientMessage::HistoryDelete { request_id, .. } => {
+            report_error(
+                stdout,
+                Some(request_id),
+                "history deletion requires the active session dispatcher".into(),
+                ErrorCategory::Fatal,
+            )
+            .await?;
+        }
 
-        ClientMessage::HistoryPrune { request_id } => match chats::prune() {
-            Ok(removed) => {
-                write_event(
-                    stdout,
-                    ServerEvent::HistoryPruned {
-                        request_id,
-                        removed,
-                    },
-                )
-                .await?;
-            }
-            Err(error) => {
-                report_error(
-                    stdout,
-                    Some(request_id),
-                    error.to_string(),
-                    ErrorCategory::Transient,
-                )
-                .await?;
-            }
-        },
+        ClientMessage::HistoryPrune { request_id } => {
+            report_error(
+                stdout,
+                Some(request_id),
+                "history pruning requires the active session dispatcher".into(),
+                ErrorCategory::Fatal,
+            )
+            .await?;
+        }
 
-        ClientMessage::SummaryAdd {
-            request_id,
-            id,
-            summary,
-        } => match chats::add_summary(&id, summary) {
-            Ok(()) => {
-                write_event(stdout, ServerEvent::SummarySaved { request_id, id }).await?;
-            }
-            Err(error) => {
-                report_error(
-                    stdout,
-                    Some(request_id),
-                    error.to_string(),
-                    ErrorCategory::Transient,
-                )
-                .await?;
-            }
-        },
+        ClientMessage::SummaryAdd { request_id, .. } => {
+            report_error(
+                stdout,
+                Some(request_id),
+                "summary updates require the active session dispatcher".into(),
+                ErrorCategory::Fatal,
+            )
+            .await?;
+        }
 
         other => {
             tracing::debug!(?other, "unhandled client message");

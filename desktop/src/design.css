@@ -118,6 +118,249 @@
 }
 .luma-sidebar .luma-workspace-picker button { min-height: 29px; font-size: 11px; }
 
+.luma-command-palette-backdrop {
+  position: fixed;
+  z-index: 20000;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: min(18vh, 148px) 20px 24px;
+  background: rgba(9, 10, 12, .48);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+  animation: luma-command-palette-fade-in 110ms ease-out both;
+}
+
+.luma-runtime-notice-center {
+  position: fixed;
+  z-index: 15000;
+  right: 18px;
+  bottom: 18px;
+  color: var(--luma-text);
+}
+
+.luma-runtime-notice-trigger {
+  display: flex;
+  min-height: 34px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 11px;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 9px;
+  background: var(--luma-surface-raised);
+  color: var(--luma-text-secondary);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, .12);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.luma-runtime-notice-trigger:hover { color: var(--luma-text); background: var(--luma-surface-hover); }
+.luma-runtime-notice-count { min-width: 17px; padding: 1px 5px; border-radius: 999px; background: var(--luma-accent-soft); color: var(--luma-text); text-align: center; font-size: 10px; font-variant-numeric: tabular-nums; }
+
+.luma-runtime-notice-panel {
+  position: absolute;
+  right: 0;
+  bottom: 44px;
+  display: flex;
+  width: min(370px, calc(100vw - 36px));
+  max-height: min(430px, calc(100vh - 90px));
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 11px;
+  background: var(--luma-surface-raised);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, .24);
+}
+
+.luma-runtime-notice-panel > header { display: flex; min-height: 42px; align-items: center; justify-content: space-between; padding: 0 12px; border-bottom: 1px solid var(--luma-border); }
+.luma-runtime-notice-panel > header strong { font-size: 12px; font-weight: 650; }
+.luma-runtime-notice-panel > header > div { display: flex; align-items: center; gap: 10px; }
+.luma-runtime-notice-panel button { color: var(--luma-text-muted); font-size: 11px; }
+.luma-runtime-notice-panel button:hover { color: var(--luma-text); }
+.luma-runtime-notice-panel > header button:last-child { font-size: 19px; line-height: 1; }
+.luma-runtime-notice-panel ul { overflow: auto; margin: 0; padding: 2px 0; list-style: none; }
+.luma-runtime-notice-panel li { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; }
+.luma-runtime-notice-panel li + li { border-top: 1px solid var(--luma-border); }
+.luma-runtime-notice-copy { min-width: 0; flex: 1; }
+.luma-runtime-notice-heading { display: flex; align-items: baseline; gap: 10px; }
+.luma-runtime-notice-heading strong { min-width: 0; overflow: hidden; color: var(--luma-text); font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.luma-runtime-notice-heading time { flex: none; color: var(--luma-text-muted); font-size: 10px; }
+.luma-runtime-notice-copy p { margin: 3px 0 0; color: var(--luma-text-secondary); font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.luma-runtime-notice-panel li > button { flex: none; padding: 0 2px; font-size: 16px; line-height: 1; }
+.luma-runtime-notice-empty { margin: 0; padding: 24px 12px; color: var(--luma-text-muted); font-size: 11px; text-align: center; }
+
+@media (prefers-reduced-motion: reduce) {
+  .luma-runtime-notice-panel { scroll-behavior: auto; }
+}
+
+.luma-command-palette-panel {
+  display: flex;
+  width: min(620px, 100%);
+  max-height: min(590px, 72vh);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 12px;
+  background: var(--luma-surface);
+  color: var(--luma-text);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .32), 0 2px 8px rgba(0, 0, 0, .12);
+  animation: luma-command-palette-enter 150ms cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.luma-command-palette-search {
+  display: flex;
+  min-height: 62px;
+  align-items: center;
+  gap: 13px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--luma-border);
+  color: var(--luma-text-muted);
+}
+
+.luma-command-palette-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--luma-text);
+  font: inherit;
+  font-size: 15px;
+}
+
+.luma-command-palette-search input::placeholder { color: var(--luma-text-muted); }
+.luma-command-palette-search kbd,
+.luma-command-palette-footer kbd,
+.luma-command-palette-shortcut kbd {
+  display: inline-flex;
+  min-width: 19px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--luma-text) 5%, transparent);
+  color: var(--luma-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  line-height: 1;
+}
+
+.luma-command-palette-esc { flex: none; }
+.luma-command-palette-list { min-height: 100px; overflow: auto; padding: 9px 8px; }
+.luma-command-palette-group + .luma-command-palette-group { margin-top: 8px; }
+.luma-command-palette-category {
+  padding: 8px 10px 5px;
+  color: var(--luma-text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: .075em;
+  text-transform: uppercase;
+}
+
+.luma-command-palette-item {
+  display: flex;
+  width: 100%;
+  min-height: 42px;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--luma-text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.luma-command-palette-item:hover,
+.luma-command-palette-item.is-active {
+  background: var(--luma-accent-soft);
+  color: var(--luma-text);
+}
+
+.luma-command-palette-item-copy { display: flex; min-width: 0; flex: 1; align-items: baseline; gap: 12px; }
+.luma-command-palette-name { flex: none; color: var(--luma-text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.luma-command-palette-description { overflow: hidden; color: var(--luma-text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.luma-command-palette-shortcut { display: flex; flex: none; gap: 3px; }
+.luma-command-palette-empty { padding: 34px 12px; color: var(--luma-text-muted); font-size: 12px; text-align: center; }
+.luma-command-palette-footer { display: flex; min-height: 39px; align-items: center; gap: 18px; padding: 0 14px; border-top: 1px solid var(--luma-border); color: var(--luma-text-muted); font-size: 10px; }
+.luma-command-palette-footer > span { display: inline-flex; align-items: center; gap: 5px; }
+
+.luma-command-output-backdrop {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0,0,0,.48);
+}
+.luma-command-output-panel {
+  display: flex;
+  width: min(760px, 100%);
+  max-height: min(760px, 82vh);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 11px;
+  background: var(--luma-surface-raised);
+  box-shadow: 0 20px 60px rgba(0,0,0,.28);
+}
+.luma-command-output-panel > header,
+.luma-command-output-panel > footer {
+  display: flex;
+  min-height: 52px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+}
+.luma-command-output-panel > header { border-bottom: 1px solid var(--luma-border); }
+.luma-command-output-panel > header span { color: var(--luma-text-muted); font-size: 9px; font-weight: 650; letter-spacing: .1em; }
+.luma-command-output-panel h2 { margin: 2px 0 0; color: var(--luma-text); font-size: 13px; font-weight: 600; }
+.luma-command-output-panel > header button { width: 28px; height: 28px; border-radius: 6px; color: var(--luma-text-muted); font-size: 20px; }
+.luma-command-output-panel > header button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-command-output-panel pre { min-height: 120px; overflow: auto; margin: 0; padding: 16px; color: var(--luma-text-secondary); font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 11px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; }
+.luma-command-output-panel > footer { border-top: 1px solid var(--luma-border); color: var(--luma-text-muted); font-size: 10px; }
+.luma-command-output-panel > footer button { min-height: 29px; padding: 0 12px; border: 1px solid var(--luma-border-strong); border-radius: 6px; color: var(--luma-text); font-size: 11px; }
+.luma-command-output-panel > footer button:hover { background: var(--luma-surface-hover); }
+.luma-command-query-panel {
+  display: flex;
+  width: min(520px, 100%);
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--luma-border-strong);
+  border-radius: 11px;
+  background: var(--luma-surface-raised);
+  box-shadow: 0 20px 60px rgba(0,0,0,.28);
+}
+.luma-command-query-panel > label { color: var(--luma-text); font-size: 13px; font-weight: 600; }
+.luma-command-query-panel > input { min-height: 38px; padding: 0 10px; border: 1px solid var(--luma-border-strong); border-radius: 7px; outline: none; background: var(--luma-surface); color: var(--luma-text); font-size: 12px; }
+.luma-command-query-panel > input:focus { border-color: var(--luma-accent); }
+.luma-command-query-panel > footer { display: flex; justify-content: flex-end; gap: 8px; }
+.luma-command-query-panel > footer button { min-height: 30px; padding: 0 12px; border: 1px solid var(--luma-border-strong); border-radius: 6px; color: var(--luma-text); font-size: 11px; }
+.luma-command-query-panel > footer button[type="submit"] { border-color: var(--luma-accent); background: var(--luma-accent); color: var(--luma-on-accent); }
+.luma-command-query-panel > footer button:disabled { opacity: .45; }
+
+@keyframes luma-command-palette-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes luma-command-palette-enter { from { opacity: 0; transform: translateY(-7px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+@media (max-width: 560px) {
+  .luma-command-palette-backdrop { padding: 10vh 10px 16px; }
+  .luma-command-palette-item-copy { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .luma-command-palette-footer { justify-content: space-between; gap: 6px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .luma-command-palette-backdrop,
+  .luma-command-palette-panel { animation: none; }
+}
+
 .luma-sidebar .luma-new-chat { padding: 0 12px 14px; }
 .luma-sidebar .luma-new-chat button {
   height: 34px;
@@ -1646,6 +1889,21 @@ html[data-theme="luma"] .luma-sidebar-account strong { font-size: 13px; font-wei
 
 html[data-theme="luma"] .luma-conversation-header,
 html[data-theme="luma"] .luma-teammate-header { height: 52px; min-height: 52px; padding-inline: 24px 16px; border-bottom-color: var(--luma-border); background: var(--luma-bg); }
+html[data-theme="luma"] .luma-session-tabs { display: flex; min-height: 38px; align-items: stretch; gap: 6px; overflow: hidden; padding: 4px 14px 0; border-bottom: 1px solid var(--luma-border); background: var(--luma-bg); }
+html[data-theme="luma"] .luma-session-tabs-list { display: flex; min-width: 0; flex: 1; align-items: stretch; gap: 3px; overflow-x: auto; scrollbar-width: none; }
+html[data-theme="luma"] .luma-session-tabs-list::-webkit-scrollbar { display: none; }
+html[data-theme="luma"] .luma-session-tab { display: flex; min-width: 0; max-width: 220px; flex: 0 1 180px; align-items: center; border-radius: 6px 6px 0 0; color: var(--luma-text-secondary); }
+html[data-theme="luma"] .luma-session-tab[data-active="true"] { border: 1px solid var(--luma-border); border-bottom-color: var(--luma-bg); background: var(--luma-surface-raised); color: var(--luma-text); }
+html[data-theme="luma"] .luma-session-tab > button:first-child { min-width: 0; flex: 1; overflow: hidden; padding: 0 8px; font-size: 12px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+html[data-theme="luma"] .luma-session-tab-close,
+html[data-theme="luma"] .luma-session-tab-new { display: inline-flex; width: 24px; height: 24px; flex: none; align-items: center; justify-content: center; border-radius: 5px; color: var(--luma-text-muted); font-size: 16px; line-height: 1; }
+html[data-theme="luma"] .luma-session-tab-close { margin-right: 3px; opacity: 0; }
+html[data-theme="luma"] .luma-session-tab:hover .luma-session-tab-close,
+html[data-theme="luma"] .luma-session-tab[data-active="true"] .luma-session-tab-close,
+html[data-theme="luma"] .luma-session-tab-close:focus-visible { opacity: 1; }
+html[data-theme="luma"] .luma-session-tab-close:hover,
+html[data-theme="luma"] .luma-session-tab-new:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+html[data-theme="luma"] .luma-session-tab-new { align-self: center; margin: 0 2px 3px 0; font-size: 18px; }
 html[data-theme="luma"] .luma-agent-transcript { max-width: 720px; padding-top: 28px; }
 html[data-theme="luma"] .luma-message-row.is-user { justify-content: flex-end; }
 html[data-theme="luma"] .luma-message-row.is-user::before { display: none; }
@@ -1768,3 +2026,10 @@ html[data-theme="luma"] .luma-teammate-history-nav-item { min-height: 30px; padd
   html[data-theme="luma"] .luma-tool-chevron,
   html[data-theme="luma"] .luma-tool-state.is-running { transition: none; animation: none; }
 }
+
+html[data-theme="luma"] .luma-command-file-results { display: flex; max-height: 56vh; flex-direction: column; overflow: auto; border-top: 1px solid var(--luma-border); }
+html[data-theme="luma"] .luma-command-file-results > div > button { display: flex; width: 100%; min-height: 34px; align-items: center; gap: 12px; padding: 0 8px; border-bottom: 1px solid var(--luma-border); color: var(--luma-text); text-align: left; }
+html[data-theme="luma"] .luma-command-file-results > div > button:hover,
+html[data-theme="luma"] .luma-command-file-results > div > button:focus-visible { background: var(--luma-surface-hover); outline: none; }
+html[data-theme="luma"] .luma-command-file-results > div > button > span { min-width: 0; flex: 1; overflow: hidden; font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+html[data-theme="luma"] .luma-command-file-results > div > button > small { color: var(--luma-text-muted); font-variant-numeric: tabular-nums; }

@@ -243,7 +243,10 @@ export type ClientMessage =
   | { type: "cancel" }
   | { type: "rollback"; data: { index: number } }
   | { type: "toggle_expanded"; data: { index: number } }
+  | { type: "compact_context" }
   | { type: "get_session" }
+  | { type: "get_commands"; data: { request_id: string } }
+  | { type: "run_command"; data: { request_id: string; id: string; query: string | null } }
   | { type: "get_setup_config"; data: { request_id: string } }
   | { type: "save_setup_config"; data: { request_id: string; config: AppConfigInput } }
   | { type: "get_providers"; data: { request_id: string } }
@@ -335,6 +338,8 @@ export type ServerEvent =
   | { type: "ready"; data: { version: number; features?: string[] } }
   | { type: "agent"; data: { event: AgentEvent } }
   | { type: "session"; data: { session: SessionView } }
+  | { type: "commands"; data: { request_id: string; commands: CommandDescriptor[] } }
+  | { type: "command_output"; data: { request_id: string; id: string; content: string } }
   | { type: "error"; data: { request_id: string | null; message: string; category: "transient" | "fatal" | "initialization_failed" } }
   | { type: "setup_config"; data: { request_id: string; config: AppConfig } }
   | { type: "setup_saved"; data: { request_id: string } }
@@ -374,6 +379,14 @@ export type ServerEvent =
   | { type: "runtime_events"; data: { request_id: string; events: RuntimeEvent[] } }
   | { type: "runtime_capabilities"; data: { request_id: string; features: string[]; storage_schema: number } }
   | { type: "runtime_notice"; data: { event: RuntimeEvent } };
+
+export type CommandDescriptor = {
+  id: string;
+  command: string;
+  description: string;
+  category: string;
+  shortcut: string | null;
+};
 
 export function encodeClientMessage(message: ClientMessage): string {
   return `${JSON.stringify(message)}\n`;
@@ -634,6 +647,10 @@ export function parseServerEvent(line: string): ServerEvent {
       && (data.features === undefined || (Array.isArray(data.features) && data.features.every(isString))); break;
     case "agent": valid = isAgentEvent(data.event); break;
     case "session": valid = isSessionView(data.session); break;
+    case "commands": valid = isString(data.request_id) && Array.isArray(data.commands)
+      && data.commands.every((item) => isRecord(item) && isString(item.id) && isString(item.command)
+        && isString(item.description) && isString(item.category) && isNullableString(item.shortcut)); break;
+    case "command_output": valid = isString(data.request_id) && isString(data.id) && isString(data.content); break;
     case "error": valid = isNullableString(data.request_id) && isString(data.message)
       && ["transient", "fatal", "initialization_failed"].includes(String(data.category)); break;
     case "setup_config": valid = isString(data.request_id) && isAppConfig(data.config); break;

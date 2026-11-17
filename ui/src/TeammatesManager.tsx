@@ -7,10 +7,11 @@ import { LumaClient } from "./client";
 import { startDesktopServer, stopDesktopServer } from "./server";
 import type { AgentConfiguration, AgentRecord, ClientMessage, RuntimeEvent, ServerEvent, TaskRecord } from "./protocol";
 import { Markdown } from "./components/Markdown";
-import { theme } from "./theme";
+import { theme, themeLabel } from "./theme";
 import { useMotionFrame } from "./hooks/useMotionFrame";
 import { useTerminalMouse } from "./hooks/useTerminalMouse";
 import { useTerminalFullscreen } from "./hooks/useTerminalFullscreen";
+import { useTerminalTheme } from "./hooks/useTerminalTheme";
 
 type RequestEvent = Extract<ServerEvent, { data: { request_id: string } }>;
 type View = "list" | "settings" | "chat";
@@ -76,6 +77,7 @@ export function TeammatesManager() {
   const chatEnd = chatOffset > 0 ? Math.max(0, chatLines.length - chatOffset) : chatLines.length;
   const visibleChatLines = chatLines.slice(Math.max(0, chatEnd - chatWindowSize), chatEnd);
   const wideLayout = (stdout.columns || 80) >= 92;
+  const selectedTheme = useTerminalTheme(!busy && !editing && !confirmDelete);
   useTerminalFullscreen(fullScreen);
 
   useTerminalMouse(rootElement, (event, contains) => {
@@ -513,7 +515,7 @@ export function TeammatesManager() {
       </Box> : null}
       {confirmDelete && selectedAgent ? <Box marginTop={1}><Text color={theme.warning}>Delete {selectedAgent.name} and its dependent data? (y/N)</Text></Box> : null}
     </Box> : null}
-    {!fullScreen && view === "list" ? <Box marginTop={1}><Text color={theme.chrome}>↑/↓ select · C chat · E settings · D delete · Q quit</Text></Box> : null}
+    {!fullScreen && view === "list" ? <Box marginTop={1}><Text color={theme.chrome}>↑/↓ select · C chat · E settings · D delete · Q quit · Ctrl+T theme ({themeLabel(selectedTheme)})</Text></Box> : null}
 
     {view === "settings" && selectedAgent ? <Box marginTop={1} flexDirection="column" gap={1} flexGrow={fullScreen ? 1 : 0} minHeight={0}>
       <Text bold color={theme.text}>{selectedAgent.name} settings</Text>
@@ -525,7 +527,7 @@ export function TeammatesManager() {
       <Text color={theme.muted}>G  Use global skills, memory, connectors, etc.  <Text color={selectedAgent.configuration.use_global_context ? theme.success : theme.warning}>{selectedAgent.configuration.use_global_context ? "ON" : "OFF"}</Text></Text>
       <Text color={theme.muted}>5  Internet access / web search  <Text color={(selectedAgent.configuration.network_access ?? true) ? theme.success : theme.warning}>{(selectedAgent.configuration.network_access ?? true) ? "ON" : "OFF"}</Text></Text>
       {editing ? <Box marginTop={1} flexDirection="column"><Text color={theme.brand}>Editing {editing} · Enter saves · Esc cancels</Text><Text color={theme.text}>{editValue}▌</Text></Box> : null}
-      {!fullScreen ? <Text color={theme.chrome}>1–4 edit · G global context · 5 internet · Esc back</Text> : null}
+      {!fullScreen ? <Text color={theme.chrome}>1–4 edit · G global context · 5 internet · Ctrl+T theme ({themeLabel(selectedTheme)}) · Esc back</Text> : null}
     </Box> : null}
 
     {view === "chat" && selectedAgent ? <Box marginTop={1} flexDirection="column" flexGrow={fullScreen ? 1 : 0} minHeight={0}>
@@ -547,12 +549,12 @@ export function TeammatesManager() {
       <Box marginTop={1} flexDirection="row" width="100%">
         <Text color={theme.brand}>› </Text><Text color={theme.text}>{chatInput.slice(0, chatCursor)}<Text color={theme.brand}>▏</Text>{chatInput.slice(chatCursor)}</Text>
       </Box>
-      {!fullScreen ? <Text color={theme.chrome}>{pendingQuestion ? "Enter answer · Esc back" : "Enter send · Esc back"}{activeTaskId ? " · Ctrl+C cancel task" : ""}</Text> : null}
+      {!fullScreen ? <Text color={theme.chrome}>{pendingQuestion ? "Enter answer · Esc back" : "Enter send · Esc back"}{activeTaskId ? " · Ctrl+C cancel task" : ""} · Ctrl+T theme ({themeLabel(selectedTheme)})</Text> : null}
     </Box> : null}
 
     {error ? <Box marginTop={1}><Text color={theme.error}>{error}</Text></Box> : null}
     {fullScreen ? <>
-      <Text color={theme.chrome}>{view === "list" ? "↑/↓ select · C chat · E settings · D delete · Q quit" : view === "settings" ? "1–4 edit · G global context · 5 internet · Esc back" : "Enter send · scroll history · Esc back"} · Ctrl+F exit fullscreen</Text>
+      <Text color={theme.chrome}>{view === "list" ? "↑/↓ select · C chat · E settings · D delete · Q quit" : view === "settings" ? "1–4 edit · G global context · 5 internet · Esc back" : "Enter send · scroll history · Esc back"} · Ctrl+T theme ({themeLabel(selectedTheme)}) · Ctrl+F exit fullscreen</Text>
     </> : null}
   </Box>;
 }

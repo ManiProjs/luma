@@ -18,6 +18,8 @@ pub struct ChatArchive {
     pub info: SessionInfo,
     pub messages: Vec<MessageView>,
     #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
     pub summary: Option<String>,
 }
 
@@ -30,6 +32,59 @@ pub struct ChatSummary {
     pub title: String,
     pub messages: usize,
     pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatSearchResult {
+    pub id: String,
+    pub title: String,
+    pub workspace: String,
+    pub model: String,
+    pub updated_at: u64,
+    pub role: String,
+    pub tool: Option<String>,
+    pub snippet: String,
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SearchFilters {
+    workspace: Option<String>,
+    model: Option<String>,
+    tool: Option<String>,
+    text: String,
+}
+
+fn parse_search_filters(query: &str) -> Result<SearchFilters> {
+    let mut filters = SearchFilters::default();
+    let mut terms = Vec::new();
+    for token in query.split_whitespace() {
+        let (key, value) = token.split_once(':').unwrap_or(("", ""));
+        let target = match key.to_ascii_lowercase().as_str() {
+            "workspace" => Some(&mut filters.workspace),
+            "model" => Some(&mut filters.model),
+            "tool" => Some(&mut filters.tool),
+            _ => None,
+        };
+        if let Some(target) = target {
+            if value.trim().is_empty() {
+                bail!("{key}: filter requires a value");
+            }
+            *target = Some(value.to_lowercase());
+        } else {
+            terms.push(token);
+        }
+    }
+    filters.text = terms.join(" ").to_lowercase();
+    if filters.text.is_empty() {
+        bail!("conversation search requires text after any workspace:, model:, or tool: filters");
+    }
+    Ok(filters)
+}
+
+fn matches_filter(value: &str, filter: &Option<String>) -> bool {
+    filter
+        .as_deref()
+        .is_none_or(|needle| value.to_lowercase().contains(needle))
 }
 
 pub fn chats_dir() -> PathBuf {
@@ -128,19 +183,23 @@ pub fn list() -> Result<Vec<ChatSummary>> {
             continue;
         };
         let title = chat
-            .messages
-            .iter()
-            .find(|m| m.role == crate::session::MessageRole::User)
-            .map(|m| {
-                m.content
-                    .lines()
-                    .next()
-                    .unwrap_or("Untitled chat")
-                    .chars()
-                    .take(72)
-                    .collect()
-            })
-            .unwrap_or_else(|| "Untitled chat".into());
+            .title
+            .filter(|title| !title.trim().is_empty())
+            .unwrap_or_else(|| {
+                chat.messages
+                    .iter()
+                    .find(|m| m.role == crate::session::MessageRole::User)
+                    .map(|m| {
+                        m.content
+                            .lines()
+                            .next()
+                            .unwrap_or("Untitled chat")
+                            .chars()
+                            .take(72)
+                            .collect()
+                    })
+                    .unwrap_or_else(|| "Untitled chat".into())
+            });
         chats.push(ChatSummary {
             id: chat.id,
             created_at: chat.created_at,
@@ -153,6 +212,113 @@ pub fn list() -> Result<Vec<ChatSummary>> {
     }
     chats.sort_by_key(|chat| std::cmp::Reverse(chat.updated_at));
     Ok(chats)
+}
+
+pub fn search(query: &str) -> Result<Vec<ChatSearchResult>> {
+    let filters = parse_search_filters(query)?;
+    let needle = &filters.text;
+    let mut results = Vec::new();
+    for summary in list()? {
+        let chat = load(&summary.id)?;
+        if !matches_filter(&summary.workspace, &filters.workspace)
+            || !matches_filter(&chat.info.model, &filters.model)
+            || filters.tool.as_ref().is_some_and(|tool| {
+                !chat.messages.iter().any(|message| {
+                    message
+                        .tool
+                        .as_deref()
+                        .is_some_and(|name| name.to_lowercase().contains(tool))
+                })
+            })
+        {
+            continue;
+        }
+        let mut chat_matches = 0;
+        if filters.tool.is_none() && summary.title.to_lowercase().contains(needle) {
+            results.push(ChatSearchResult {
+                id: summary.id.clone(),
+                title: summary.title.clone(),
+                workspace: summary.workspace.clone(),
+                model: chat.info.model.clone(),
+                updated_at: summary.updated_at,
+                role: "title".into(),
+                tool: None,
+                snippet: summary.title.clone(),
+            });
+            chat_matches += 1;
+        }
+        if filters.tool.is_none() && summary.workspace.to_lowercase().contains(needle) {
+            results.push(ChatSearchResult {
+                id: summary.id.clone(),
+                title: summary.title.clone(),
+                workspace: summary.workspace.clone(),
+                model: chat.info.model.clone(),
+                updated_at: summary.updated_at,
+                role: "workspace".into(),
+                tool: None,
+                snippet: summary.workspace.clone(),
+            });
+            chat_matches += 1;
+        }
+        if filters.tool.is_none()
+            && summary
+                .summary
+                .as_deref()
+                .is_some_and(|value| value.to_lowercase().contains(needle))
+        {
+            results.push(ChatSearchResult {
+                id: summary.id.clone(),
+                title: summary.title.clone(),
+                workspace: summary.workspace.clone(),
+                model: chat.info.model.clone(),
+                updated_at: summary.updated_at,
+                role: "summary".into(),
+                tool: None,
+                snippet: summary
+                    .summary
+                    .clone()
+                    .unwrap_or_default()
+                    .chars()
+                    .take(320)
+                    .collect(),
+            });
+            chat_matches += 1;
+        }
+        for message in chat
+            .messages
+            .iter()
+            .filter(|message| message.content.to_lowercase().contains(needle))
+            .filter(|message| {
+                filters.tool.as_ref().is_none_or(|tool| {
+                    message
+                        .tool
+                        .as_deref()
+                        .is_some_and(|name| name.to_lowercase().contains(tool))
+                })
+            })
+        {
+            results.push(ChatSearchResult {
+                id: summary.id.clone(),
+                title: summary.title.clone(),
+                workspace: summary.workspace.clone(),
+                model: chat.info.model.clone(),
+                updated_at: summary.updated_at,
+                role: format!("{:?}", message.role).to_lowercase(),
+                tool: message.tool.clone(),
+                snippet: message.content.chars().take(320).collect(),
+            });
+            chat_matches += 1;
+            if chat_matches >= 4 {
+                break;
+            }
+        }
+        if results.len() >= 100 {
+            break;
+        }
+    }
+    results.sort_by_key(|result| std::cmp::Reverse(result.updated_at));
+    results.truncate(100);
+    Ok(results)
 }
 
 pub fn add_summary(id: &str, summary: String) -> Result<()> {
@@ -168,6 +334,41 @@ pub fn add_summary(id: &str, summary: String) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conversation_search_rejects_an_empty_query() {
+        assert!(search("  ").is_err());
+    }
+
+    #[test]
+    fn conversation_search_parses_workspace_model_and_tool_filters() {
+        assert_eq!(
+            parse_search_filters("workspace:luma model:claude tool:read_file context reload")
+                .unwrap(),
+            SearchFilters {
+                workspace: Some("luma".into()),
+                model: Some("claude".into()),
+                tool: Some("read_file".into()),
+                text: "context reload".into(),
+            }
+        );
+        assert!(parse_search_filters("tool: context").is_err());
+        assert!(parse_search_filters("workspace:luma").is_err());
+    }
+
+    #[test]
+    fn conversation_search_filter_matching_is_case_insensitive() {
+        assert!(matches_filter(
+            "/Users/mani/Projects/Luma",
+            &Some("projects/luma".into())
+        ));
+        assert!(!matches_filter(
+            "/Users/mani/Projects/Other",
+            &Some("projects/luma".into())
+        ));
+        assert!(matches_filter("Claude Sonnet 4.5", &Some("sonnet".into())));
+        assert!(matches_filter("anything", &None));
+    }
 
     #[test]
     fn delete_rejects_invalid_ids_and_reports_missing_archives() {

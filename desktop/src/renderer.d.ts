@@ -4,7 +4,7 @@ import type {
   SetupProvider,
 } from "./stores/setupStore";
 import type { LumaAgentEvent } from "./preload";
-import type { AgentConfiguration, AgentKind, AgentRecord, ApprovalRecord, ChatSummary, MemoryEntry, MemoryScope, ScheduleRecord, EventTriggerRecord, TaskRecord, RuntimeEvent, PluginEntry, InstalledPlugin, McpServerConfig } from "../../shared/protocol";
+import type { AgentConfiguration, AgentKind, AgentRecord, ApprovalRecord, ChatSummary, CommandDescriptor, MemoryEntry, MemoryScope, ScheduleRecord, EventTriggerRecord, TaskRecord, RuntimeEvent, PluginEntry, InstalledPlugin, McpServerConfig } from "../../shared/protocol";
 import type { ChatAttachment } from "../../shared/attachments";
 
 declare global {
@@ -17,10 +17,6 @@ declare global {
       setWorkspace(path: string): Promise<{ path: string }>;
       chooseWorkspace(): Promise<{ path: string; canceled?: boolean }>;
       listWorkspaceFiles(): Promise<import("./App").WorkspaceNode[]>;
-      getGitChanges(): Promise<{ branch: string; files: import("./App").GitChange[] }>;
-      getGitDiff(path: string): Promise<string>;
-      stageWorkspaceFile(path: string): Promise<{ ok: boolean }>;
-      revertWorkspaceFile(path: string): Promise<{ ok: boolean }>;
       openWorkspaceTerminal(): Promise<{ ok: boolean }>;
       startTerminal(cols: number, rows: number): Promise<{ id: string }>;
       writeTerminal(id: string, data: string): Promise<{ ok: boolean }>;
@@ -100,6 +96,7 @@ declare global {
       cancel(): Promise<{
         ok: boolean;
       }>;
+      toggleFullscreen(): Promise<boolean>;
 
       getStatus(): Promise<{
         connected: boolean;
@@ -115,6 +112,8 @@ declare global {
 
       getSession(): Promise<{ ok: boolean }>;
       getHistory(): Promise<ChatSummary[]>;
+      getCommands(): Promise<CommandDescriptor[]>;
+      runCommand(id: string, query?: string | null): Promise<string>;
       restoreChat(id: string): Promise<{ ok: boolean }>;
       clearSession(): Promise<{ ok: boolean }>;
       quit(): Promise<{ ok: boolean }>;

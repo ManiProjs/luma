@@ -157,6 +157,154 @@ async fn run_agent_once(
 }
 
 #[tokio::test]
+async fn explicit_context_compaction_uses_a_model_summary_and_preserves_recent_observations() {
+    let history = History::from_messages(
+        (0..8)
+            .map(|index| crate::history::HistoryMessage {
+                role: if index % 2 == 0 { "user" } else { "assistant" }.into(),
+                content: format!("conversation turn {index}"),
+            })
+            .chain(std::iter::once(crate::history::HistoryMessage {
+                role: "observation".into(),
+                content: "latest tool result".into(),
+            }))
+            .collect(),
+    );
+    let model = MockModel::new(vec![
+        "The user chose a shared Core command registry.".into(),
+    ]);
+    let mut tools = ToolRegistry::new();
+    tools.register(ReadFile);
+    let react = crate::react::ReAct::new(model.clone(), &tools);
+    let mut agent = Agent::new(model.clone(), react, tools, history, String::new());
+    let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(32);
+    let (input_tx, input_rx) = mpsc::channel::<String>(2);
+    let (_confirmation_tx, confirmation_rx) = mpsc::channel::<Confirmation>(2);
+    let (_question_tx, question_rx) = mpsc::channel::<QuestionAnswer>(2);
+    let shutdown = CancellationToken::new();
+    let request_cancel = crate::session::RequestCancellation::new(shutdown.clone());
+    let shutdown_task = shutdown.clone();
+    let handle = tokio::spawn(async move {
+        agent
+            .run(
+                input_rx,
+                event_tx,
+                shutdown_task,
+                request_cancel,
+                confirmation_rx,
+                question_rx,
+            )
+            .await
+    });
+    input_tx.send("\0LUMA_COMPACT".into()).await.unwrap();
+
+    let mut events = Vec::new();
+    loop {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        let finished = matches!(event, AgentEvent::Finished);
+        events.push(event);
+        if finished {
+            break;
+        }
+    }
+    drop(input_tx);
+    shutdown.cancel();
+    handle.await.unwrap().unwrap();
+
+    let requests = model.requests();
+    assert_eq!(
+        requests.len(),
+        1,
+        "compaction should make exactly one model call"
+    );
+    let prompt = requests[0]
+        .iter()
+        .map(|message| message.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(prompt.contains("conversation turn 0"));
+    assert!(prompt.contains("conversation turn 7"));
+    assert!(prompt.contains("latest tool result"));
+    assert!(events.iter().any(|event| matches!(event, AgentEvent::SystemMessage(message) if message.contains("summarized"))));
+}
+
+#[tokio::test]
+async fn a_cancelled_request_followed_by_session_compaction_still_calls_the_model() {
+    let history = History::from_messages(
+        (0..8)
+            .map(|index| crate::history::HistoryMessage {
+                role: if index % 2 == 0 { "user" } else { "assistant" }.into(),
+                content: format!("conversation turn {index}"),
+            })
+            .collect(),
+    );
+    let model = MockModel::new(vec!["Keep the latest implementation decisions.".into()]);
+    let mut tools = ToolRegistry::new();
+    tools.register(ReadFile);
+    let react = crate::react::ReAct::new(model.clone(), &tools);
+    let mut agent = Agent::new(model.clone(), react, tools, history, String::new());
+
+    let shutdown = CancellationToken::new();
+    let request_cancel = crate::session::RequestCancellation::new(shutdown.clone());
+    let (confirmation_tx, confirmation_rx) = mpsc::channel::<Confirmation>(2);
+    let (question_tx, question_rx) = mpsc::channel::<QuestionAnswer>(2);
+    let mut session = crate::session::Session::new(
+        crate::session::SessionInfo::new("mock", "mock-model", "/tmp", vec![]),
+        confirmation_tx,
+        question_tx,
+        request_cancel.clone(),
+    );
+
+    session
+        .submit("request that gets cancelled".into())
+        .unwrap();
+    session.cancel();
+    session.handle_event(AgentEvent::Cancelled);
+    let compact = session.submit("/compact".into()).unwrap().unwrap();
+    assert_eq!(compact, "\0LUMA_COMPACT");
+    assert!(!request_cancel.current().is_cancelled());
+
+    let (event_tx, mut event_rx) = mpsc::channel::<AgentEvent>(32);
+    let (input_tx, input_rx) = mpsc::channel::<String>(2);
+    let shutdown_task = shutdown.clone();
+    let handle = tokio::spawn(async move {
+        agent
+            .run(
+                input_rx,
+                event_tx,
+                shutdown_task,
+                request_cancel,
+                confirmation_rx,
+                question_rx,
+            )
+            .await
+    });
+    input_tx.send(compact).await.unwrap();
+
+    loop {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if matches!(event, AgentEvent::Finished) {
+            break;
+        }
+    }
+    drop(input_tx);
+    shutdown.cancel();
+    handle.await.unwrap().unwrap();
+
+    assert_eq!(
+        model.requests().len(),
+        1,
+        "the compact request must not inherit the previous request's cancelled token"
+    );
+}
+
+#[tokio::test]
 async fn a_request_error_is_reported_without_stopping_the_agent_loop() {
     let tools = ToolRegistry::new();
     let model = MockModel::new(vec!["recovered".into()]);

@@ -22,6 +22,7 @@ export type Project = {
 
 type WorkspaceSnapshot = {
   chats: Chat[];
+  openChatIds: string[];
   projects: Project[];
   activeChatId: string | null;
   activeProjectId: string | null;
@@ -34,6 +35,7 @@ type WorkspaceState = WorkspaceSnapshot & {
   startNewChat: (projectId?: string | null) => void; // New method
   createChat: (projectId?: string | null) => Chat;
   selectChat: (chatId: string) => void;
+  closeChatTab: (chatId: string) => void;
   renameChat: (chatId: string, title: string) => void;
   togglePin: (chatId: string) => void;
   deleteChat: (chatId: string) => void;
@@ -75,6 +77,7 @@ function createEmptyChat(projectId: string | null = null): Chat {
 function createDefaultSnapshot(): WorkspaceSnapshot {
   return {
     chats: [],
+    openChatIds: [],
     projects: [],
     activeChatId: null,
     activeProjectId: null,
@@ -221,6 +224,10 @@ function loadSnapshot(): WorkspaceSnapshot {
       nextChats.some((chat) => chat.id === parsed.activeChatId)
         ? parsed.activeChatId
         : null;
+    const openChatIds = Array.isArray(parsed.openChatIds)
+      ? [...new Set(parsed.openChatIds.filter((id): id is string => typeof id === "string" && nextChats.some((chat) => chat.id === id)))]
+      : activeChatId ? [activeChatId] : [];
+    if (activeChatId && !openChatIds.includes(activeChatId)) openChatIds.push(activeChatId);
 
     const activeProjectId =
       typeof parsed.activeProjectId === "string" && projectIds.has(parsed.activeProjectId)
@@ -229,6 +236,7 @@ function loadSnapshot(): WorkspaceSnapshot {
 
     return {
       chats: nextChats,
+      openChatIds,
       projects,
       activeChatId,
       activeProjectId,
@@ -250,6 +258,7 @@ function persist(state: WorkspaceSnapshot) {
 
   const snapshot: WorkspaceSnapshot = {
     chats: state.chats,
+    openChatIds: state.openChatIds,
     projects: state.projects,
     activeChatId: state.activeChatId,
     activeProjectId: state.activeProjectId,
@@ -287,6 +296,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     const next: WorkspaceSnapshot = {
       ...state,
+      openChatIds: [...state.openChatIds.filter((id) => state.chats.some((chat) => chat.id === id)), draft.id],
       activeChatId: draft.id,
       activeProjectId: resolvedProjectId,
       draft,
@@ -295,6 +305,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     // Keep this draft in memory only. The core archive and local chat history
     // are created by setChatMessages after the first user message arrives.
+    persist(next);
     set(next);
   },
 
@@ -306,6 +317,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     const next: WorkspaceSnapshot = {
       chats: state.chats,
+      openChatIds: [...state.openChatIds.filter((id) => id !== chat.id), chat.id],
       projects: state.projects,
       activeChatId: chat.id,
       activeProjectId: resolvedProjectId,
@@ -329,6 +341,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     const next: WorkspaceSnapshot = {
       chats: state.chats,
+      openChatIds: (() => {
+        const openChatIds = state.openChatIds.filter((id) => state.chats.some((chat) => chat.id === id));
+        return openChatIds.includes(chat.id) ? openChatIds : [...openChatIds, chat.id];
+      })(),
       projects: state.projects,
       activeChatId: chat.id,
       activeProjectId: chat.projectId,
@@ -338,6 +354,33 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     persist(next);
     set(next);
+  },
+
+  closeChatTab: (chatId) => {
+    const state = get();
+    const index = state.openChatIds.indexOf(chatId);
+    if (index < 0) return;
+    const openChatIds = state.openChatIds.filter((id) => id !== chatId && state.chats.some((chat) => chat.id === id));
+    if (state.activeChatId !== chatId) {
+      const next = { ...state, openChatIds };
+      persist(next);
+      set(next);
+      return;
+    }
+
+    const replacementId = openChatIds[Math.min(index, openChatIds.length - 1)];
+    if (!replacementId) {
+      const next = { ...state, openChatIds, activeChatId: null, draft: null, isPendingNewChat: false };
+      persist(next);
+      set(next);
+      get().startNewChat(state.activeProjectId);
+      return;
+    }
+
+    const next = { ...state, openChatIds, activeChatId: null, draft: null, isPendingNewChat: false };
+    persist(next);
+    set(next);
+    get().selectChat(replacementId);
   },
 
   renameChat: (chatId, title) => {
@@ -390,11 +433,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const state = get();
     const chats = state.chats.filter((chat) => chat.id !== chatId);
 
+    const openChatIds = state.openChatIds.filter((id) => id !== chatId && chats.some((chat) => chat.id === id));
+    const replacementId = state.activeChatId === chatId
+      ? openChatIds[Math.min(state.openChatIds.indexOf(chatId), openChatIds.length - 1)] ?? null
+      : state.activeChatId;
+    const replacementChat = chats.find((chat) => chat.id === replacementId);
     const next: WorkspaceSnapshot = {
       chats,
+      openChatIds,
       projects: state.projects,
-      activeChatId: state.activeChatId === chatId ? null : state.activeChatId,
-      activeProjectId: state.activeProjectId,
+      activeChatId: replacementId,
+      activeProjectId: replacementChat?.projectId ?? state.activeProjectId,
       draft: state.draft?.id === chatId ? null : state.draft,
       isPendingNewChat: state.isPendingNewChat,
     };
@@ -432,6 +481,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
           },
           ...state.chats.filter((chat) => chat.id !== chatId),
         ],
+        openChatIds: [...state.openChatIds.filter((id) => state.chats.some((chat) => chat.id === id)), chatId],
         projects: state.projects,
         activeChatId: chatId,
         activeProjectId: draft.projectId,
@@ -493,7 +543,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
         messages: previous?.messages ?? [],
       };
     });
-    const next: WorkspaceSnapshot = { ...state, chats, draft: state.draft, historyLoaded: true };
+    const openChatIds = state.openChatIds.filter((id) => chats.some((chat) => chat.id === id) || state.draft?.id === id);
+    const activeChatId = state.activeChatId && (chats.some((chat) => chat.id === state.activeChatId) || state.draft?.id === state.activeChatId)
+      ? state.activeChatId
+      : openChatIds[0] ?? null;
+    const next: WorkspaceSnapshot = {
+      ...state,
+      chats,
+      openChatIds: activeChatId && !openChatIds.includes(activeChatId) ? [...openChatIds, activeChatId] : openChatIds,
+      activeChatId,
+      activeProjectId: chats.find((chat) => chat.id === activeChatId)?.projectId ?? state.draft?.projectId ?? state.activeProjectId,
+      draft: state.draft?.id === activeChatId ? state.draft : null,
+      isPendingNewChat: state.draft?.id === activeChatId,
+      historyLoaded: true,
+    };
     persist(next);
     set(next);
   },
@@ -501,7 +564,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   setActiveChatId: (chatId) => {
     const state = get();
     const draft = state.draft ? { ...state.draft, id: chatId } : null;
-    const next: WorkspaceSnapshot = { ...state, activeChatId: chatId, draft };
+    const next: WorkspaceSnapshot = { ...state, activeChatId: chatId, draft, openChatIds: [...state.openChatIds.filter((id) => id !== (state.draft?.id ?? chatId)), chatId] };
     persist(next);
     set(next);
   },
@@ -520,6 +583,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     const next: WorkspaceSnapshot = {
       chats: state.chats,
+      openChatIds: [...state.openChatIds.filter((id) => state.chats.some((chat) => chat.id === id)), draft.id],
       projects: [...state.projects, project],
       activeChatId: draft.id,
       activeProjectId: project.id,
@@ -546,8 +610,10 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
       .filter((chat) => chat.projectId === projectId)
       .sort((left, right) => right.updatedAt - left.updatedAt)[0];
     const draft = latestChat ? null : createEmptyChat(projectId);
+    const openChatIds = state.openChatIds.filter((id) => state.chats.some((chat) => chat.id === id));
     const next: WorkspaceSnapshot = {
       chats: state.chats,
+      openChatIds: [...openChatIds, ...(latestChat ? [latestChat.id] : draft ? [draft.id] : [])],
       projects: state.projects,
       activeChatId: latestChat?.id ?? draft?.id ?? null,
       activeProjectId: projectId,
@@ -608,6 +674,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
             }
           : chat,
       ),
+      openChatIds: state.openChatIds,
       projects: state.projects.filter((project) => project.id !== projectId),
       activeChatId: state.activeChatId,
       activeProjectId: state.activeProjectId === projectId ? null : state.activeProjectId,
@@ -630,6 +697,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
     const next: WorkspaceSnapshot = {
       chats: [],
+      openChatIds: [],
       projects: state.projects,
       activeChatId: null,
       activeProjectId: state.activeProjectId,
