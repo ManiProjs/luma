@@ -6,20 +6,20 @@ export function useFocusTrap(active: boolean) {
 
   useEffect(() => {
     if (!active || !containerRef.current) return;
+    const container = containerRef.current;
 
     // Store previous focus
     previousFocus.current = document.activeElement as HTMLElement;
 
-    // Focus first focusable element
-    const focusables = getFocusables(containerRef.current);
-    if (focusables.length > 0) {
-      focusables[0]?.focus();
-    }
+    // Prefer an explicit autofocus target, otherwise use the first control.
+    const focusables = getFocusables(container);
+    const initialFocus = focusables.find((element) => element.hasAttribute('autofocus')) ?? focusables[0];
+    initialFocus?.focus();
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== 'Tab') return;
 
-      const focusables = getFocusables(containerRef.current!);
+      const focusables = getFocusables(container);
       const first = focusables[0];
       const last = focusables[focusables.length - 1];
 
@@ -32,9 +32,9 @@ export function useFocusTrap(active: boolean) {
       }
     };
 
-    containerRef.current.addEventListener('keydown', handleKeyDown);
+    container.addEventListener('keydown', handleKeyDown);
     return () => {
-      containerRef.current?.removeEventListener('keydown', handleKeyDown);
+      container.removeEventListener('keydown', handleKeyDown);
       previousFocus.current?.focus();
     };
   }, [active]);

@@ -35,7 +35,9 @@ export function QuestionPrompt() {
         setSending(false);
       }
     });
-    void window.luma.getSession();
+    void window.luma.getSession().catch((reason: unknown) => {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    });
     return unsubscribe;
   }, []);
 
@@ -51,10 +53,10 @@ export function QuestionPrompt() {
     }
   }
 
-  if (!question) return null;
+  if (!question) return error ? <div className="fixed inset-x-0 top-4 z-[100] mx-auto w-[min(92vw,640px)] rounded-lg border border-[var(--luma-danger)]/35 bg-[var(--luma-surface-raised)] px-4 py-3 text-[12px] text-[var(--luma-danger)]" role="alert">Couldn't load Luma's pending question: {error}</div> : null;
 
   return (
-    <div className="fixed inset-x-0 top-4 z-[100] mx-auto w-[min(92vw,640px)] rounded-xl border border-[var(--luma-border)] bg-[var(--luma-surface-raised)] p-4 text-[var(--luma-text)] shadow-2xl">
+    <div className="fixed inset-x-0 top-4 z-[100] mx-auto w-[min(92vw,640px)] rounded-xl border border-[var(--luma-border)] bg-[var(--luma-surface-raised)] p-4 text-[var(--luma-text)] shadow-2xl" role="region" aria-label="Luma question" aria-live="polite">
       <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--luma-accent)]">Luma needs your input</div>
       <p className="mb-3 whitespace-pre-wrap text-sm text-[var(--luma-text)]">{question.prompt}</p>
       {question.choices.length > 0 && <div className="mb-3 flex flex-wrap gap-2">
@@ -63,9 +65,9 @@ export function QuestionPrompt() {
         ))}
       </div>}
       <form onSubmit={(event) => { event.preventDefault(); void submit(); }} className="flex gap-2">
-        <input autoFocus value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Type your answer…" className="luma-input min-w-0 flex-1" maxLength={8000} />
+        <input autoFocus aria-label="Your answer" value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder="Type your answer…" className="luma-input min-w-0 flex-1" maxLength={8000} />
         <button type="submit" disabled={sending || !answer.trim()} className="rounded-lg bg-[var(--luma-accent)] px-4 text-xs font-semibold text-white disabled:opacity-40">{sending ? "Sending…" : "Answer"}</button>
-        <button type="button" disabled={sending} onClick={() => void window.luma.cancel()} className="rounded-lg border border-[var(--luma-border)] px-3 text-xs text-[var(--luma-text-muted)] disabled:opacity-40">Cancel</button>
+        <button type="button" disabled={sending} onClick={() => void window.luma.cancel().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))} className="rounded-lg border border-[var(--luma-border)] px-3 text-xs text-[var(--luma-text-muted)] disabled:opacity-40">Cancel</button>
       </form>
       {error && <p role="alert" className="mt-2 text-xs text-[var(--luma-danger)]">{error}</p>}
       <p className="mt-2 text-[10px] text-[var(--luma-text-muted)]">The Code session pauses until you answer or cancel the request.</p>

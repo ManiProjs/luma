@@ -83,8 +83,7 @@ export function ModelPicker({ providers, models, stage, loading, error, savedApi
     if (event.action !== "press" || event.button !== 0) return;
     const row = entryElements.current.findIndex((element) => contains(element));
     if (row >= 0) {
-      const start = Math.max(0, Math.min(index - 6, entries.length - 12));
-      const selectedIndex = start + row;
+      const selectedIndex = row;
       setIndex(selectedIndex);
       activateEntry(selectedIndex);
     }
@@ -146,7 +145,7 @@ export function ModelPicker({ providers, models, stage, loading, error, savedApi
     }
     if (stage === "models" && !key.ctrl && !key.meta && !key.upArrow && !key.downArrow && !key.return && !key.escape) {
       if (key.backspace || key.delete) setSearch((value) => value.slice(0, -1));
-      else if (input && input.length === 1) setSearch((value) => value + input);
+      else if (input) setSearch((value) => value + input);
       setIndex(0);
       return;
     }

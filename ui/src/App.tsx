@@ -35,7 +35,8 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
   const recentMessages = state.messages;
   const messageWindowSize = Math.max(5, (stdout.rows || 24) - 12);
   const messageEnd = transcriptOffset > 0 ? Math.max(0, recentMessages.length - transcriptOffset) : recentMessages.length;
-  const visibleMessages = recentMessages.slice(Math.max(0, messageEnd - messageWindowSize), messageEnd);
+  const visibleMessageStart = Math.max(0, messageEnd - messageWindowSize);
+  const visibleMessages = recentMessages.slice(visibleMessageStart, messageEnd);
   const hasConversation = state.messages.some(
     (message) => message.role !== "system",
   );
@@ -64,23 +65,27 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
     }
     if ((key.meta || key.ctrl) && input.toLowerCase() === "o") {
       if (state.modelPicker) return;
-      const latestGroup = [...recentMessages].reverse().find((message) => message.role === "tool");
-      if (latestGroup) setExpandedToolGroups((current) => ({
+      let groupStart = recentMessages.length - 1;
+      while (groupStart >= 0 && recentMessages[groupStart]?.role !== "tool") groupStart -= 1;
+      while (groupStart > 0 && recentMessages[groupStart - 1]?.role === "tool") groupStart -= 1;
+      const latestGroup = recentMessages[groupStart];
+      if (latestGroup?.role === "tool") setExpandedToolGroups((current) => ({
         ...current,
         [latestGroup.id]: !(current[latestGroup.id] ?? false),
       }));
       return;
     }
     if (!state.modelPicker && key.end) { setTranscriptOffset(0); return; }
-    if (!state.modelPicker && key.home) { setTranscriptOffset(Math.max(0, recentMessages.length - 1)); return; }
-    if (!state.modelPicker && key.pageUp) { setTranscriptOffset((offset) => Math.min(Math.max(0, recentMessages.length - 1), offset + messageWindowSize)); return; }
+    if (!state.modelPicker && key.home) { setTranscriptOffset(Math.max(0, recentMessages.length - messageWindowSize)); return; }
+    if (!state.modelPicker && key.pageUp) { setTranscriptOffset((offset) => Math.min(Math.max(0, recentMessages.length - messageWindowSize), offset + messageWindowSize)); return; }
     if (!state.modelPicker && key.pageDown) { setTranscriptOffset((offset) => Math.max(0, offset - messageWindowSize)); return; }
   });
 
   useTerminalMouse(rootElement, (event, contains) => {
+    if (state.modelPicker) return;
     if (event.action === "wheel") {
-      if (state.modelPicker || !contains(rootElement.current)) return;
-      setTranscriptOffset((offset) => Math.max(0, Math.min(Math.max(0, recentMessages.length - 1), offset + (event.wheelDirection === "down" ? -3 : 3))));
+      if (!contains(rootElement.current)) return;
+      setTranscriptOffset((offset) => Math.max(0, Math.min(Math.max(0, recentMessages.length - messageWindowSize), offset + (event.wheelDirection === "down" ? -3 : 3))));
       return;
     }
     if (event.action !== "press" || event.button !== 0) return;
@@ -117,11 +122,10 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
       if (next.length > 8 || totalBytes > 4 * 1024 * 1024) throw new Error("Attach up to 8 text files and 4 MiB of content.");
       setAttachments(next);
       setAttachmentError("");
-    } catch (reason) {
-      setAttachmentError(userError(reason));
-    } finally {
       setAttachmentMode(false);
       setInput("");
+    } catch (reason) {
+      setAttachmentError(userError(reason));
     }
   }
 
@@ -162,11 +166,16 @@ export function App({ initialSetup = false }: { initialSetup?: boolean }) {
         {visibleMessages.map((message, index) => {
           if (message.role === "tool") {
             if (visibleMessages[index - 1]?.role === "tool") return null;
-            const group = visibleMessages.slice(index).filter((item, offset, all) => offset === 0 || all.slice(0, offset).every((entry) => entry.role === "tool"))
-              .filter((item) => item.role === "tool");
-            const expanded = expandedToolGroups[message.id] ?? false;
+            const absoluteIndex = visibleMessageStart + index;
+            let groupStart = absoluteIndex;
+            let groupEnd = absoluteIndex + 1;
+            while (groupStart > 0 && recentMessages[groupStart - 1]?.role === "tool") groupStart -= 1;
+            while (groupEnd < recentMessages.length && recentMessages[groupEnd]?.role === "tool") groupEnd += 1;
+            const group = recentMessages.slice(groupStart, groupEnd);
+            const groupId = group[0]?.id ?? message.id;
+            const expanded = expandedToolGroups[groupId] ?? false;
             return <Box key={`tool-group-${message.id}`} flexDirection="column" marginTop={1}>
-              <Box ref={(element) => { if (element) toolActivityTriggers.current.push({ id: message.id, element }); }}>
+              <Box ref={(element) => { if (element) toolActivityTriggers.current.push({ id: groupId, element }); }}>
                 <Text color={theme.chrome}>{expanded ? "⌄" : "›"} {group.length} tool{group.length === 1 ? "" : "s"} · Cmd/Ctrl+O for details</Text>
               </Box>
               {expanded ? group.map((tool) => <Message key={tool.id} message={tool} running={tool.content.startsWith(`${state.activeTool}:`)} />) : null}

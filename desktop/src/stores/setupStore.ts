@@ -89,6 +89,8 @@ const initialState = {
   finished: false,
 };
 
+let modelDiscoveryRequestId = 0;
+
 export const useSetupStore = create<SetupState>((set, get) => ({
   ...initialState,
 
@@ -100,10 +102,12 @@ export const useSetupStore = create<SetupState>((set, get) => ({
   },
 
   setProvider: (provider) => {
+    modelDiscoveryRequestId += 1;
     set({
       provider,
       model: null,
       availableModels: [],
+      discoveringModels: false,
       error: null,
       endpoint: provider?.endpoint ?? "",
     });
@@ -117,15 +121,19 @@ export const useSetupStore = create<SetupState>((set, get) => ({
   },
 
   setApiKey: (apiKey) => {
+    modelDiscoveryRequestId += 1;
     set({
       apiKey,
+      discoveringModels: false,
       error: null,
     });
   },
 
   setEndpoint: (endpoint) => {
+    modelDiscoveryRequestId += 1;
     set({
       endpoint,
+      discoveringModels: false,
       error: null,
     });
   },
@@ -163,11 +171,13 @@ export const useSetupStore = create<SetupState>((set, get) => ({
   },
 
   loadModelsForProvider: async (provider = get().provider) => {
+    const requestId = ++modelDiscoveryRequestId;
     if (!provider) {
       set({
         availableModels: [],
         model: null,
-            });
+        discoveringModels: false,
+      });
 
       return;
     }
@@ -190,11 +200,17 @@ export const useSetupStore = create<SetupState>((set, get) => ({
         throw new Error("Luma returned an invalid model list.");
       }
 
+      const current = get();
+      if (requestId !== modelDiscoveryRequestId || current.provider?.id !== provider.id || current.apiKey !== apiKey || current.endpoint !== endpoint) return;
+
       set({
         availableModels: models,
         discoveringModels: false,
       });
     } catch (error) {
+      const current = get();
+      if (requestId !== modelDiscoveryRequestId || current.provider?.id !== provider.id || current.apiKey !== apiKey || current.endpoint !== endpoint) return;
+
       set({
         discoveringModels: false,
         error:
@@ -206,6 +222,7 @@ export const useSetupStore = create<SetupState>((set, get) => ({
   },
 
   loadConfiguration: async () => {
+    modelDiscoveryRequestId += 1;
     set({
       loadingConfiguration: true,
       error: null,
@@ -437,6 +454,7 @@ export const useSetupStore = create<SetupState>((set, get) => ({
   },
 
   reset: () => {
+    modelDiscoveryRequestId += 1;
     set({
       ...initialState,
       availableProviders: get().availableProviders,

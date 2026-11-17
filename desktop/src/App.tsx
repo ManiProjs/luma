@@ -374,7 +374,7 @@ function TeammateModelDropdown({ agent, onChanged }: { agent: AgentRecord; onCha
       <span className="max-w-[120px] truncate">{currentLabel}</span><span aria-hidden="true">⌄</span>
     </button>
     {open && menuPosition && createPortal(<div ref={menuRef} style={{ position: "fixed", top: menuPosition.top, left: menuPosition.left, width: 256, maxHeight: "min(340px, calc(100vh - 24px))", zIndex: 9999 }} className="luma-model-dropdown-menu overflow-hidden rounded-md border border-[var(--luma-border-strong)] bg-[var(--luma-surface)] shadow-xl">
-      <div className="border-b border-[var(--luma-border)] p-2"><input autoFocus value={search} onChange={(event) => { setSearch(event.target.value); setActiveModelIndex(0); }} aria-activedescendant={filtered[activeModelIndex] ? `teammate-model-option-${activeModelIndex}` : undefined} onKeyDown={(event) => {
+      <div className="border-b border-[var(--luma-border)] p-2"><input autoFocus role="combobox" aria-autocomplete="list" aria-expanded="true" value={search} onChange={(event) => { setSearch(event.target.value); setActiveModelIndex(0); }} aria-activedescendant={filtered[activeModelIndex] ? `teammate-model-option-${activeModelIndex}` : undefined} onKeyDown={(event) => {
         if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key) && filtered.length) {
           event.preventDefault();
           const direction = ["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1;
@@ -982,6 +982,7 @@ function SettingsNavButton({
   return (
     <button
       type="button"
+      aria-current={active ? "page" : undefined}
       onClick={onClick}
       className={`
         mb-0.5 flex w-full items-center
@@ -1303,6 +1304,7 @@ function Sidebar({ mode, onOpenChat, onOpenTeammates, onProjectFolderChange, tea
   const [projectName, setProjectName] = useState("");
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
+  const profileMenuContentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     try { window.localStorage.setItem("luma.projects-section-open", String(projectsOpen)); } catch { /* Keep this for the current session. */ }
@@ -1310,10 +1312,16 @@ function Sidebar({ mode, onOpenChat, onOpenTeammates, onProjectFolderChange, tea
 
   useEffect(() => {
     if (!profileMenuOpen) return;
+    profileMenuContentRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
     const onPointerDown = (event: PointerEvent) => {
       if (event.target instanceof Node && !profileMenuRef.current?.contains(event.target)) setProfileMenuOpen(false);
     };
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setProfileMenuOpen(false); };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setProfileMenuOpen(false);
+        profileMenuRef.current?.querySelector<HTMLButtonElement>(".luma-sidebar-account")?.focus();
+      }
+    };
     document.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("keydown", onKeyDown);
     return () => { document.removeEventListener("pointerdown", onPointerDown); window.removeEventListener("keydown", onKeyDown); };
@@ -1491,6 +1499,7 @@ function Sidebar({ mode, onOpenChat, onOpenTeammates, onProjectFolderChange, tea
         >
           <button
             type="button"
+            aria-expanded={projectsOpen}
             onClick={() => setProjectsOpen((value) => !value)}
             className="
               mb-0.5 flex h-7 w-full items-center gap-1
@@ -1510,9 +1519,10 @@ function Sidebar({ mode, onOpenChat, onOpenTeammates, onProjectFolderChange, tea
           </button>
 
           {projectsOpen && (
-            <div className="mb-1">
+            <div id="luma-project-list" className="mb-1">
               <button
                 type="button"
+                aria-pressed={activeProjectId === null}
                 onClick={() => selectProject(null)}
                 className={`
                   mb-0.5 flex h-7 w-full items-center
@@ -1543,6 +1553,7 @@ function Sidebar({ mode, onOpenChat, onOpenTeammates, onProjectFolderChange, tea
                 >
                   <button
                     type="button"
+                    aria-pressed={activeProjectId === project.id}
                     onClick={() => selectProject(project.id)}
                     title={project.workspacePath ?? "Choose a folder for this Project"}
                     className={`
@@ -1657,6 +1668,7 @@ function Sidebar({ mode, onOpenChat, onOpenTeammates, onProjectFolderChange, tea
       {searchOpen && (
         <div className="px-2.5 pb-2">
           <input
+            aria-label="Search chats"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search chats"
@@ -1738,7 +1750,17 @@ function Sidebar({ mode, onOpenChat, onOpenTeammates, onProjectFolderChange, tea
             <span className="luma-sidebar-account-avatar">{displayName.slice(0, 1).toLocaleUpperCase()}</span>
             <span className="min-w-0 flex-1 text-left"><strong>{displayName}</strong></span>
           </button>
-          {profileMenuOpen && <div className="luma-profile-menu" role="menu" aria-label="User menu">
+          {profileMenuOpen && <div ref={profileMenuContentRef} className="luma-profile-menu" role="menu" aria-label="User menu" onKeyDown={(event) => {
+            if (event.key === "Tab") { setProfileMenuOpen(false); return; }
+            const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'));
+            const current = items.indexOf(document.activeElement as HTMLButtonElement);
+            const direction = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+            const target = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + direction + items.length) % items.length;
+            if (items.length && (direction || event.key === "Home" || event.key === "End")) {
+              event.preventDefault();
+              items[target]?.focus();
+            }
+          }}>
             <div className="luma-profile-menu-heading"><strong>{displayName}</strong><span>Personal preferences</span></div>
             {([ ["appearance", "Appearance"], ["general", "General"], ["behavior", "Behavior"], ["gateway", "Gateway"], ["extensions", "Extensions"] ] as const).map(([section, label]) => <button key={section} type="button" role="menuitem" onClick={() => { setProfileMenuOpen(false); onSettings(section); }}><span>{label}</span>{section === "appearance" ? <span className="luma-profile-menu-shortcut">⌘ ,</span> : null}</button>)}
           </div>}
@@ -1756,11 +1778,13 @@ function WorkspaceTree({
   selectedFile,
   onFileSelect,
   depth = 0,
+  expandAll = false,
 }: {
   nodes: WorkspaceNode[];
   selectedFile: string | null;
   onFileSelect: (path: string) => void;
   depth?: number;
+  expandAll?: boolean;
 }) {
   return (
     <>
@@ -1773,6 +1797,7 @@ function WorkspaceTree({
               selectedFile={selectedFile}
               onFileSelect={onFileSelect}
               depth={depth}
+              expandAll={expandAll}
             />
           );
         }
@@ -1817,18 +1842,23 @@ function FolderRow({
   selectedFile,
   onFileSelect,
   depth,
+  expandAll,
 }: {
   node: Extract<WorkspaceNode, { type: "folder" }>;
   selectedFile: string | null;
   onFileSelect: (path: string) => void;
   depth: number;
+  expandAll: boolean;
 }) {
   const [open, setOpen] = useState(depth < 1);
+  const expanded = open || expandAll;
 
   return (
     <>
       <button
         type="button"
+        aria-expanded={expanded}
+        disabled={expandAll}
         onClick={() => setOpen((value) => !value)}
         className="
           flex h-7 w-full items-center gap-1
@@ -1841,19 +1871,20 @@ function FolderRow({
           paddingLeft: 6 + depth * 14,
         }}
       >
-        <ChevronIcon open={open} />
+        <ChevronIcon open={expanded} />
 
         <FolderIcon />
 
         <span className="truncate">{node.name}</span>
       </button>
 
-      {open && (
+      {expanded && (
         <WorkspaceTree
           nodes={node.children}
           selectedFile={selectedFile}
           onFileSelect={onFileSelect}
           depth={depth + 1}
+          expandAll={expandAll}
         />
       )}
     </>
@@ -2234,12 +2265,13 @@ function resizePrompt(textarea: HTMLTextAreaElement | null, minHeight: number, m
   textarea.style.overflowY = textarea.scrollHeight > maxHeight ? "auto" : "hidden";
 }
 
-function PromptInput({ inputRef, value, onChange, onKeyDown, placeholder, disabled = false, maxHeight = 112 }: {
+function PromptInput({ inputRef, value, onChange, onKeyDown, placeholder, ariaLabel = "Message Luma", disabled = false, maxHeight = 112 }: {
   inputRef: RefObject<HTMLTextAreaElement | null>;
   value: string;
   onChange: (value: string) => void;
   onKeyDown: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
   placeholder: string;
+  ariaLabel?: string;
   disabled?: boolean;
   maxHeight?: number;
 }) {
@@ -2250,6 +2282,7 @@ function PromptInput({ inputRef, value, onChange, onKeyDown, placeholder, disabl
     onChange={(event) => onChange(event.target.value)}
     onKeyDown={onKeyDown}
     placeholder={placeholder}
+    aria-label={ariaLabel}
     disabled={disabled}
     rows={1}
     className="luma-prompt-input"
@@ -2267,7 +2300,6 @@ function ComposerQuickSettings({ sendWithEnter, onSendWithEnterChange, autoScrol
   showCodeOptions?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(0);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -2284,20 +2316,10 @@ function ComposerQuickSettings({ sendWithEnter, onSendWithEnterChange, autoScrol
   }, [open]);
   return <div className="luma-composer-quick-settings" ref={menuRef}>
     <button ref={triggerRef} type="button" aria-label="Prompt settings" title="Quick settings" aria-expanded={open} onKeyDown={(event) => {
-      if (["ArrowDown", "Enter", " "].includes(event.key)) { event.preventDefault(); setActiveIndex(0); setOpen(true); }
+      if (["ArrowDown", "Enter", " "].includes(event.key)) { event.preventDefault(); setOpen(true); }
     }} onClick={() => setOpen((value) => !value)}>···</button>
-    {open && <div autoFocus tabIndex={-1} className="luma-composer-quick-menu" role="menu" aria-label="Prompt settings" onKeyDown={(event) => {
-      const items = Array.from(event.currentTarget.querySelectorAll<HTMLElement>("input, button"));
-      if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key) && items.length) {
-        event.preventDefault();
-        const direction = ["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1;
-        const next = (activeIndex + direction + items.length) % items.length;
-        setActiveIndex(next); items[next].focus();
-      } else if (event.key === "Enter" && items[activeIndex] instanceof HTMLInputElement) {
-        const target = items[activeIndex] as HTMLInputElement;
-        event.preventDefault();
-        target.click();
-      } else if (event.key === "Escape") { event.preventDefault(); setOpen(false); triggerRef.current?.focus(); }
+    {open && <div autoFocus tabIndex={-1} className="luma-composer-quick-menu" role="group" aria-label="Prompt settings" onKeyDown={(event) => {
+      if (event.key === "Escape") { event.preventDefault(); setOpen(false); triggerRef.current?.focus(); }
     }}>
       <label><input type="checkbox" checked={sendWithEnter} onChange={(event) => onSendWithEnterChange(event.target.checked)} /> Enter to send</label>
       {showCodeOptions && <>
@@ -2331,6 +2353,7 @@ function CodeModelPicker({ onChangeModel }: { onChangeModel: (scope: "global" | 
       if (["ArrowDown", "Enter", " "].includes(event.key)) { event.preventDefault(); setActiveIndex(0); setOpen(true); }
     }} onClick={() => setOpen((value) => !value)}>Model <span aria-hidden="true">⌄</span></button>
     {open && <div ref={menuRef} className="luma-composer-model-menu" role="menu" onKeyDown={(event) => {
+      if (event.key === "Tab") { setOpen(false); return; }
       if (["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key)) {
         event.preventDefault();
         const direction = ["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1;
@@ -2913,6 +2936,7 @@ function FilesPanel({
       {searchOpen && (
         <div className="px-2.5 pb-2">
           <input
+            aria-label="Search workspace files"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Filter files"
@@ -2923,11 +2947,12 @@ function FilesPanel({
       )}
 
       <div className="min-h-0 flex-1 overflow-auto px-1.5 pb-2">
-        <WorkspaceTree
+        {visible.length > 0 ? <WorkspaceTree
           nodes={visible}
           selectedFile={selectedFile}
           onFileSelect={onFileSelect}
-        />
+          expandAll={Boolean(query.trim())}
+        /> : <p className="px-2 py-3 text-[11px] text-[var(--luma-text-muted)]">{query.trim() ? "No matching files." : "No files in this workspace."}</p>}
       </div>
 
       <div
@@ -3454,12 +3479,16 @@ function CodeInspector({ workspacePath, onOpenFile }: {
   const [branch, setBranch] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [diff, setDiff] = useState("");
+  const [diffLoading, setDiffLoading] = useState(false);
   const [tree, setTree] = useState<WorkspaceNode[]>([]);
   const [loading, setLoading] = useState(false);
   const [treeLoading, setTreeLoading] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [diffRefreshVersion, setDiffRefreshVersion] = useState(0);
+  const tabButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const tabs = ["changes", "files", "terminal"] as const;
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -3470,6 +3499,7 @@ function CodeInspector({ workspacePath, onOpenFile }: {
       setFiles(result.files);
       setSelected((current) => current && result.files.some((file) => file.path === current)
         ? current : result.files[0]?.path ?? null);
+      setDiffRefreshVersion((version) => version + 1);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
       setFiles([]);
@@ -3482,15 +3512,17 @@ function CodeInspector({ workspacePath, onOpenFile }: {
   useEffect(() => { void refresh(); }, [refresh, refreshKey]);
 
   useEffect(() => {
-    if (!selected || tab !== "changes") { setDiff(""); return; }
+    if (!selected || tab !== "changes") { setDiff(""); setDiffLoading(false); return; }
     let active = true;
+    setDiffLoading(true);
+    setDiff("");
     window.luma.getGitDiff(selected).then((value) => {
       if (active) setDiff(value);
     }).catch((reason: unknown) => {
       if (active) setError(reason instanceof Error ? reason.message : String(reason));
-    });
+    }).finally(() => { if (active) setDiffLoading(false); });
     return () => { active = false; };
-  }, [selected, tab, refreshKey]);
+  }, [selected, tab, diffRefreshVersion]);
 
   useEffect(() => {
     if (tab !== "files") return;
@@ -3541,9 +3573,30 @@ function CodeInspector({ workspacePath, onOpenFile }: {
     <aside className="luma-code-inspector" aria-label="Workspace inspector">
       <header className="luma-inspector-header">
         <div className="luma-inspector-tabs" role="tablist" aria-label="Workspace tools">
-          {(["changes", "files", "terminal"] as const).map((item) => <button key={item} type="button" role="tab" aria-selected={tab === item} data-active={tab === item} onClick={() => setTab(item)}>{item[0].toUpperCase() + item.slice(1)}</button>)}
+          {tabs.map((item, index) => <button
+            key={item}
+            ref={(element) => { tabButtonRefs.current[index] = element; }}
+            id={`code-inspector-tab-${item}`}
+            type="button"
+            role="tab"
+            aria-selected={tab === item}
+            aria-controls="code-inspector-panel"
+            tabIndex={tab === item ? 0 : -1}
+            data-active={tab === item}
+            onClick={() => setTab(item)}
+            onKeyDown={(event) => {
+              const direction = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+              const targetIndex = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + direction + tabs.length) % tabs.length;
+              if (direction || event.key === "Home" || event.key === "End") {
+                event.preventDefault();
+                setTab(tabs[targetIndex]);
+                tabButtonRefs.current[targetIndex]?.focus();
+              }
+            }}
+          >{item[0].toUpperCase() + item.slice(1)}</button>)}
         </div>
       </header>
+      <div id="code-inspector-panel" role="tabpanel" aria-labelledby={`code-inspector-tab-${tab}`} tabIndex={0} className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {error && <div role="alert" className="luma-inspector-error">{error}</div>}
       {tab === "changes" ? <>
         <div className="luma-inspector-summary">
@@ -3552,7 +3605,7 @@ function CodeInspector({ workspacePath, onOpenFile }: {
         </div>
         <div className="luma-inspector-actions">
           <button type="button" onClick={() => void revertSelected()} disabled={!selected || !files.some((file) => file.path === selected && file.kind !== "untracked" && file.kind !== "added" && file.kind !== "renamed") || busy} title="Discard changes to the selected tracked file">Revert selected</button>
-          <button type="button" onClick={() => void stageSelected()} disabled={!selected || busy} title="Stage only the selected file">{busy ? "Working…" : "Accept selected"}</button>
+          <button type="button" onClick={() => void stageSelected()} disabled={!selected || busy} title="Stage only the selected file">{busy ? "Working…" : "Stage selected"}</button>
         </div>
         {loading && files.length === 0 ? <p className="luma-inspector-empty">Checking repository changes…</p> : files.length === 0 ? <p className="luma-inspector-empty">No changes in this workspace.</p> : <>
           <div className="luma-inspector-change-list">
@@ -3564,12 +3617,13 @@ function CodeInspector({ workspacePath, onOpenFile }: {
             </button>)}
           </div>
           <div className="luma-inspector-diff-header"><span className="min-w-0 flex-1 truncate">{selected ?? "Diff preview"}</span>{selected && <button type="button" onClick={() => onOpenFile(selected)}>Open</button>}</div>
-          <pre className="luma-inspector-diff">{diff || (selected ? "No textual diff available." : "Select a file to inspect its diff.")}</pre>
+          <pre className="luma-inspector-diff">{diffLoading ? "Loading diff…" : diff || (selected ? "No textual diff available." : "Select a file to inspect its diff.")}</pre>
         </>}
       </> : tab === "files" ? <>
         <div className="luma-inspector-summary"><div className="min-w-0 flex-1"><strong>Workspace files</strong><span title={workspacePath}>{workspacePath || "No workspace selected"}</span></div><button type="button" onClick={() => setRefreshKey((value) => value + 1)} title="Refresh files">↻</button></div>
         <div className="luma-inspector-file-tree">{treeLoading ? <p className="luma-inspector-empty">Loading files…</p> : tree.length ? <WorkspaceTree nodes={tree} selectedFile={null} onFileSelect={onOpenFile} /> : <p className="luma-inspector-empty">No files found.</p>}</div>
       </> : <EmbeddedTerminal workspacePath={workspacePath} />}
+      </div>
     </aside>
   );
 }
@@ -3609,6 +3663,11 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceNode[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createAdvancedOpen, setCreateAdvancedOpen] = useState(false);
+  const [createModelPickerOpen, setCreateModelPickerOpen] = useState(false);
+  const [createGlobalModel, setCreateGlobalModel] = useState<SetupConfig["model"] | null>(null);
+  const [createModelOverride, setCreateModelOverride] = useState<SetupConfig["model"] | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [agentName, setAgentName] = useState("");
   const [agentDescription, setAgentDescription] = useState("");
   const [agentSpecialization, setAgentSpecialization] = useState("");
@@ -3618,6 +3677,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [agentMaxConcurrentTasks, setAgentMaxConcurrentTasks] = useState(1);
   const [agentMascot, setAgentMascot] = useState("auto");
   const [agentUseGlobalContext, setAgentUseGlobalContext] = useState(true);
+  const [agentNetworkAccess, setAgentNetworkAccess] = useState(true);
   const [personalityDraft, setPersonalityDraft] = useState("");
   const [specializationDraft, setSpecializationDraft] = useState("");
   const [skillsDraft, setSkillsDraft] = useState("");
@@ -3659,6 +3719,26 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const refreshing = useRef(false);
+  const createDialogRef = useFocusTrap(createOpen && !createModelPickerOpen);
+
+  const openCreateDialog = useCallback(() => {
+    setCreateError(null);
+    setCreateAdvancedOpen(false);
+    setAgentName("");
+    setAgentDescription("");
+    setAgentSpecialization("");
+    setAgentPersonality("");
+    setAgentInitialMemory("");
+    setAgentWorkspace("");
+    setAgentMaxConcurrentTasks(1);
+    setAgentMascot("auto");
+    setAgentUseGlobalContext(true);
+    setAgentNetworkAccess(true);
+    setCreateModelOverride(null);
+    setCreateGlobalModel(null);
+    setCreateOpen(true);
+    void window.luma.getSetupConfig().then((config) => setCreateGlobalModel(config?.model ?? null)).catch(() => setCreateGlobalModel(null));
+  }, []);
 
   useEffect(() => {
     try {
@@ -3685,7 +3765,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
 
   useEffect(() => {
     const startNewTask = () => {
-      if (agents.length === 0) setCreateOpen(true);
+      if (agents.length === 0) openCreateDialog();
       else {
         if (!selectedAgentId) setSelectedAgentId(agents[0].id);
         setSelectedTaskId("__new__");
@@ -3695,7 +3775,16 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
     };
     window.addEventListener("luma:new-teammate-task", startNewTask);
     return () => window.removeEventListener("luma:new-teammate-task", startNewTask);
-  }, [agents, selectedAgentId]);
+  }, [agents, openCreateDialog, selectedAgentId]);
+
+  useEffect(() => {
+    if (!createOpen || createModelPickerOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) setCreateOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [createOpen, createModelPickerOpen, busy]);
 
   const refresh = useCallback(async () => {
     if (refreshing.current) return;
@@ -3949,7 +4038,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
           <button type="button" disabled={busy || !agents.length} onClick={() => { if (!selectedAgentId && agents[0]) setSelectedAgentId(agents[0].id); setSelectedTaskId("__new__"); setActiveTab("chat"); setSubmittingTaskId(null); }}><PlusIcon /> New task <kbd>{window.luma.platform === "darwin" ? "⌘N" : "Ctrl N"}</kbd></button>
           <button type="button" aria-pressed={teammateSearchOpen} onClick={() => setTeammateSearchOpen((value) => !value)}><SearchIcon /> Search <kbd>{window.luma.platform === "darwin" ? "⌘K" : "Ctrl K"}</kbd></button>
         </div>
-        {teammateSearchOpen && <input className="luma-input luma-teammate-search" autoFocus value={teammateSearch} onChange={(event) => setTeammateSearch(event.target.value)} placeholder="Search teammates" />}
+        {teammateSearchOpen && <input className="luma-input luma-teammate-search" autoFocus aria-label="Search teammates" value={teammateSearch} onChange={(event) => setTeammateSearch(event.target.value)} placeholder="Search teammates" />}
         <div className="luma-teammate-sidebar-heading"><span>Your team</span></div>
         {agents.length === 0 && <p className="px-1 py-3 text-[11px] text-[var(--luma-text-muted)]">No teammates yet. Add one to give it a persistent identity and workspace.</p>}
         <div className="mt-3 space-y-1">
@@ -3958,12 +4047,12 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
               <div className="flex items-center gap-2.5"><MascotAvatar seed={agent.name} mascot={agent.configuration.mascot} size={30} active={false} activity="idle" /><span className="flex min-w-0 flex-1 flex-col"><span className="truncate text-[13px] font-semibold">{agent.name}</span><span className="truncate text-[12px] text-[var(--luma-text-muted)]">{agent.description || (agent.id === "agent_global" ? "Global teammate" : "Personal teammate")} · {agent.status === "active" ? "Working" : agent.status === "waiting" ? "Needs attention" : agent.status === "paused" ? "Paused" : "Idle"}</span></span></div>
             </button>
           ))}
-          <button type="button" disabled={busy} onClick={() => setCreateOpen(true)} className="luma-teammate-add-button"><span><PlusIcon /></span>Add teammate</button>
+          <button type="button" disabled={busy} onClick={openCreateDialog} className="luma-teammate-add-button"><span><PlusIcon /></span>Add teammate</button>
         </div>
       </div>,
     );
     return () => onSidebarChange(null);
-  }, [agents, busy, onSidebarChange, selectedAgentId, teammateSearch, teammateSearchOpen]);
+  }, [agents, busy, onSidebarChange, openCreateDialog, selectedAgentId, teammateSearch, teammateSearchOpen]);
 
   useEffect(() => {
     if (!selectedAgent) return;
@@ -4127,7 +4216,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                   <div className="luma-teammate-composer-row flex items-center gap-2">
                     <button type="button" aria-label="Attach files" title="Attach text files" disabled={busy || (!hasMentionRoute && (selectedAgent.status === "stopped" || selectedAgent.status === "paused"))} onClick={() => void attachChatFiles()} className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-[var(--luma-text-secondary)] hover:bg-[var(--luma-surface-hover)] hover:text-[var(--luma-text)] disabled:opacity-40"><PlusIcon /></button>
                     <button type="button" aria-label="Route to a teammate" title="Route this task to another teammate" disabled={busy} onClick={() => { setChatPrompt((value) => `${value}${value && !value.endsWith(" ") ? " " : ""}@`); chatPromptRef.current?.focus(); }} className="luma-mention-button">@</button>
-                    <PromptInput inputRef={chatPromptRef} value={chatPrompt} onChange={(value) => { setChatPrompt(value); setSuggestionsDismissed(false); setActiveMentionIndex(0); setActiveSlashIndex(0); }} onKeyDown={(event) => {
+                    <PromptInput inputRef={chatPromptRef} ariaLabel={`Message ${selectedAgent.name}`} value={chatPrompt} onChange={(value) => { setChatPrompt(value); setSuggestionsDismissed(false); setActiveMentionIndex(0); setActiveSlashIndex(0); }} onKeyDown={(event) => {
                       const move = (count: number, current: number, setter: (value: number) => void) => {
                         if (!["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft"].includes(event.key) || count === 0) return false;
                         event.preventDefault(); const direction = ["ArrowDown", "ArrowRight"].includes(event.key) ? 1 : -1;
@@ -4314,45 +4403,77 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
           </div>}
         </aside>}
         </div>
-        {createOpen && <div className="luma-create-overlay fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-5" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setCreateOpen(false); }}>
-          <form className="luma-create-dialog flex max-h-[min(820px,92vh)] w-full max-w-[820px] flex-col overflow-hidden rounded-xl border border-[var(--luma-border-strong)] bg-[var(--luma-surface)] shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="create-teammate-title" onSubmit={(event) => { event.preventDefault(); void perform(async () => {
-            const configuration: AgentConfiguration = {
-              system_prompt: agentPersonality.trim(), specialization: agentSpecialization.trim() || null, mascot: agentMascot, use_global_context: agentUseGlobalContext, skills: [],
-              provider: null, model: null, endpoint: null, workspace: agentWorkspace.trim() || workspacePath || null,
-              allowed_workspaces: agentWorkspace.trim() || workspacePath ? [agentWorkspace.trim() || workspacePath] : [], enabled_tools: [],
-              network_access: true,
-              permissions: { allowed_tools: ["read_file", "list_directory", "search_files", "git_status", "git_diff", "find_symbols", "find_references", "git_log", "git_show", "git_blame", "git_branches", "file_metadata", "find_todos", "count_lines", "inspect_project", "list_skills", "load_skill", "web_search", "fetch_url"], denied_tools: [], auto_approve_read_only: true, require_approval_for_mutations: true, allow_network: true },
-              max_concurrent_tasks: agentMaxConcurrentTasks, recover_interrupted_tasks: false,
-            };
-            const created = await window.luma.createAgent({ name: agentName.trim(), description: agentDescription.trim() || null, kind: "teammates", configuration });
-            setSelectedAgentId(created.id); setSelectedTaskId(null); setCreateOpen(false); setAgentName(""); setAgentDescription(""); setAgentSpecialization(""); setAgentPersonality(""); setAgentInitialMemory(""); setAgentWorkspace(""); setAgentMaxConcurrentTasks(1); setAgentMascot("auto"); setAgentUseGlobalContext(true); setActiveTab("chat");
-            if (agentInitialMemory.trim()) {
-              try { await window.luma.addMemory("agent", created.id, agentInitialMemory.trim()); }
-              catch (reason) { setError(reason instanceof Error ? `Teammate created, but initial memory could not be saved: ${reason.message}` : "Teammate created, but initial memory could not be saved."); }
-            }
-          }); }}>
-            <header className="luma-create-header flex items-center justify-between border-b border-[var(--luma-border)] px-6 py-4"><div><div className="luma-kicker mb-1">TEAMMATES <span aria-hidden="true">/</span> CREATE</div><h3 id="create-teammate-title" className="text-[18px] font-semibold tracking-tight">Create a teammate</h3><p className="mt-1 text-[11px] text-[var(--luma-text-muted)]">Define who they are, then choose how they work.</p></div><button type="button" aria-label="Close dialog" onClick={() => setCreateOpen(false)} className="luma-create-close" disabled={busy}>×</button></header>
-            <div className="luma-create-body min-h-0 flex-1 overflow-auto">
-              <div className="luma-create-column luma-create-identity">
-                <div className="luma-create-section-heading"><span>01</span><div><h4>Identity</h4><p>Start with the basics and make them recognizable.</p></div></div>
-                <label className="luma-create-field">Name <span>Required</span><input autoFocus required maxLength={120} value={agentName} onChange={(event) => setAgentName(event.target.value)} placeholder="e.g. Researcher" className="luma-input mt-1.5 h-10 w-full text-[13px]" /></label>
-                <label className="luma-create-field">What do they do?<input value={agentDescription} onChange={(event) => setAgentDescription(event.target.value)} placeholder="A short description of their role" className="luma-input mt-1.5 h-10 w-full text-[12px]" /></label>
-                <label className="luma-create-field">Specialization <span>Optional</span><input value={agentSpecialization} onChange={(event) => setAgentSpecialization(event.target.value)} placeholder="e.g. Graphics Engineer, Security Reviewer" className="luma-input mt-1.5 h-10 w-full text-[12px]" /></label>
-                <div className="luma-create-mascot"><div className="luma-create-field-label">Appearance</div><MascotCustomizer value={agentMascot} seed={agentName} onChange={setAgentMascot} /></div>
+        {createOpen && <div className="luma-create-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setCreateOpen(false); }}>
+          <form ref={createDialogRef as React.RefObject<HTMLFormElement>} className="luma-create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-teammate-title" aria-describedby="create-teammate-description" onSubmit={(event) => {
+            event.preventDefault();
+            if (!agentName.trim()) { setCreateError("Give your teammate a name to continue."); return; }
+            setBusy(true);
+            setCreateError(null);
+            setError(null);
+            void (async () => {
+              try {
+                const workspace = agentWorkspace.trim() || workspacePath || null;
+                const configuration: AgentConfiguration = {
+                  system_prompt: agentPersonality.trim(), specialization: agentSpecialization.trim() || null, mascot: agentMascot, use_global_context: agentUseGlobalContext, skills: [],
+                  provider: createModelOverride?.provider ?? null, model: createModelOverride?.name ?? null, endpoint: createModelOverride?.endpoint ?? null, workspace,
+                  allowed_workspaces: workspace ? [workspace] : [], enabled_tools: [],
+                  network_access: agentNetworkAccess,
+                  permissions: { allowed_tools: ["read_file", "list_directory", "search_files", "git_status", "git_diff", "find_symbols", "find_references", "git_log", "git_show", "git_blame", "git_branches", "file_metadata", "find_todos", "count_lines", "inspect_project", "list_skills", "load_skill", ...(agentNetworkAccess ? ["web_search", "fetch_url"] : [])], denied_tools: [], auto_approve_read_only: true, require_approval_for_mutations: true, allow_network: agentNetworkAccess },
+                  max_concurrent_tasks: agentMaxConcurrentTasks, recover_interrupted_tasks: false,
+                };
+                const created = await window.luma.createAgent({ name: agentName.trim(), description: agentDescription.trim() || null, kind: "teammates", configuration });
+                setSelectedAgentId(created.id);
+                setSelectedTaskId(null);
+                setActiveTab("chat");
+                if (agentInitialMemory.trim()) {
+                  try { await window.luma.addMemory("agent", created.id, agentInitialMemory.trim()); }
+                  catch (reason) { setError(reason instanceof Error ? `Teammate created, but initial memory could not be saved: ${reason.message}` : "Teammate created, but initial memory could not be saved."); }
+                }
+                setCreateOpen(false);
+                setAgentName(""); setAgentDescription(""); setAgentSpecialization(""); setAgentPersonality(""); setAgentInitialMemory(""); setAgentWorkspace(""); setAgentMaxConcurrentTasks(1); setAgentMascot("auto"); setAgentUseGlobalContext(true); setAgentNetworkAccess(true); setCreateModelOverride(null); setCreateAdvancedOpen(false);
+                await refresh();
+              } catch (reason) {
+                setCreateError(reason instanceof Error ? reason.message : String(reason));
+              } finally { setBusy(false); }
+            })();
+          }}>
+            <aside className="luma-create-identity-rail">
+              <div className="luma-create-rail-top"><span>TEAMMATES</span><span>NEW MEMBER</span></div>
+              <div className="luma-create-live-preview" aria-live="polite">
+                <div className="luma-create-preview-orbit"><MascotAvatar seed={agentName || "Your teammate"} mascot={agentMascot} size={104} label={`${agentName.trim() || "New teammate"} mascot preview`} /></div>
+                <div className="luma-create-preview-copy"><span>YOUR NEW TEAMMATE</span><h2>{agentName.trim() || "Name your teammate"}</h2><p>{agentDescription.trim() || agentSpecialization.trim() || "Their role will appear here as you define it."}</p></div>
               </div>
-              <div className="luma-create-column luma-create-configuration">
-                <div className="luma-create-section-heading"><span>02</span><div><h4>How they work</h4><p>Shape their behavior and give them useful context.</p></div></div>
-                <label className="luma-create-field">Personality <span>Optional</span><textarea id="teammate-personality" value={agentPersonality} onChange={(event) => setAgentPersonality(event.target.value)} rows={4} placeholder="How should this teammate think, communicate and approach tasks? Leave blank for Luma's defaults." className="luma-input mt-1.5 w-full resize-y text-[12px]" /></label>
-                <label className="luma-create-context"><input type="checkbox" checked={agentUseGlobalContext} onChange={(event) => setAgentUseGlobalContext(event.target.checked)} className="mt-0.5 accent-[var(--luma-accent)]" /><span><strong>Share global context</strong><small>Use the global skills, memory, connectors, etc.</small></span></label>
-                <label className="luma-create-field">Initial memory <span>Optional</span><textarea value={agentInitialMemory} onChange={(event) => setAgentInitialMemory(event.target.value)} rows={3} placeholder="Facts or preferences this teammate should remember…" className="luma-input mt-1.5 w-full resize-y text-[12px]" /></label>
-                <label className="luma-create-field">Workspace <span>Optional</span><input value={agentWorkspace} onChange={(event) => setAgentWorkspace(event.target.value)} placeholder={workspacePath || "Use current workspace"} className="luma-input mt-1.5 h-10 w-full text-[12px]" /></label>
-                <label className="luma-create-field">Parallel tasks <span>1–8</span><input type="number" min={1} max={8} value={agentMaxConcurrentTasks} onChange={(event) => setAgentMaxConcurrentTasks(Math.max(1, Math.min(8, Number(event.target.value) || 1)))} className="luma-input mt-1.5 h-10 w-full text-[12px]" /></label>
-                <div className="luma-create-security"><span aria-hidden="true">⌁</span><p><strong>Personal-agent ready.</strong> Web search and public webpages are available. External requests that can change data and workspace mutations require approval.</p></div>
+              <div className="luma-create-mascot-studio"><div className="luma-create-studio-heading"><div><span>IDENTITY</span><strong>Choose their look</strong></div><span className="luma-create-studio-count">12 forms</span></div><MascotCustomizer value={agentMascot} seed={agentName || "luma"} onChange={setAgentMascot} /></div>
+              <div className="luma-create-rail-note"><span className="luma-create-note-mark">✳</span><p>A recognizable identity makes it easier to spot your teammate across chats, tasks, and activity.</p></div>
+            </aside>
+            <section className="luma-create-main">
+              <header className="luma-create-header"><div><div className="luma-kicker">BUILD YOUR TEAM</div><h3 id="create-teammate-title">Create a teammate</h3><p id="create-teammate-description">Give them a purpose. Luma takes care of the setup.</p></div><button type="button" aria-label="Close dialog" onClick={() => setCreateOpen(false)} className="luma-create-close" disabled={busy}>×</button></header>
+              <div className="luma-create-scroll">
+                <section className="luma-create-section" aria-labelledby="create-identity-heading"><div className="luma-create-section-heading"><span>01</span><div><h4 id="create-identity-heading">Who are they?</h4><p>Start with a name and the kind of work they own.</p></div></div>
+                  <label className="luma-create-field">Name <span>Required</span><input autoFocus required maxLength={120} value={agentName} onChange={(event) => { setAgentName(event.target.value); setCreateError(null); }} placeholder="e.g. Researcher, Release Engineer" className="luma-input luma-create-input luma-create-name-input" /></label>
+                  <label className="luma-create-field">Description <span>Optional</span><input value={agentDescription} onChange={(event) => setAgentDescription(event.target.value)} placeholder="What should teammates come to them for?" className="luma-input luma-create-input" /></label>
+                  <label className="luma-create-field">Specialization <span>Optional</span><input value={agentSpecialization} onChange={(event) => setAgentSpecialization(event.target.value)} placeholder="e.g. Rust performance, product research" className="luma-input luma-create-input" /></label>
+                </section>
+                <section className="luma-create-section luma-create-intelligence" aria-labelledby="create-intelligence-heading"><div className="luma-create-section-heading"><span>02</span><div><h4 id="create-intelligence-heading">How they think</h4><p>Good defaults now; tune the details whenever you need.</p></div></div>
+                  <div className="luma-create-model-row"><span className="luma-create-model-glyph" aria-hidden="true">◈</span><span className="luma-create-model-copy"><strong>{createModelOverride ? createModelOverride.name : createGlobalModel?.name || "Your global model"}</strong><small>{createModelOverride ? `${createModelOverride.provider} · dedicated model for this teammate` : createGlobalModel ? `${createGlobalModel.provider} · inherited from your default configuration` : "Uses your default provider and model."}</small></span><button type="button" className="luma-create-model-action" onClick={() => setCreateModelPickerOpen(true)}>{createModelOverride ? "Change" : "Choose model"}</button>{createModelOverride && <button type="button" className="luma-create-model-reset" onClick={() => setCreateModelOverride(null)} aria-label="Use global model">Reset</button>}</div>
+                  <label className="luma-create-context"><input type="checkbox" checked={agentUseGlobalContext} onChange={(event) => setAgentUseGlobalContext(event.target.checked)} /><span><strong>Use the global skills, memory, connectors, etc.</strong><small>{agentUseGlobalContext ? "This teammate starts with your shared skills, memories, and connected services." : "This teammate starts with its own context. You can add skills and memory later."}</small></span></label>
+                </section>
+                <section className="luma-create-advanced"><button type="button" className="luma-create-advanced-toggle" aria-expanded={createAdvancedOpen} onClick={() => setCreateAdvancedOpen((value) => !value)}><span className={`luma-create-chevron ${createAdvancedOpen ? "is-open" : ""}`} aria-hidden="true">›</span><span><strong>Personalize behavior & access</strong><small>Instructions, first memory, workspace, and parallel work</small></span><span className="luma-create-optional">OPTIONAL</span></button>
+                  {createAdvancedOpen && <div className="luma-create-advanced-fields">
+                    <label className="luma-create-field">Custom instructions <span>Optional</span><textarea id="teammate-personality" value={agentPersonality} onChange={(event) => setAgentPersonality(event.target.value)} rows={3} placeholder="How should they reason, communicate, and approach their work? Leave blank for Luma's defaults." className="luma-input luma-create-input luma-create-textarea" /></label>
+                    <label className="luma-create-field">First memory <span>Optional</span><textarea value={agentInitialMemory} onChange={(event) => setAgentInitialMemory(event.target.value)} rows={2} placeholder="A useful fact or preference to remember from day one…" className="luma-input luma-create-input luma-create-textarea" /></label>
+                    <div className="luma-create-advanced-grid"><label className="luma-create-field">Workspace <span>Optional</span><input value={agentWorkspace} onChange={(event) => setAgentWorkspace(event.target.value)} placeholder={workspacePath || "Use current workspace"} className="luma-input luma-create-input" /></label><label className="luma-create-field">Parallel tasks <span>1–8</span><input type="number" min={1} max={8} value={agentMaxConcurrentTasks} onChange={(event) => setAgentMaxConcurrentTasks(Math.max(1, Math.min(8, Number(event.target.value) || 1)))} className="luma-input luma-create-input" /></label></div>
+                    <label className="luma-create-permission"><input type="checkbox" checked={agentNetworkAccess} onChange={(event) => setAgentNetworkAccess(event.target.checked)} /><span><strong>Allow internet access</strong><small>Enables web search and fetching public webpages. Mutating actions still require approval.</small></span></label>
+                    <div className="luma-create-security"><span aria-hidden="true">⌁</span><p><strong>Safe by default.</strong> {agentNetworkAccess ? "Read-only tools and web research are available." : "Read-only workspace tools are available; internet tools are disabled."} Workspace changes and external mutations require approval.</p></div>
+                  </div>}
+                </section>
+                {createError && <div className="luma-create-error" role="alert"><strong>Couldn't create this teammate</strong><span>{createError}</span></div>}
               </div>
-            </div>
-            <footer className="luma-create-footer flex items-center justify-between border-t border-[var(--luma-border)] px-6 py-4"><span>{agentName.trim() ? "Ready when you are." : "A name is all you need to get started."}</span><div className="flex gap-2"><button type="button" disabled={busy} onClick={() => setCreateOpen(false)} className="luma-btn-secondary h-9 px-3 text-[11px]">Cancel</button><button type="submit" disabled={busy || !agentName.trim()} className="luma-btn-primary h-9 px-4 text-[11px]">{busy ? "Creating…" : "Create teammate"}</button></div></footer>
+              <footer className="luma-create-footer"><span>{agentName.trim() ? <><strong>Looking good.</strong> Ready to join your team.</> : "A name is all you need to get started."}</span><div><button type="button" disabled={busy} onClick={() => setCreateOpen(false)} className="luma-btn-secondary">Cancel</button><button type="submit" disabled={busy || !agentName.trim()} className="luma-btn-primary"><span>{busy ? "Creating…" : "Create teammate"}</span>{!busy && <span aria-hidden="true">↗</span>}</button></div></footer>
+            </section>
           </form>
         </div>}
+        {createModelPickerOpen && <ModelPickerDialog scope="agent" draftAgent onClose={() => setCreateModelPickerOpen(false)} onChanged={(config) => setCreateModelOverride(config.model)} />}
         <footer className="flex shrink-0 items-center justify-between border-t border-[var(--luma-border)] px-5 py-2 text-[10px] text-[var(--luma-text-muted)]"><span>Work continues independently of this page.</span><button type="button" onClick={() => void refresh()} className="hover:text-[var(--luma-text)]">Refresh</button></footer>
         {modelPickerOpen && selectedAgent && <ModelPickerDialog scope="agent" agent={selectedAgent} onClose={() => setModelPickerOpen(false)} onChanged={(config) => { setModelProviderDraft(config.model.provider); setModelNameDraft(config.model.name); setModelEndpointDraft(config.model.endpoint); setConfigurationDraft(JSON.stringify({ ...selectedAgent.configuration, provider: config.model.provider, model: config.model.name, endpoint: config.model.endpoint }, null, 2)); void refresh(); }} />}
     </section>
@@ -4361,6 +4482,17 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
 
 function DesktopTour({ onFinish }: { onFinish: () => void }) {
   const [step, setStep] = useState(0);
+  const dialogRef = useFocusTrap(true);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onFinish();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onFinish]);
   const steps = [
     { title: "Welcome to Luma", body: "Luma brings coding work and persistent teammates into one focused desktop workspace. This quick tour shows you where everything lives." },
     { title: "Your projects and history", body: "Create Projects and give each one its own folder. Your recent conversations stay in the sidebar, ready to pick up where you left off." },
@@ -4371,12 +4503,12 @@ function DesktopTour({ onFinish }: { onFinish: () => void }) {
   const current = steps[step];
   return (
     <div className="luma-tour-backdrop fixed inset-0 z-[180] flex items-center justify-center p-5" role="presentation">
-      <section className="luma-tour-panel w-full max-w-[440px] rounded-xl border border-[var(--luma-border-strong)] bg-[var(--luma-surface)] p-6 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="luma-tour-title">
+      <section ref={dialogRef as React.RefObject<HTMLElement>} className="luma-tour-panel w-full max-w-[440px] rounded-xl border border-[var(--luma-border-strong)] bg-[var(--luma-surface)] p-6 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="luma-tour-title" aria-describedby="luma-tour-description">
         <div className="mb-5 flex items-center justify-between"><span className="luma-kicker">A QUICK TOUR</span><span className="text-[11px] text-[var(--luma-text-muted)]">{step + 1} of {steps.length}</span></div>
         <div className="mb-5 flex gap-1.5" aria-hidden="true">{steps.map((item, index) => <span key={item.title} className={`h-1 flex-1 rounded-full ${index <= step ? "bg-[var(--luma-accent)]" : "bg-[var(--luma-border-strong)]"}`} />)}</div>
         <h2 id="luma-tour-title" className="text-[20px] font-semibold tracking-tight">{current.title}</h2>
-        <p className="mt-3 min-h-[76px] text-[13px] leading-6 text-[var(--luma-text-secondary)]">{current.body}</p>
-        <footer className="mt-6 flex items-center justify-between"><button type="button" onClick={onFinish} className="text-[12px] text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]">Skip tour</button><div className="flex items-center gap-2">{step > 0 && <button type="button" onClick={() => setStep((value) => value - 1)} className="luma-btn-secondary h-8 px-3 text-[12px]">Back</button>}<button type="button" onClick={() => step === steps.length - 1 ? onFinish() : setStep((value) => value + 1)} className="luma-btn-primary h-8 px-3 text-[12px]">{step === steps.length - 1 ? "Finish" : "Next"}</button></div></footer>
+        <p id="luma-tour-description" className="mt-3 min-h-[76px] text-[13px] leading-6 text-[var(--luma-text-secondary)]">{current.body}</p>
+        <footer className="mt-6 flex items-center justify-between"><button type="button" onClick={onFinish} className="text-[12px] text-[var(--luma-text-muted)] hover:text-[var(--luma-text)]">Skip tour</button><div className="flex items-center gap-2">{step > 0 && <button type="button" onClick={() => setStep((value) => value - 1)} className="luma-btn-secondary h-8 px-3 text-[12px]">Back</button>}<button autoFocus type="button" onClick={() => step === steps.length - 1 ? onFinish() : setStep((value) => value + 1)} className="luma-btn-primary h-8 px-3 text-[12px]">{step === steps.length - 1 ? "Finish" : "Next"}</button></div></footer>
       </section>
     </div>
   );

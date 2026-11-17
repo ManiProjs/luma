@@ -962,7 +962,7 @@ body { font-size: 13px; line-height: 1.58; letter-spacing: -.006em; }
 
 /* Luma management console: operational navigation, not an IDE in a browser. */
 .management-shell { display: flex; width: 100%; height: 100%; overflow: hidden; background: var(--luma-bg); color: var(--luma-text); }
-.management-sidebar { display: flex; width: 224px; flex: 0 0 224px; flex-direction: column; border-right: 1px solid var(--luma-border); background: var(--luma-surface); }
+.management-sidebar { display: flex; width: var(--management-sidebar-width, 224px); flex: 0 0 var(--management-sidebar-width, 224px); flex-direction: column; border-right: 1px solid var(--luma-border); background: var(--luma-surface); }
 .management-sidebar-resize { position: relative; z-index: 3; flex: 0 0 4px; margin-left: -2px; cursor: col-resize; touch-action: none; }
 .management-sidebar-resize::after { position: absolute; inset: 0 1px; content: ""; background: transparent; transition: background-color 120ms ease; }
 .management-sidebar-resize:hover::after, .management-sidebar-resize:focus-visible::after, .management-sidebar-resize[data-dragging="true"]::after { background: var(--luma-accent); }
@@ -1055,6 +1055,7 @@ body { font-size: 13px; line-height: 1.58; letter-spacing: -.006em; }
 
 @media (max-width: 760px) {
   .management-sidebar { width: 176px; flex-basis: 176px; }
+  .management-sidebar-resize { display: none; }
   .management-content { padding: 20px 14px 32px; }
   .management-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .management-overview-grid { grid-template-columns: 1fr; }
@@ -1074,7 +1075,6 @@ body { font-size: 13px; line-height: 1.58; letter-spacing: -.006em; }
 }
 
 /* Compact dashboard controls and information density. */
-.management-sidebar { width: 196px; flex-basis: 196px; }
 .management-brand { gap: 8px; padding: 13px 13px 17px; }
 .management-brand-mark { width: 26px; height: 26px; }
 .management-nav-label { padding: 0 13px 6px; }
@@ -1147,4 +1147,26 @@ body { font-size: 13px; line-height: 1.58; letter-spacing: -.006em; }
 @media (max-width: 700px) {
   .teammates-body { grid-template-columns: 150px minmax(0, 1fr); }
   .teammates-detail { padding-inline: 12px; }
+}
+
+.teammates-schedule-create { align-items: flex-start; flex-direction: column; }
+.teammates-schedule-create label { display: grid; width: 100%; gap: 6px; color: var(--luma-text-secondary); font-size: 11px; }
+.teammates-schedule-create textarea { width: 100%; min-height: 72px; resize: vertical; border: 1px solid var(--luma-border-strong); border-radius: 5px; background: var(--luma-bg); padding: 8px 9px; color: var(--luma-text); font: inherit; font-size: 11px; }
+.teammates-schedule-create textarea:focus-visible { outline: 2px solid var(--luma-accent); outline-offset: 2px; }
+.teammates-schedule-create button { align-self: flex-start; }
+
+/* Keep the management navigation compact after the later density overrides. */
+@media (max-width: 760px) {
+  .management-sidebar { width: 176px !important; flex-basis: 176px !important; }
+  .management-sidebar-resize { display: none; }
+}
+@media (max-width: 520px) {
+  .management-sidebar { width: 54px !important; flex-basis: 54px !important; }
+  .management-brand { justify-content: center; padding-inline: 0; }
+  .management-brand > div, .management-nav-label { display: none; }
+  .management-sidebar nav { justify-items: center; padding-inline: 7px; }
+  .management-sidebar nav button { width: 40px; min-width: 0; justify-content: center; padding: 0; font-size: 0; }
+  .management-sidebar nav button > span { flex: 0 0 17px; font-size: 14px; }
+  .management-sidebar nav button b { display: none; }
+  .management-sidebar-bottom { justify-content: center; padding-inline: 0; font-size: 0; }
 }

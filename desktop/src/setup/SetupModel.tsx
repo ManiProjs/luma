@@ -218,6 +218,7 @@ export default function SetupModel() {
             className="flex gap-2"
           >
             <input
+              aria-label="Search models"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search models..."
@@ -304,6 +305,7 @@ export default function SetupModel() {
           <AnimatePresence>
             {error && (
               <motion.div
+                role="alert"
                 initial={{
                   opacity: 0,
                   height: 0,
@@ -364,6 +366,7 @@ export default function SetupModel() {
                     <motion.button
                       key={item.id}
                       type="button"
+                      aria-pressed={selected}
                       variants={modelItemVariants}
                       onClick={() => setModel(item)}
                       className={`w-full rounded-xl border p-4 text-left transition-colors ${
@@ -438,6 +441,7 @@ export default function SetupModel() {
 
             <div className="flex gap-2">
               <input
+                aria-label="Enter model ID"
                 value={manualModel}
                 onChange={(event) => setManualModel(event.target.value)}
                 onKeyDown={(event) => {

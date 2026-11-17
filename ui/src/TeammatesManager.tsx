@@ -16,6 +16,7 @@ type RequestEvent = Extract<ServerEvent, { data: { request_id: string } }>;
 type View = "list" | "settings" | "chat";
 type SettingField = "personality" | "workspace" | "skills" | "mascot";
 type ChatLine = { id: string; role: "user" | "assistant" | "status" | "tool"; content: string };
+type PendingQuestion = { taskId: string; questionId: string; prompt: string; choices: string[] };
 
 function TaskActivity({ taskId }: { taskId: string }) {
   const frame = useMotionFrame(true);
@@ -58,11 +59,13 @@ export function TeammatesManager() {
   const [editing, setEditing] = useState<SettingField | null>(null);
   const [editValue, setEditValue] = useState("");
   const [chatInput, setChatInput] = useState("");
+  const [chatCursor, setChatCursor] = useState(0);
   const [chatOffset, setChatOffset] = useState(0);
   const [fullScreen, setFullScreen] = useState(false);
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [pendingQuestion, setPendingQuestion] = useState<PendingQuestion | null>(null);
   const sequence = useRef(0);
   const polling = useRef(false);
   const rootElement = useRef<DOMElement>(null);
@@ -77,7 +80,7 @@ export function TeammatesManager() {
 
   useTerminalMouse(rootElement, (event, contains) => {
     if (event.action === "wheel" && view === "chat" && contains(rootElement.current)) {
-      setChatOffset((offset) => Math.max(0, Math.min(Math.max(0, chatLines.length - 1), offset + (event.wheelDirection === "down" ? -3 : 3))));
+      setChatOffset((offset) => Math.max(0, Math.min(Math.max(0, chatLines.length - chatWindowSize), offset + (event.wheelDirection === "down" ? -3 : 3))));
       return;
     }
     if (event.action === "wheel" && view === "list" && contains(rootElement.current)) {
@@ -185,9 +188,25 @@ export function TeammatesManager() {
   async function sendChat() {
     const agent = selectedAgent;
     const prompt = chatInput.trim();
-    if (!agent || !prompt || busy || activeTaskId) return;
-    setChatInput("");
+    if (!agent || !prompt || busy || (activeTaskId && pendingQuestion?.taskId !== activeTaskId)) return;
     setChatOffset(0);
+    if (pendingQuestion && activeTaskId === pendingQuestion.taskId) {
+      setBusy(true); setError("");
+      try {
+        const requestId = randomUUID();
+        await request(client, {
+          type: "task_answer_question",
+          data: { request_id: requestId, id: pendingQuestion.taskId, question_id: pendingQuestion.questionId, answer: prompt },
+        }, "task_saved", requestId);
+        setChatLines((lines) => [...lines, { id: randomUUID(), role: "user", content: prompt }, { id: randomUUID(), role: "status", content: "Answer sent." }]);
+        setPendingQuestion(null);
+        setChatInput("");
+        setChatCursor(0);
+      } catch (reason) {
+        setError(userError(reason));
+      } finally { setBusy(false); }
+      return;
+    }
     setChatLines((lines) => [...lines, { id: randomUUID(), role: "user", content: prompt }, { id: `pending-${Date.now()}`, role: "assistant", content: "Thinking…" }]);
     setBusy(true); setError("");
     try {
@@ -197,6 +216,8 @@ export function TeammatesManager() {
         data: { request_id: requestId, agent_id: agent.id, request: prompt, title: null, workspace: agent.configuration.workspace || process.cwd(), recover_on_restart: false },
       }, "task_saved", requestId);
       setActiveTaskId(response.data.task.id);
+      setChatInput("");
+      setChatCursor(0);
     } catch (reason) {
       setChatLines((lines) => [...lines.filter((line) => line.content !== "Thinking…"), { id: randomUUID(), role: "assistant", content: `Could not send message: ${userError(reason)}` }]);
     } finally { setBusy(false); }
@@ -225,7 +246,10 @@ export function TeammatesManager() {
     const agentId = selectedAgent.id;
     setHistoryLoading(true);
     setChatLines([]);
+    setChatInput("");
+    setChatCursor(0);
     setActiveTaskId(null);
+    setPendingQuestion(null);
     setError("");
 
     void (async () => {
@@ -286,6 +310,14 @@ export function TeammatesManager() {
             }
           } else if ((payload.type === "SystemMessage" || payload.type === "Error") && typeof payload.data === "string") {
             restored.push({ id: event.event_id, role: "status", content: payload.data });
+          } else if (payload.type === "QuestionRequired" && typeof payload.data === "object" && payload.data !== null) {
+            const question = payload.data as { question_id?: string; prompt?: string; choices?: string[] };
+            if (typeof question.question_id === "string" && typeof question.prompt === "string" && Array.isArray(question.choices)) {
+              restored.push({ id: event.event_id, role: "status", content: `Question: ${question.prompt}${question.choices.length ? ` (Options: ${question.choices.join(" · ")})` : ""}` });
+              if (task.status === "waiting_for_input") {
+                setPendingQuestion({ taskId: task.id, questionId: question.question_id, prompt: question.prompt, choices: question.choices.filter((choice): choice is string => typeof choice === "string") });
+              }
+            }
           }
         }
         if (task.error && !["completed", "cancelled"].includes(task.status)) {
@@ -293,8 +325,9 @@ export function TeammatesManager() {
         }
       }
       setChatLines(restored);
-      const activeTask = [...tasks].reverse().find((task) => ["queued", "running", "waiting_for_approval"].includes(task.status));
+      const activeTask = [...tasks].reverse().find((task) => ["queued", "running", "waiting_for_approval", "waiting_for_input"].includes(task.status));
       setActiveTaskId(activeTask?.id ?? null);
+      if (!activeTask || activeTask.status !== "waiting_for_input") setPendingQuestion(null);
     })().catch((reason) => {
       if (active) setError(userError(reason));
     }).finally(() => {
@@ -350,6 +383,13 @@ export function TeammatesManager() {
               setChatLines((lines) => [...lines.filter((line) => line.content !== "Thinking…"), { id: randomUUID(), role: "status", content: agentEvent.data as string }]);
             } else if (agentEvent.type === "Error" && typeof agentEvent.data === "string") {
               setChatLines((lines) => [...lines.filter((line) => line.content !== "Thinking…"), { id: randomUUID(), role: "status", content: `Task note: ${agentEvent.data as string}` }]);
+            } else if (agentEvent.type === "QuestionRequired" && typeof agentEvent.data === "object" && agentEvent.data !== null) {
+              const question = agentEvent.data as { question_id?: string; prompt?: string; choices?: string[] };
+              if (typeof question.question_id === "string" && typeof question.prompt === "string" && Array.isArray(question.choices)) {
+                const choices = question.choices.filter((choice): choice is string => typeof choice === "string");
+                setPendingQuestion({ taskId: activeTaskId, questionId: question.question_id, prompt: question.prompt, choices });
+                setChatLines((lines) => [...lines.filter((line) => line.content !== "Thinking…"), { id: randomUUID(), role: "status", content: `Question: ${question.prompt}${choices.length ? ` (Options: ${choices.join(" · ")})` : ""}` }]);
+              }
             }
           }
           if (["task.completed", "task.failed", "task.cancelled", "task.interrupted"].includes(event.event_type)) {
@@ -359,6 +399,7 @@ export function TeammatesManager() {
               if (task.error) setChatLines((lines) => [...lines.filter((line) => line.content !== "Thinking…"), { id: randomUUID(), role: "assistant", content: `**${event.event_type.replace("task.", "").replaceAll("_", " ")}:** ${task.error}` }]);
             }
             setActiveTaskId(null);
+            setPendingQuestion(null);
           }
         }
       } catch (reason) {
@@ -398,13 +439,23 @@ export function TeammatesManager() {
     if (view === "chat") {
       if ((key.ctrl || key.meta) && input.toLowerCase() === "c" && activeTaskId) { void cancelActiveTask(); return; }
       if (key.escape) { setView("list"); return; }
-      if (key.pageUp) { setChatOffset((offset) => Math.min(Math.max(0, chatLines.length - 1), offset + chatWindowSize)); return; }
+      if (key.pageUp) { setChatOffset((offset) => Math.min(Math.max(0, chatLines.length - chatWindowSize), offset + chatWindowSize)); return; }
       if (key.pageDown) { setChatOffset((offset) => Math.max(0, offset - chatWindowSize)); return; }
-      if (key.end) { setChatOffset(0); return; }
-      if (key.home) { setChatOffset(Math.max(0, chatLines.length - 1)); return; }
+      if (key.end) { if (chatInput.length > 0) setChatCursor(chatInput.length); else setChatOffset(0); return; }
+      if (key.home) { if (chatInput.length > 0) setChatCursor(0); else setChatOffset(Math.max(0, chatLines.length - chatWindowSize)); return; }
       if (key.return) { void sendChat(); return; }
-      if (key.backspace || key.delete) setChatInput((value) => value.slice(0, -1));
-      else if (input && !key.ctrl && !key.meta) setChatInput((value) => value + input);
+      if (key.backspace || key.delete) {
+        if (chatCursor > 0) {
+          setChatInput((value) => value.slice(0, chatCursor - 1) + value.slice(chatCursor));
+          setChatCursor(chatCursor - 1);
+        }
+      }
+      else if (key.leftArrow) setChatCursor((cursor) => Math.max(0, cursor - 1));
+      else if (key.rightArrow) setChatCursor((cursor) => Math.min(chatInput.length, cursor + 1));
+      else if (input && !key.ctrl && !key.meta) {
+        setChatInput((value) => value.slice(0, chatCursor) + input + value.slice(chatCursor));
+        setChatCursor(chatCursor + input.length);
+      }
       return;
     }
     if (view === "settings") {
@@ -488,10 +539,15 @@ export function TeammatesManager() {
         </Box>)}
       </Box>
       {activeTaskId ? <TaskActivity taskId={activeTaskId} /> : null}
+      {pendingQuestion ? <Box borderStyle="single" borderColor={theme.warning} paddingX={1} marginTop={1} flexDirection="column">
+        <Text color={theme.warning} bold>Teammate needs your input</Text>
+        <Text>{pendingQuestion.prompt}</Text>
+        {pendingQuestion.choices.length ? <Text color={theme.muted}>Options: {pendingQuestion.choices.join("  ·  ")}</Text> : null}
+      </Box> : null}
       <Box marginTop={1} flexDirection="row" width="100%">
-        <Text color={theme.brand}>› </Text><Text color={theme.text}>{chatInput}<Text color={theme.brand}>▏</Text></Text>
+        <Text color={theme.brand}>› </Text><Text color={theme.text}>{chatInput.slice(0, chatCursor)}<Text color={theme.brand}>▏</Text>{chatInput.slice(chatCursor)}</Text>
       </Box>
-      {!fullScreen ? <Text color={theme.chrome}>Enter send · Esc back{activeTaskId ? " · Ctrl+C cancel task" : ""}</Text> : null}
+      {!fullScreen ? <Text color={theme.chrome}>{pendingQuestion ? "Enter answer · Esc back" : "Enter send · Esc back"}{activeTaskId ? " · Ctrl+C cancel task" : ""}</Text> : null}
     </Box> : null}
 
     {error ? <Box marginTop={1}><Text color={theme.error}>{error}</Text></Box> : null}

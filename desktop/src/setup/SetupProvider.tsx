@@ -162,6 +162,7 @@ export default function SetupProvider() {
             className="flex gap-2"
           >
             <input
+              aria-label="Search providers"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search providers..."
@@ -169,6 +170,7 @@ export default function SetupProvider() {
             />
 
             <select
+              aria-label="Filter providers by type"
               value={filter}
               onChange={(event) => setFilter(event.target.value as Filter)}
               className="luma-input w-[132px]"
@@ -186,6 +188,7 @@ export default function SetupProvider() {
           <AnimatePresence>
             {error && (
               <motion.div
+                role="alert"
                 initial={{
                   opacity: 0,
                   height: 0,
@@ -271,6 +274,7 @@ export default function SetupProvider() {
                       scale: 0.985,
                     }}
                     type="button"
+                    aria-pressed={selected}
                     onClick={() => setProvider(provider)}
                     className={[
                       "rounded-xl border p-3.5 text-left transition-colors",
