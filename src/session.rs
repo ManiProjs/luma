@@ -1124,6 +1124,7 @@ impl Session {
                 | AgentEvent::ThinkingContent(_)
                 | AgentEvent::TextDelta(_)
                 | AgentEvent::Usage { .. }
+                | AgentEvent::ContextUsage { .. }
                 | AgentEvent::Status { .. }
                 | AgentEvent::SessionInfo { .. }
         );
@@ -1262,6 +1263,8 @@ impl Session {
 
                 self.absorb();
             }
+
+            AgentEvent::ContextUsage { .. } => self.absorb(),
 
             AgentEvent::Finished => self.finish(),
 

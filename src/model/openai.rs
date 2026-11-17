@@ -19,7 +19,7 @@ pub struct OpenAICompatibleModel {
     endpoint: String,
     model: String,
     api_key: Option<String>,
-    usage: Arc<Mutex<Usage>>,
+    usage: Arc<Mutex<Option<Usage>>>,
 }
 
 impl OpenAICompatibleModel {
@@ -35,7 +35,7 @@ impl OpenAICompatibleModel {
             endpoint,
             model: model.into(),
             api_key,
-            usage: Arc::new(Mutex::new(Usage::default())),
+            usage: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -182,6 +182,11 @@ fn parse_usage_event(event: &str) -> Option<Usage> {
 #[async_trait]
 impl Model for OpenAICompatibleModel {
     async fn stream(&self, request: CompletionRequest) -> Result<ModelStream> {
+        // Usage belongs to one completion. Do not leak previous counters when
+        // a compatible provider omits usage in the current response.
+        if let Ok(mut usage) = self.usage.lock() {
+            *usage = None;
+        }
         let messages = request
             .messages
             .into_iter()
@@ -277,7 +282,7 @@ impl Model for OpenAICompatibleModel {
                                     if let Some(usage) = parse_usage_event(&event)
                                         && let Ok(mut guard) = usage_tracker.lock()
                                     {
-                                        *guard = usage;
+                                        *guard = Some(usage);
                                     }
 
                                     if let Some(text) = parse_sse_event(&event) {
@@ -303,7 +308,7 @@ impl Model for OpenAICompatibleModel {
                                 if let Some(usage) = parse_usage_event(&buffer)
                                     && let Ok(mut guard) = usage_tracker.lock()
                                 {
-                                    *guard = usage;
+                                    *guard = Some(usage);
                                 }
 
                                 let output = parse_sse_event(&buffer).unwrap_or_default();
@@ -326,6 +331,6 @@ impl Model for OpenAICompatibleModel {
     }
 
     fn usage(&self) -> Option<Usage> {
-        self.usage.lock().ok().map(|u| u.clone())
+        self.usage.lock().ok().and_then(|usage| usage.clone())
     }
 }

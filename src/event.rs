@@ -59,6 +59,13 @@ pub enum AgentEvent {
         cost_usd: f64,
     },
 
+    ContextUsage {
+        message_count: usize,
+        character_count: usize,
+        limit_chars: usize,
+        compacted: bool,
+    },
+
     Finished,
 
     /// Detailed tool progress with full output (for Ink retrieval)

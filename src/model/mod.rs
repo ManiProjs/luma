@@ -2,11 +2,10 @@ pub mod anthropic;
 pub mod gemini;
 pub mod openai;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures_util::stream::BoxStream;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use crate::{config::ModelConfig, context::Message};
 
@@ -28,7 +27,10 @@ impl DynamicModel {
     }
 
     pub async fn replace(&self, config: &ModelConfig) {
-        *self.current.write().await = Arc::from(create_model(config));
+        *self
+            .current
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Arc::from(create_model(config));
     }
 }
 
@@ -37,8 +39,16 @@ impl Model for DynamicModel {
     async fn stream(&self, request: CompletionRequest) -> Result<ModelStream> {
         // Clone the active implementation before awaiting so switching models
         // never waits for an in-flight response stream to finish.
-        let model = self.current.read().await.clone();
+        let model = self
+            .current
+            .read()
+            .map_err(|_| anyhow!("active model lock is poisoned"))?
+            .clone();
         model.stream(request).await
+    }
+
+    fn usage(&self) -> Option<Usage> {
+        self.current.read().ok()?.usage()
     }
 }
 
@@ -87,5 +97,39 @@ where
 
     fn usage(&self) -> Option<Usage> {
         (**self).usage()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::stream;
+
+    struct UsageModel;
+
+    #[async_trait]
+    impl Model for UsageModel {
+        async fn stream(&self, _request: CompletionRequest) -> Result<ModelStream> {
+            Ok(Box::pin(stream::empty()))
+        }
+
+        fn usage(&self) -> Option<Usage> {
+            Some(Usage {
+                prompt_tokens: 12,
+                completion_tokens: 8,
+                total_tokens: 20,
+            })
+        }
+    }
+
+    #[test]
+    fn dynamic_model_forwards_usage_from_the_active_provider() {
+        let model = DynamicModel {
+            current: Arc::new(RwLock::new(Arc::new(UsageModel))),
+        };
+        let usage = model.usage().unwrap();
+        assert_eq!(usage.prompt_tokens, 12);
+        assert_eq!(usage.completion_tokens, 8);
+        assert_eq!(usage.total_tokens, 20);
     }
 }
