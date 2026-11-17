@@ -64,6 +64,55 @@ fn restore_agent_history(context: &mut Context, history: &History) {
     }
 }
 
+fn restore_task_checkpoint(context: &mut Context, checkpoint: &crate::tasks::TaskCheckpoint) {
+    context.add(
+        MessageRole::System,
+        format!(
+            "Resuming an interrupted task. Previously approved plan:\n{}\n\nCompleted actions: {}. Do not repeat completed work; inspect the current workspace state before continuing.",
+            checkpoint.plan.as_deref().unwrap_or("No plan was saved."),
+            checkpoint.completed_actions.join(", ")
+        ),
+    );
+    for observation in &checkpoint.observations {
+        context.add(MessageRole::Observation, observation.clone());
+    }
+    context.add(MessageRole::User, checkpoint.request.clone());
+}
+
+fn restore_archived_messages(messages: Vec<crate::session::MessageView>) -> Vec<Message> {
+    messages
+        .into_iter()
+        .map(|message| {
+            let (role, content) = match message.role {
+                crate::session::MessageRole::System => (MessageRole::System, message.content),
+                crate::session::MessageRole::User => (MessageRole::User, message.content),
+                crate::session::MessageRole::Assistant => (MessageRole::Assistant, message.content),
+                crate::session::MessageRole::Tool => (
+                    MessageRole::Observation,
+                    format!(
+                        "Tool {}: {}",
+                        message.tool.unwrap_or_else(|| "output".into()),
+                        message.content
+                    ),
+                ),
+                crate::session::MessageRole::Plan => (
+                    MessageRole::Observation,
+                    format!("Plan: {}", message.content),
+                ),
+                crate::session::MessageRole::Preview => (
+                    MessageRole::Observation,
+                    format!("Previously proposed change:\n{}", message.content),
+                ),
+                crate::session::MessageRole::Error => (
+                    MessageRole::Observation,
+                    format!("Previous error: {}", message.content),
+                ),
+            };
+            Message { role, content }
+        })
+        .collect()
+}
+
 fn preview_file_change(name: &str, input: &str) -> Result<(String, String)> {
     let value: serde_json::Value = serde_json::from_str(input)?;
     let path = value
@@ -327,6 +376,78 @@ mod change_preview_tests {
         assert_eq!(messages[0].role, MessageRole::System);
         assert_eq!(messages[1].content, "Earlier request");
         assert_eq!(messages[2].content, "Earlier answer");
+    }
+
+    #[test]
+    fn task_resume_restores_bounded_observations_before_the_request() {
+        let checkpoint = crate::tasks::TaskCheckpoint {
+            schema_version: 1,
+            workspace: "/tmp/project".into(),
+            request: "finish the feature".into(),
+            plan: Some("inspect and implement".into()),
+            plan_approved: true,
+            observations: vec!["found the implementation".into(), "tests pass".into()],
+            completed_actions: vec!["read_file".into()],
+            status: crate::tasks::TaskStatus::Interrupted,
+            updated_at: 42,
+        };
+        let mut context = Context::new();
+        context.add(MessageRole::System, "workspace memory");
+        restore_task_checkpoint(&mut context, &checkpoint);
+
+        let messages = context.messages();
+        assert!(messages[0].content.contains("workspace memory"));
+        assert!(messages[0].content.contains("inspect and implement"));
+        assert_eq!(messages[1].content, "found the implementation");
+        assert_eq!(messages[2].content, "tests pass");
+        assert_eq!(messages[3].content, "finish the feature");
+    }
+
+    #[test]
+    fn archived_plans_and_errors_survive_restore_without_replacing_live_system_prompts() {
+        let archived = restore_archived_messages(vec![
+            crate::session::MessageView {
+                role: crate::session::MessageRole::System,
+                content: "archived system prompt".into(),
+                tool: None,
+                running: false,
+                succeeded: None,
+                expanded: false,
+                elapsed_ms: None,
+            },
+            crate::session::MessageView {
+                role: crate::session::MessageRole::Plan,
+                content: "inspect then implement".into(),
+                tool: None,
+                running: false,
+                succeeded: None,
+                expanded: false,
+                elapsed_ms: None,
+            },
+            crate::session::MessageView {
+                role: crate::session::MessageRole::Error,
+                content: "previous command failed".into(),
+                tool: None,
+                running: false,
+                succeeded: None,
+                expanded: false,
+                elapsed_ms: None,
+            },
+        ]);
+        let mut context = Context::new();
+        context.add(MessageRole::System, "current live instructions");
+        context.restore(archived);
+
+        let messages = context.messages();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[0].content, "current live instructions");
+        assert!(messages[1].content.contains("inspect then implement"));
+        assert!(messages[2].content.contains("previous command failed"));
+        assert!(
+            messages
+                .iter()
+                .all(|message| message.content != "archived system prompt")
+        );
     }
 
     #[test]
@@ -603,57 +724,15 @@ where
 
         if let Some(snapshot) = input.strip_prefix("\0LUMA_RESTORE:") {
             let messages: Vec<crate::session::MessageView> = serde_json::from_str(snapshot)?;
-            let restored = messages
-                .into_iter()
-                .map(|message| {
-                    let (role, content) = match message.role {
-                        crate::session::MessageRole::System => {
-                            (MessageRole::System, message.content)
-                        }
-                        crate::session::MessageRole::User => (MessageRole::User, message.content),
-                        crate::session::MessageRole::Assistant => {
-                            (MessageRole::Assistant, message.content)
-                        }
-                        crate::session::MessageRole::Tool => (
-                            MessageRole::Observation,
-                            format!(
-                                "Tool {}: {}",
-                                message.tool.unwrap_or_else(|| "output".into()),
-                                message.content
-                            ),
-                        ),
-                        crate::session::MessageRole::Plan => {
-                            (MessageRole::System, format!("Plan: {}", message.content))
-                        }
-                        crate::session::MessageRole::Preview => (
-                            MessageRole::Observation,
-                            format!("Previously proposed change:\n{}", message.content),
-                        ),
-                        crate::session::MessageRole::Error => (
-                            MessageRole::System,
-                            format!("Previous error: {}", message.content),
-                        ),
-                    };
-                    Message { role, content }
-                })
-                .collect::<Vec<_>>();
-            self.context.restore(restored);
+            self.context.restore(restore_archived_messages(messages));
             self.finish(tx, cancel).await?;
             return Ok(());
         }
 
         if let Some(snapshot) = input.strip_prefix("\0LUMA_RESUME:") {
-            let checkpoint: crate::tasks::TaskCheckpoint = serde_json::from_str(snapshot)?;
-            self.context.add(
-                MessageRole::System,
-                format!(
-                    "Resuming an interrupted task. Previously approved plan:\n{}\n\nCompleted actions: {}. Do not repeat completed work; inspect the current workspace state before continuing.",
-                    checkpoint.plan.as_deref().unwrap_or("No plan was saved."),
-                    checkpoint.completed_actions.join(", ")
-                ),
-            );
-            self.context
-                .add(MessageRole::User, checkpoint.request.clone());
+            let mut checkpoint: crate::tasks::TaskCheckpoint = serde_json::from_str(snapshot)?;
+            checkpoint.normalize();
+            restore_task_checkpoint(&mut self.context, &checkpoint);
             self.planning_state = if checkpoint.plan_approved {
                 PlanningState::Implementing
             } else {
@@ -721,6 +800,7 @@ where
         let workspace = std::env::current_dir()?.display().to_string();
         let is_task = self.needs_workspace(input) || self.plan_only;
         self.checkpoint = is_task.then(|| crate::tasks::TaskCheckpoint {
+            schema_version: 1,
             workspace: workspace.clone(),
             request: input.to_owned(),
             plan: None,
@@ -797,6 +877,7 @@ where
             state: AgentStatus::Talking,
         })
         .await?;
+        self.emit_context_usage(tx).await?;
         let mut messages = Vec::with_capacity(self.context.messages().len() + 1);
 
         messages.push(Message {
@@ -867,6 +948,18 @@ where
         Ok(response)
     }
 
+    async fn emit_context_usage(&self, tx: &Sender<AgentEvent>) -> Result<()> {
+        let (message_count, character_count, limit_chars, compacted) = self.context.usage();
+        tx.send(AgentEvent::ContextUsage {
+            message_count,
+            character_count,
+            limit_chars,
+            compacted,
+        })
+        .await?;
+        Ok(())
+    }
+
     fn answer_system_prompt(&self) -> String {
         "\
 You are Luma, an AI assistant.
@@ -908,6 +1001,8 @@ project structure, dependencies, or test results.
             // ------------------------------------------------------------
 
             let action_started = Instant::now();
+
+            self.emit_context_usage(tx).await?;
 
             let action = match self.next_react_action(cancel).await {
                 Ok(action) => action,
@@ -1211,6 +1306,13 @@ project structure, dependencies, or test results.
         })
         .await?;
         if cancel.is_cancelled() {
+            tx.send(AgentEvent::ToolFinished {
+                name: name.to_owned(),
+                duration_ms: 0,
+                failed: true,
+                diff: None,
+            })
+            .await?;
             return Ok(());
         }
 
@@ -1218,13 +1320,21 @@ project structure, dependencies, or test results.
         let execution = if name == "run_command" {
             let command = input.trim().to_owned();
             tokio::select! {
-                _ = cancel.cancelled() => return Ok(()),
+                _ = cancel.cancelled() => {
+                    tx.send(AgentEvent::ToolFinished {
+                        name: name.to_owned(),
+                        duration_ms: started.elapsed().as_millis(),
+                        failed: true,
+                        diff: None,
+                    }).await?;
+                    return Ok(());
+                },
                 result = tokio::time::timeout(
                     std::time::Duration::from_secs(120),
                     crate::tools::shell::run_process(command),
                 ) => match result {
                     Ok(output) => Ok(output),
-                    Err(_) => Ok("ERROR: command timed out after 120s and was terminated.".to_owned()),
+                    Err(_) => Err(anyhow!("command timed out after 120s and was terminated")),
                 }
             }
         } else {
@@ -1249,6 +1359,13 @@ project structure, dependencies, or test results.
         };
 
         if cancel.is_cancelled() {
+            tx.send(AgentEvent::ToolFinished {
+                name: name.to_owned(),
+                duration_ms: started.elapsed().as_millis(),
+                failed: true,
+                diff: None,
+            })
+            .await?;
             return Ok(());
         }
         tx.send(AgentEvent::ToolFinished {
