@@ -163,7 +163,6 @@ impl Tool for ExecutionMetrics {
             .into_iter()
             .map(|task| {
                 let metrics = task_counters.remove(&task.id).unwrap_or_default();
-                let started_at = metrics.task_started_at.unwrap_or(task.created_at);
                 let terminal = matches!(
                     task.status,
                     crate::runtime::TaskStatus::Completed
@@ -178,13 +177,17 @@ impl Tool for ExecutionMetrics {
                         crate::runtime::unix_now()
                     }
                 });
-                let duration_ms = ended_at.saturating_sub(started_at).max(0) as u64 * 1_000;
+                let duration_ms = ended_at.saturating_sub(task.created_at).max(0) as u64 * 1_000;
+                let execution_duration_ms = metrics
+                    .task_started_at
+                    .map(|started_at| ended_at.saturating_sub(started_at).max(0) as u64 * 1_000);
                 json!({
                     "task_id": task.id,
                     "agent_id": task.agent_id,
                     "title": task.title,
                     "status": task.status,
                     "duration_ms": duration_ms,
+                    "execution_duration_ms": execution_duration_ms,
                     "created_at": task.created_at,
                     "updated_at": task.updated_at,
                     "metrics": metrics.into_json(),
@@ -305,6 +308,7 @@ mod tests {
         assert_eq!(task_metrics["task_id"], task.id);
         assert_eq!(task_metrics["status"], "failed");
         assert!(task_metrics["duration_ms"].as_u64().is_some());
+        assert!(task_metrics["execution_duration_ms"].as_u64().is_some());
         assert_eq!(task_metrics["metrics"]["total_tokens"], 140);
         assert_eq!(task_metrics["metrics"]["tool_failures"], 1);
     }

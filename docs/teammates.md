@@ -129,3 +129,20 @@ requirements become stricter, and network access is never widened. The normal
 tool approval flow applies to `delegate_task` unless the parent has explicitly
 allowed it. Delegation queues work asynchronously rather than blocking the
 supervisor, avoiding parent/child deadlocks.
+
+## Restart recovery and observability
+
+On restart, queued work remains queued and active or waiting tasks are marked
+`interrupted`. Luma expires their pending approvals and resumes a completed
+parent's continuation when all descendants have become terminal. It does not
+automatically replay an interrupted request: tool calls can have external side
+effects, and the runtime does not yet persist an idempotent action cursor. The
+legacy `recover_on_restart` and `recover_interrupted_tasks` fields are retained
+for stored/API compatibility but do not override this safety rule. Reconcile
+external state before manually retrying an interrupted task.
+
+The read-only `execution_metrics` tool reports persisted token usage, estimated
+cost, tool durations/failures, and task lifecycle/execution durations. It reads
+up to the latest 1,000 events per Teammate and up to 100 task records per call.
+Cost is an estimate using Luma's default token rates, not authoritative billing
+data for a provider or custom endpoint.

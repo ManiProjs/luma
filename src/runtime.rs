@@ -232,6 +232,9 @@ pub struct AgentConfiguration {
     pub permissions: PermissionProfile,
     /// Maximum simultaneous tasks for this Teammate (bounded by the runtime).
     pub max_concurrent_tasks: usize,
+    /// Legacy recovery preference retained for stored-config compatibility.
+    /// Automatic replay remains disabled until external actions have durable
+    /// idempotency cursors, regardless of this value.
     pub recover_interrupted_tasks: bool,
 }
 
@@ -305,6 +308,8 @@ pub struct TaskRecord {
     pub checkpoint: Option<serde_json::Value>,
     pub error: Option<String>,
     pub attempt: u32,
+    /// Legacy hint retained in SQLite/API records; interrupted tasks are never
+    /// automatically replayed while external side effects may be uncertain.
     pub recover_on_restart: bool,
     pub schedule_id: Option<String>,
     pub created_at: i64,
@@ -314,6 +319,8 @@ pub struct TaskRecord {
 pub struct CreateTaskOptions<'a> {
     pub title: Option<String>,
     pub workspace: Option<String>,
+    /// Legacy hint retained for compatibility; restart recovery reconciles but
+    /// does not replay tasks until external actions are idempotently checkpointed.
     pub recover_on_restart: bool,
     pub schedule_id: Option<String>,
     pub conversation_id: Option<&'a str>,
