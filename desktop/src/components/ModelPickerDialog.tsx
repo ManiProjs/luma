@@ -90,7 +90,7 @@ export default function ModelPickerDialog({ scope, agent, onClose, onChanged }: 
         await window.luma.saveSetupConfig(providerSettings);
         if (scope === "session") await window.luma.setSessionModel(next.model);
         else if (agent) await window.luma.updateAgent({ id: agent.id, configuration: { ...agent.configuration, provider: provider.id, model: name.trim(), endpoint } });
-        onChanged(providerSettings);
+        onChanged(scope === "agent" ? next : providerSettings);
       }
       onClose();
     } catch (reason) {

@@ -2051,39 +2051,140 @@ html[data-platform="linux"] .luma-workspace-picker {
   }
 }
 
-/* Teammate settings are grouped into focused sections instead of one long
-   scrolling form. Keep the section switcher pinned while its content scrolls. */
-.luma-teammate-settings-nav {
-  position: sticky;
-  top: 0;
-  z-index: 3;
+/* Teammate settings: a compact desktop preference pane, not a dashboard. */
+.luma-teammate-settings {
   display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  border-bottom: 1px solid var(--luma-border);
-  background: var(--luma-bg);
-  padding: 5px 0 7px;
-}
-.luma-teammate-settings-nav button {
-  min-height: 28px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  padding: 0 9px;
-  color: var(--luma-text-muted);
-  font-size: 10px;
-}
-.luma-teammate-settings-nav button[data-active="true"] {
-  border-color: var(--luma-border-strong);
-  background: var(--luma-surface);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
   color: var(--luma-text);
+  background: var(--luma-bg);
 }
-.luma-teammate-settings[data-settings-tab="identity"] [data-settings-section]:not([data-settings-section="identity"]),
-.luma-teammate-settings[data-settings-tab="behavior"] [data-settings-section]:not([data-settings-section="behavior"]),
-.luma-teammate-settings[data-settings-tab="capabilities"] [data-settings-section]:not([data-settings-section="capabilities"]),
+.luma-teammates-content > .luma-teammates-stage[data-settings-active="true"] { padding: 0 !important; }
+.luma-teammate-settings-header {
+  display: flex;
+  min-height: 76px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 12px clamp(18px, 3vw, 38px);
+  border-bottom: 1px solid var(--luma-border);
+}
+.luma-teammate-settings-person { display: flex; min-width: 0; align-items: center; gap: 13px; }
+.luma-teammate-settings-person p { margin-top: 3px; color: var(--luma-text-muted); font-size: 11px; }
+.luma-settings-status, .luma-settings-global { border: 1px solid var(--luma-border); border-radius: 999px; padding: 2px 7px; color: var(--luma-text-muted); font-size: 9px; line-height: 1.5; text-transform: capitalize; }
+.luma-settings-status[data-status="active"] { border-color: color-mix(in srgb, #4b9a71 45%, var(--luma-border)); color: #5baf83; }
+.luma-settings-status[data-status="waiting"], .luma-settings-status[data-status="error"] { border-color: color-mix(in srgb, #c18b45 45%, var(--luma-border)); color: #c18b45; }
+.luma-settings-global { color: var(--luma-accent); }
+.luma-teammate-settings-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.luma-teammate-settings-actions button { min-height: 28px; padding: 0 9px; font-size: 10px; }
+.luma-teammate-settings-actions .danger { color: var(--luma-danger); }
+.luma-teammate-settings-layout { display: grid; min-height: 0; flex: 1; grid-template-columns: 204px minmax(0, 1fr); }
+.luma-teammate-settings-nav {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: auto;
+  padding: 23px 13px 16px;
+  border-right: 1px solid var(--luma-border);
+  background: color-mix(in srgb, var(--luma-surface) 42%, var(--luma-bg));
+}
+.luma-settings-nav-caption { padding: 0 9px 9px; color: var(--luma-text-muted); font-size: 9px; font-weight: 700; letter-spacing: .12em; }
+.luma-teammate-settings-nav button { display: flex; min-height: 44px; flex-direction: column; justify-content: center; gap: 2px; border: 1px solid transparent; border-radius: 6px; padding: 5px 9px; color: var(--luma-text-secondary); text-align: left; transition: background-color 130ms ease, color 130ms ease, border-color 130ms ease; }
+.luma-teammate-settings-nav button > span { font-size: 11.5px; font-weight: 600; }
+.luma-teammate-settings-nav button > small { color: var(--luma-text-muted); font-size: 9.5px; }
+.luma-teammate-settings-nav button:hover { background: var(--luma-surface-hover); color: var(--luma-text); }
+.luma-teammate-settings-nav button[data-active="true"] { border-color: var(--luma-border); background: var(--luma-surface-raised); color: var(--luma-text); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
+.luma-teammate-settings-nav button[data-active="true"] > small { color: var(--luma-text-secondary); }
+.luma-settings-nav-footnote { margin: auto 8px 0; padding-top: 18px; color: var(--luma-text-muted); font-size: 9px; line-height: 1.65; }
+.luma-teammate-settings-content { min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 30px clamp(22px, 4vw, 54px) 56px; }
+.luma-settings-section { width: min(100%, 760px); margin: 0 auto; }
+.luma-teammate-settings[data-settings-tab="general"] [data-settings-section]:not([data-settings-section="general"]),
+.luma-teammate-settings[data-settings-tab="model"] [data-settings-section]:not([data-settings-section="model"]),
+.luma-teammate-settings[data-settings-tab="instructions"] [data-settings-section]:not([data-settings-section="instructions"]),
+.luma-teammate-settings[data-settings-tab="access"] [data-settings-section]:not([data-settings-section="access"]),
 .luma-teammate-settings[data-settings-tab="memory"] [data-settings-section]:not([data-settings-section="memory"]),
-.luma-teammate-settings[data-settings-tab="schedules"] [data-settings-section]:not([data-settings-section="schedules"]),
-.luma-teammate-settings[data-settings-tab="advanced"] [data-settings-section]:not([data-settings-section="advanced"]) {
-  display: none !important;
+.luma-teammate-settings[data-settings-tab="automation"] [data-settings-section]:not([data-settings-section="automation"]),
+.luma-teammate-settings[data-settings-tab="advanced"] [data-settings-section]:not([data-settings-section="advanced"]) { display: none !important; }
+.luma-settings-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 27px; }
+.luma-settings-section-heading > div > span { color: var(--luma-text-muted); font-size: 9px; font-weight: 700; letter-spacing: .12em; }
+.luma-settings-section-heading h2 { margin-top: 7px; font-size: 23px; font-weight: 650; letter-spacing: -.035em; line-height: 1.2; }
+.luma-settings-section-heading p { max-width: 560px; margin-top: 7px; color: var(--luma-text-muted); font-size: 11.5px; line-height: 1.65; }
+.luma-settings-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 17px 18px; }
+.luma-settings-form-grid label, .luma-settings-field, .luma-settings-memory-composer label { display: flex; min-width: 0; flex-direction: column; gap: 7px; color: var(--luma-text-secondary); font-size: 10.5px; font-weight: 600; }
+.luma-settings-form-grid .luma-settings-full-field { grid-column: 1 / -1; }
+.luma-settings-section .luma-input { width: 100%; min-height: 36px; border-radius: 6px; padding: 8px 10px; color: var(--luma-text); font-size: 11px; font-weight: 400; }
+.luma-settings-section textarea.luma-input { min-height: 86px; line-height: 1.65; }
+.luma-settings-save-row { display: flex; min-height: 48px; align-items: center; justify-content: space-between; gap: 14px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--luma-border); }
+.luma-settings-save-row > span { color: var(--luma-text-muted); font-size: 9.5px; line-height: 1.5; }
+.luma-settings-save-row button { flex: 0 0 auto; min-height: 30px; padding: 0 11px; font-size: 10px; }
+.luma-settings-divider { height: 1px; margin: 27px 0 23px; background: var(--luma-border); }
+.luma-settings-subheading { margin: 0 0 13px; }
+.luma-settings-subheading h3 { font-size: 12px; font-weight: 650; }
+.luma-settings-subheading p { margin-top: 4px; color: var(--luma-text-muted); font-size: 10px; line-height: 1.6; }
+.luma-settings-inherit-note { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 20px; border: 1px solid var(--luma-border); border-radius: 6px; padding: 12px; background: color-mix(in srgb, var(--luma-surface) 48%, transparent); }
+.luma-settings-inherit-mark { color: var(--luma-accent); font-size: 17px; line-height: 1; }
+.luma-settings-inherit-note > div { min-width: 0; flex: 1; }
+.luma-settings-inherit-note strong { font-size: 10.5px; font-weight: 650; }
+.luma-settings-inherit-note p { margin-top: 3px; color: var(--luma-text-muted); font-size: 9.5px; line-height: 1.55; }
+.luma-settings-inherit-note > button { color: var(--luma-text-secondary); font-size: 9.5px; text-decoration: underline; text-underline-offset: 3px; }
+.luma-settings-model-choice { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 15px; border: 1px solid var(--luma-border); border-radius: 7px; padding: 13px; }
+.luma-settings-model-choice strong { font-size: 11.5px; font-weight: 650; }
+.luma-settings-model-choice p { margin-top: 4px; color: var(--luma-text-muted); font-size: 9.5px; overflow-wrap: anywhere; }
+.luma-settings-model-choice button { flex: 0 0 auto; min-height: 30px; padding: 0 11px; font-size: 10px; }
+.luma-settings-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 0; border-bottom: 1px solid var(--luma-border); }
+.luma-settings-toggle-row > div { min-width: 0; }
+.luma-settings-toggle-row strong { font-size: 11px; font-weight: 600; }
+.luma-settings-toggle-row p { margin-top: 4px; color: var(--luma-text-muted); font-size: 10px; line-height: 1.55; }
+.luma-settings-toggle-row input { width: 15px; height: 15px; flex: 0 0 auto; accent-color: var(--luma-accent); }
+.luma-settings-field { margin-top: 20px; }
+.luma-settings-field small { color: var(--luma-text-muted); font-size: 9px; font-weight: 400; }
+.luma-settings-instructions { min-height: 240px !important; resize: vertical; }
+.luma-settings-approvals { margin-top: 28px; }
+.luma-settings-approval { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--luma-border); }
+.luma-settings-approval strong { font-size: 10.5px; }
+.luma-settings-approval pre { max-width: 470px; max-height: 100px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--luma-text-muted); font-size: 9px; }
+.luma-settings-approval > div:last-child { display: flex; gap: 8px; }
+.luma-settings-approval button, .luma-settings-record-list button { color: var(--luma-text-secondary); font-size: 9.5px; }
+.luma-settings-approval button:last-child { color: var(--luma-accent); }
+.luma-settings-memory-composer { display: grid; gap: 14px; border-bottom: 1px solid var(--luma-border); padding-bottom: 17px; }
+.luma-settings-memory-composer select { max-width: 260px; }
+.luma-settings-memory-list > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: start; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--luma-border); }
+.luma-settings-memory-list p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 10.5px; line-height: 1.6; }
+.luma-settings-memory-list small { color: var(--luma-text-muted); font-size: 9px; }
+.luma-settings-memory-list button, .luma-settings-record-list button.danger { color: var(--luma-danger); font-size: 9.5px; }
+.luma-settings-empty { padding: 18px 0; color: var(--luma-text-muted); font-size: 10px; }
+.luma-settings-record-list { margin-top: 15px; }
+.luma-settings-record-list > div { display: flex; min-height: 47px; align-items: center; gap: 14px; border-top: 1px solid var(--luma-border); }
+.luma-settings-record-list > div > span { min-width: 0; flex: 1; }
+.luma-settings-record-list strong, .luma-settings-record-list small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.luma-settings-record-list strong { font-size: 10.5px; font-weight: 600; }
+.luma-settings-record-list small { margin-top: 3px; color: var(--luma-text-muted); font-size: 9px; }
+.luma-settings-warning { margin-bottom: 14px; border-left: 2px solid var(--luma-warning); padding: 9px 12px; background: color-mix(in srgb, var(--luma-warning) 5%, transparent); }
+.luma-settings-warning strong { font-size: 10.5px; }
+.luma-settings-warning p { margin-top: 3px; color: var(--luma-text-muted); font-size: 9.5px; line-height: 1.6; }
+.luma-settings-json { min-height: 420px !important; resize: vertical; font-family: var(--font-mono, ui-monospace, monospace); font-size: 10px !important; line-height: 1.7 !important; tab-size: 2; }
+@media (max-width: 900px) {
+  .luma-teammate-settings-layout { grid-template-columns: 164px minmax(0, 1fr); }
+  .luma-teammate-settings-nav { padding-inline: 9px; }
+  .luma-teammate-settings-content { padding-inline: 22px; }
+}
+@media (max-width: 680px) {
+  .luma-teammate-settings-header { align-items: flex-start; flex-direction: column; gap: 9px; padding: 12px 16px; }
+  .luma-teammate-settings-layout { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .luma-teammate-settings-nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; border-right: 0; border-bottom: 1px solid var(--luma-border); padding: 8px; }
+  .luma-settings-nav-caption, .luma-settings-nav-footnote { display: none; }
+  .luma-teammate-settings-nav button { min-height: 38px; padding: 4px 7px; }
+  .luma-teammate-settings-nav button > small { display: none; }
+  .luma-teammate-settings-content { padding: 22px 16px 36px; }
+  .luma-settings-form-grid { grid-template-columns: 1fr; }
+  .luma-settings-form-grid .luma-settings-full-field { grid-column: auto; }
+  .luma-settings-memory-list > div { grid-template-columns: minmax(0, 1fr) auto; }
+  .luma-settings-memory-list small { grid-column: 1; }
+  .luma-settings-memory-list button { grid-column: 2; grid-row: 1 / span 2; }
 }
 
 .luma-teammate-history-list {

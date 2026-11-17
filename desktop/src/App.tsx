@@ -3583,6 +3583,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [eventTriggers, setEventTriggers] = useState<EventTriggerRecord[]>([]);
   const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>([]);
+  const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryScope, setMemoryScope] = useState<MemoryScope>("agent");
   const [workspacePath, setWorkspacePath] = useState("");
   const [memoryRevision, setMemoryRevision] = useState(0);
@@ -3594,7 +3595,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
     try { return window.localStorage.getItem("luma.selected-teammate-conversation"); }
     catch { return null; }
   });
-  const [settingsSection, setSettingsSection] = useState<"identity" | "behavior" | "capabilities" | "memory" | "schedules" | "advanced">("identity");
+  const [settingsSection, setSettingsSection] = useState<"general" | "model" | "instructions" | "access" | "memory" | "automation" | "advanced">("general");
   const [sendingMessage, setSendingMessage] = useState(false);
   const [submittingTaskId, setSubmittingTaskId] = useState<string | null>(null);
   const [stoppingTaskId, setStoppingTaskId] = useState<string | null>(null);
@@ -3624,6 +3625,10 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [agentNameDraft, setAgentNameDraft] = useState("");
   const [agentDescriptionDraft, setAgentDescriptionDraft] = useState("");
   const [configurationDraft, setConfigurationDraft] = useState("");
+  const [modelProviderDraft, setModelProviderDraft] = useState("");
+  const [modelNameDraft, setModelNameDraft] = useState("");
+  const [modelEndpointDraft, setModelEndpointDraft] = useState("");
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [chatPrompt, setChatPrompt] = useState("");
   const [suggestionsDismissed, setSuggestionsDismissed] = useState(false);
   const [teammateNotice, setTeammateNotice] = useState("");
@@ -3749,14 +3754,15 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
 
   useEffect(() => {
     const scopeId = memoryScope === "agent" ? selectedAgentId : memoryScope === "user" ? "default" : workspacePath;
-    if (!scopeId) { setMemoryEntries([]); return; }
+    if (!scopeId) { setMemoryEntries([]); setMemoryLoading(false); return; }
     let disposed = false;
+    setMemoryLoading(true);
     const loadMemory = () => {
       void window.luma.getMemory(memoryScope, scopeId).then((entries) => {
         if (!disposed) setMemoryEntries(entries);
       }).catch((reason) => {
         if (!disposed) setError(reason instanceof Error ? reason.message : String(reason));
-      });
+      }).finally(() => { if (!disposed) setMemoryLoading(false); });
     };
     loadMemory();
     const timer = window.setInterval(loadMemory, 5000);
@@ -3799,11 +3805,11 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
     } else if (command === "/history") {
       setSelectedTaskId(null); setActiveTab("chat");
     } else if (command === "/settings") {
-      setSettingsSection("identity"); setActiveTab("settings");
+      setSettingsSection("general"); setActiveTab("settings");
     } else if (command === "/memory") {
       setSettingsSection("memory"); setActiveTab("settings");
     } else if (command === "/schedule") {
-      setSettingsSection("schedules"); setActiveTab("settings");
+      setSettingsSection("automation"); setActiveTab("settings");
     } else if (command === "/status") {
       setTeammateNotice(`${selectedAgent?.name ?? "Teammate"} · ${selectedAgent?.status ?? "unknown"} · ${agentTasks.length} saved tasks · ${inspectorActiveTasks.length} active`);
     } else if (command === "/pause" && selectedAgent) {
@@ -3968,6 +3974,9 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
     setSkillsDraft(selectedAgent.configuration.skills.join(", "));
     setMascotDraft(selectedAgent.configuration.mascot || "auto");
     setConfigurationDraft(JSON.stringify(selectedAgent.configuration, null, 2));
+    setModelProviderDraft(selectedAgent.configuration.provider ?? "");
+    setModelNameDraft(selectedAgent.configuration.model ?? "");
+    setModelEndpointDraft(selectedAgent.configuration.endpoint ?? "");
   }, [selectedAgentId]);
 
   useEffect(() => {
@@ -3999,6 +4008,12 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
     finally { setBusy(false); }
   }
 
+  async function saveAgentConfiguration(configuration: AgentConfiguration) {
+    if (!selectedAgent) return;
+    await window.luma.updateAgent({ id: selectedAgent.id, configuration });
+    setConfigurationDraft(JSON.stringify(configuration, null, 2));
+  }
+
   async function answerTaskQuestion(taskId: string, questionId: string, answer: string) {
     await perform(() => window.luma.answerTaskQuestion(taskId, questionId, answer));
   }
@@ -4024,7 +4039,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
 
         <div className="flex min-h-0 flex-1">
           <div className="luma-teammates-content flex min-h-0 flex-1 flex-col">
-            {selectedAgent && <div className="luma-teammate-header flex shrink-0 items-center gap-3 px-6 py-2">
+            {selectedAgent && activeTab === "chat" && <div className="luma-teammate-header flex shrink-0 items-center gap-3 px-6 py-2">
               <MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={32} active={false} activity={sendingMessage ? "idle" : activeComposerTask ? taskMascotActivity(activeComposerTask) : "idle"} />
               <div className="min-w-0"><div className="text-[13px] font-semibold">{selectedAgent.name}</div><div className="truncate text-[11px] text-[var(--luma-text-muted)]">{selectedAgent.description || "Personal teammate"}</div></div>
               <span className="luma-activity-pill" data-status-color={titlebarStatus?.color ?? (selectedAgent.status === "active" ? "blue" : selectedAgent.status === "waiting" ? "amber" : selectedAgent.status === "stopped" ? "red" : "green")}><i />{titlebarStatus?.text ?? (selectedAgent.status === "active" ? "Working" : selectedAgent.status === "waiting" ? "Needs you" : selectedAgent.status === "paused" ? "Paused" : selectedAgent.status === "stopped" ? "Stopped" : "Ready")}</span>
@@ -4033,7 +4048,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                 <button type="button" className="luma-inspector-icon-button" onClick={() => setInspectorVisible((visible) => !visible)} aria-label={inspectorVisible ? "Hide tasks" : "Show tasks"} title={inspectorVisible ? "Hide tasks" : "Show tasks"}><PanelCloseIcon /></button>
               </div>
             </div>}
-          <div className="min-h-0 flex-1 overflow-hidden p-4">
+          <div data-settings-active={activeTab === "settings"} className={`luma-teammates-stage min-h-0 flex-1 overflow-hidden ${activeTab === "settings" ? "p-0" : "p-4"}`}>
             {!selectedAgent ? <div className="flex h-full items-center justify-center text-[12px] text-[var(--luma-text-muted)]">Select a teammate to start chatting.</div> : activeTab === "chat" ? (
               <div className="mx-auto flex h-full w-full max-w-[720px] flex-col">
                 <div ref={teammateHistoryRef} key={selectedAgent.id} className="luma-teammate-history-transition min-h-0 flex-1 space-y-5 overflow-auto pb-5">
@@ -4150,97 +4165,107 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                 </form>
               </div>
             ) : (
-              <div className="luma-teammate-settings space-y-5" data-settings-tab={settingsSection}>
-                <section>
-                  <div className="flex items-start justify-between gap-3">
+              <div className="luma-teammate-settings" data-settings-tab={settingsSection}>
+                <header className="luma-teammate-settings-header">
+                  <div className="luma-teammate-settings-person">
+                    <MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={44} active={selectedAgent.status === "active"} />
                     <div className="min-w-0">
-                      <div className="flex items-center gap-3"><MascotAvatar seed={selectedAgent.name} mascot={selectedAgent.configuration.mascot} size={52} active={selectedAgent.status === "active"} /><h3 className="truncate text-[16px] font-semibold">{selectedAgent.name}</h3></div>
-                      <p className="mt-1 text-[11px] text-[var(--luma-text-muted)]">Persistent identity · revision {selectedAgent.configuration_revision} · created {new Date(selectedAgent.created_at * 1000).toLocaleDateString()}</p>
-                    </div>
-                    <div className="flex gap-1.5">
-                      {selectedAgent.status === "paused" ? <button type="button" disabled={busy} onClick={() => void perform(() => window.luma.setAgentStatus(selectedAgent.id, "idle"))} className="luma-btn-secondary h-7 px-2.5 text-[11px]">Resume</button> : <button type="button" disabled={busy || selectedAgent.status === "stopped" || selectedAgent.status === "active" || selectedAgent.status === "waiting"} onClick={() => void perform(() => window.luma.setAgentStatus(selectedAgent.id, "paused"))} className="luma-btn-secondary h-7 px-2.5 text-[11px]">Pause</button>}
-                      <button type="button" disabled={busy || selectedAgent.status === "stopped" || selectedAgent.status === "active" || selectedAgent.status === "waiting"} onClick={() => { if (window.confirm(`Stop ${selectedAgent.name}?`)) void perform(() => window.luma.setAgentStatus(selectedAgent.id, "stopped")); }} className="luma-btn-ghost h-7 px-2.5 text-[11px] text-[var(--luma-danger)]">Stop</button>
-                      {selectedAgent.id !== "agent_global" && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Delete ${selectedAgent.name}? Completed task history, schedules, approvals and agent-scoped memory will be deleted. Cancel active tasks first.`)) void perform(async () => { await window.luma.deleteAgent(selectedAgent.id); }); }} className="luma-btn-ghost h-7 px-2.5 text-[11px] text-[var(--luma-danger)]">Delete</button>}
+                      <div className="flex flex-wrap items-center gap-2"><h3 className="truncate text-[15px] font-semibold">{selectedAgent.name}</h3><span className="luma-settings-status" data-status={selectedAgent.status}>{selectedAgent.status}</span>{selectedAgent.id === "agent_global" && <span className="luma-settings-global">Global teammate</span>}</div>
+                      <p>Settings · revision {selectedAgent.configuration_revision} · updated {new Date(selectedAgent.updated_at * 1000).toLocaleDateString()}</p>
                     </div>
                   </div>
-                </section>
-
-                <nav className="luma-teammate-settings-nav" aria-label="Teammate settings sections">
-                  {(["identity", "behavior", "capabilities", "memory", "schedules", "advanced"] as const).map((section) => <button key={section} type="button" aria-pressed={settingsSection === section} data-active={settingsSection === section} onClick={() => setSettingsSection(section)}>{section[0].toUpperCase() + section.slice(1)}</button>)}
-                </nav>
-
-                <section data-settings-section="identity" className="rounded-lg border border-[var(--luma-border)] p-3">
-                  <div className="mb-2 luma-kicker">Identity & personality</div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <label className="text-[10px] text-[var(--luma-text-muted)]">Name<input value={agentNameDraft} onChange={(event) => setAgentNameDraft(event.target.value)} maxLength={120} className="luma-input mt-1 h-8 w-full text-[11px]" /></label>
-                    <label className="text-[10px] text-[var(--luma-text-muted)]">Description<input value={agentDescriptionDraft} onChange={(event) => setAgentDescriptionDraft(event.target.value)} className="luma-input mt-1 h-8 w-full text-[11px]" /></label>
+                  <div className="luma-teammate-settings-actions">
+                    {selectedAgent.status === "paused" ? <button type="button" disabled={busy} onClick={() => void perform(() => window.luma.setAgentStatus(selectedAgent.id, "idle"))} className="luma-btn-secondary">Resume</button> : <button type="button" disabled={busy || selectedAgent.status === "stopped" || selectedAgent.status === "active" || selectedAgent.status === "waiting"} onClick={() => void perform(() => window.luma.setAgentStatus(selectedAgent.id, "paused"))} className="luma-btn-secondary">Pause</button>}
+                    <button type="button" disabled={busy || selectedAgent.status === "stopped" || selectedAgent.status === "active" || selectedAgent.status === "waiting"} onClick={() => { if (window.confirm(`Stop ${selectedAgent.name}?`)) void perform(() => window.luma.setAgentStatus(selectedAgent.id, "stopped")); }} className="luma-btn-ghost danger">Stop</button>
+                    {selectedAgent.id !== "agent_global" && <button type="button" disabled={busy} onClick={() => { if (window.confirm(`Delete ${selectedAgent.name}? Completed task history, schedules, approvals and agent-scoped memory will be deleted. Cancel active tasks first.`)) void perform(async () => { await window.luma.deleteAgent(selectedAgent.id); }); }} className="luma-btn-ghost danger">Delete teammate</button>}
                   </div>
-                  <button type="button" disabled={busy || !agentNameDraft.trim()} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, name: agentNameDraft.trim(), description: agentDescriptionDraft.trim() || null }); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save identity</button>
-                  <MascotCustomizer value={mascotDraft} seed={selectedAgent.name} onChange={setMascotDraft} />
-                </section>
+                </header>
 
-                <section data-settings-section="behavior" className="rounded-lg border border-[var(--luma-border)] p-3">
-                  <h4 className="mb-2 luma-kicker">Behavior & instructions</h4>
-                  <p className="mb-2 text-[10px] leading-relaxed text-[var(--luma-text-muted)]">Define how this teammate approaches tasks, communicates, and makes decisions.</p>
-                  <label className="mb-3 block text-[10px] text-[var(--luma-text-muted)]">Specialization<input value={specializationDraft} onChange={(event) => setSpecializationDraft(event.target.value)} className="luma-input mt-1 h-8 w-full text-[11px]" placeholder="Graphics Engineer, Security Reviewer" /></label>
-                  <textarea value={personalityDraft} onChange={(event) => setPersonalityDraft(event.target.value)} rows={8} className="luma-input w-full resize-y text-[11px]" placeholder="How should this teammate behave?" />
-                  <button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, specialization: specializationDraft.trim() || null, system_prompt: personalityDraft } }); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save instructions</button>
-                </section>
+                <div className="luma-teammate-settings-layout">
+                  <nav className="luma-teammate-settings-nav" aria-label="Teammate settings sections">
+                    <div className="luma-settings-nav-caption">CONFIGURE</div>
+                    {([
+                      ["general", "General", "Identity and appearance"],
+                      ["model", "Model", "Provider and inference"],
+                      ["instructions", "Instructions", "Role and behavior"],
+                      ["access", "Tools & access", "Skills and permissions"],
+                      ["memory", "Memory", "Saved context"],
+                      ["automation", "Automation", "Schedules and triggers"],
+                      ["advanced", "Advanced", "Raw configuration"],
+                    ] as const).map(([section, label, hint]) => <button key={section} type="button" aria-current={settingsSection === section ? "page" : undefined} aria-pressed={settingsSection === section} data-active={settingsSection === section} onClick={() => setSettingsSection(section)}><span>{label}</span><small>{hint}</small></button>)}
+                    <div className="luma-settings-nav-footnote">Changes are saved per teammate. Global defaults are shared only where inheritance is enabled.</div>
+                  </nav>
 
-                <section data-settings-section="capabilities" className="rounded-lg border border-[var(--luma-border)] p-3">
-                  <h4 className="mb-3 luma-kicker">Capabilities & access</h4>
-                  {selectedAgent.id !== "agent_global" && <label className="flex items-start gap-2 text-[11px] text-[var(--luma-text-secondary)]"><input type="checkbox" checked={selectedAgent.configuration.use_global_context} onChange={(event) => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, use_global_context: event.target.checked, ...(event.target.checked ? { skills: [] } : {}) } }); })} className="mt-0.5 accent-[var(--luma-accent)]" /><span><strong>Use the global skills, memory, connectors, etc.</strong><small className="mt-0.5 block text-[var(--luma-text-muted)]">Share the global teammate's connected tools and shared context.</small></span></label>}
-                  <label className="mt-3 flex items-start gap-2 text-[11px] text-[var(--luma-text-secondary)]"><input type="checkbox" checked={selectedAgent.configuration.network_access ?? true} onChange={(event) => { const enabled = event.target.checked; void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, network_access: enabled, permissions: { ...selectedAgent.configuration.permissions, allow_network: enabled } } }); }); }} className="mt-0.5 accent-[var(--luma-accent)]" /><span><strong>Internet access</strong><small className="mt-0.5 block text-[var(--luma-text-muted)]">Allow web search and fetching public webpages. External changes still require approval.</small></span></label>
-                  {!selectedAgent.configuration.use_global_context && <label className="mt-3 block text-[11px] text-[var(--luma-text-muted)]">Assigned skills<input value={skillsDraft} onChange={(event) => setSkillsDraft(event.target.value)} className="luma-input mt-1 h-8 w-full text-[11px]" placeholder="research, writing, planning" /></label>}
-                  <button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, skills: selectedAgent.configuration.use_global_context ? [] : [...new Set(skillsDraft.split(",").map((skill) => skill.trim()).filter(Boolean))] } }); })} className="mt-3 text-[11px] text-[var(--luma-accent)] hover:underline">Save capabilities</button>
-                  {approvals.filter((approval) => approval.agent_id === selectedAgent.id).length > 0 && <div className="mt-4 border-t border-[var(--luma-border)] pt-3"><h4 className="mb-2 luma-kicker">Needs your approval</h4><div className="space-y-2">{approvals.filter((approval) => approval.agent_id === selectedAgent.id).map((approval) => <div key={approval.id} className="rounded-md border border-[var(--luma-warning)]/30 p-3"><div className="text-[11px] font-medium">{approval.tool}</div><pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-muted)]">{approval.arguments}</pre><div className="mt-2 flex justify-end gap-2"><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, false))} className="luma-btn-ghost h-7 px-2 text-[10px]">Deny</button><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, true))} className="luma-btn-primary h-7 px-2.5 text-[10px]">Approve</button></div></div>)}</div></div>}
-                </section>
+                  <div className="luma-teammate-settings-content" key={`${selectedAgent.id}-${settingsSection}`}>
+                    <section data-settings-section="general" className="luma-settings-section">
+                      <div className="luma-settings-section-heading"><div><span>01 / IDENTITY</span><h2>General</h2><p>The name and presence people see when working with this teammate.</p></div></div>
+                      <div className="luma-settings-form-grid">
+                        <label>Name<input value={agentNameDraft} onChange={(event) => setAgentNameDraft(event.target.value)} maxLength={120} className="luma-input" /></label>
+                        <label>Description<input value={agentDescriptionDraft} onChange={(event) => setAgentDescriptionDraft(event.target.value)} maxLength={500} className="luma-input" placeholder="What is this teammate responsible for?" /></label>
+                      </div>
+                      <div className="luma-settings-save-row"><span>Use a clear name and a short description of its responsibility.</span><button type="button" disabled={busy || !agentNameDraft.trim() || (agentNameDraft.trim() === selectedAgent.name && agentDescriptionDraft.trim() === (selectedAgent.description ?? ""))} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, name: agentNameDraft.trim(), description: agentDescriptionDraft.trim() || null }); })} className="luma-btn-primary">Save identity</button></div>
+                      <div className="luma-settings-divider" />
+                      <div className="luma-settings-subheading"><h3>Avatar and mascot</h3><p>Choose the visual identity used in the team list, conversations, and activity.</p></div>
+                      <MascotCustomizer value={mascotDraft} seed={selectedAgent.name} onChange={setMascotDraft} />
+                      <div className="luma-settings-save-row"><span>{mascotDraft === selectedAgent.configuration.mascot ? "Current appearance" : "Appearance has changed"}</span><button type="button" disabled={busy || mascotDraft === selectedAgent.configuration.mascot} onClick={() => void perform(() => saveAgentConfiguration({ ...selectedAgent.configuration, mascot: mascotDraft }))} className="luma-btn-secondary">Save appearance</button></div>
+                    </section>
 
-                <section data-settings-section="advanced" className="rounded-lg border border-[var(--luma-border)] p-3">
-                  <h4 className="mb-2 luma-kicker">Advanced agent configuration</h4>
-                  <p className="mt-2 text-[10px] leading-5 text-[var(--luma-text-muted)]">Edit the complete AgentConfiguration object, including specialization, provider overrides, endpoint, allowed workspaces, enabled tools, permissions, network policy, and recovery behavior. max_concurrent_tasks accepts 1–8; simultaneous tasks require distinct workspaces.</p>
-                  <textarea spellCheck={false} value={configurationDraft} onChange={(event) => setConfigurationDraft(event.target.value)} rows={18} className="luma-input mt-2 w-full resize-y font-mono text-[10px] leading-5" />
-                  <div className="mt-2 flex justify-end"><button type="button" disabled={busy || !configurationDraft.trim()} onClick={() => void perform(async () => { let configuration: AgentConfiguration; try { configuration = JSON.parse(configurationDraft) as AgentConfiguration; } catch (reason) { throw new Error(`Invalid JSON: ${reason instanceof Error ? reason.message : String(reason)}`); } if (!configuration || typeof configuration !== "object" || !configuration.permissions || !Array.isArray(configuration.skills) || !Array.isArray(configuration.allowed_workspaces) || !Array.isArray(configuration.enabled_tools)) throw new Error("Configuration must include permissions, skills, allowed_workspaces, and enabled_tools."); await window.luma.updateAgent({ id: selectedAgent.id, configuration }); setConfigurationDraft(JSON.stringify(configuration, null, 2)); })} className="luma-btn-primary h-7 px-3 text-[10px]">Save full configuration</button></div>
-                </section>
+                    <section data-settings-section="model" className="luma-settings-section">
+                      <div className="luma-settings-section-heading"><div><span>02 / INFERENCE</span><h2>Model</h2><p>Choose a model override for this teammate. Empty values inherit the global model.</p></div></div>
+                      <div className="luma-settings-model-choice"><div><strong>{modelNameDraft || "Global model"}</strong><p>{modelProviderDraft || "Inherited provider"}{modelEndpointDraft ? ` · ${modelEndpointDraft}` : " · Using global endpoint"}</p></div><button type="button" onClick={() => setModelPickerOpen(true)} className="luma-btn-secondary">Choose model…</button></div>
+                      <div className="luma-settings-inherit-note"><span className="luma-settings-inherit-mark">↳</span><div><strong>{modelProviderDraft || modelNameDraft || modelEndpointDraft ? "Custom model configuration" : "Using global model"}</strong><p>{modelProviderDraft || modelNameDraft || modelEndpointDraft ? "One or more values override the global model configuration." : "This teammate follows the provider and model selected in global settings."}</p></div><button type="button" disabled={busy || (!modelProviderDraft && !modelNameDraft && !modelEndpointDraft)} onClick={() => { setModelProviderDraft(""); setModelNameDraft(""); setModelEndpointDraft(""); void perform(() => saveAgentConfiguration({ ...selectedAgent.configuration, provider: null, model: null, endpoint: null })); }}>Reset overrides</button></div>
+                      <div className="luma-settings-form-grid">
+                        <label>Provider ID<input value={modelProviderDraft} onChange={(event) => setModelProviderDraft(event.target.value)} className="luma-input" placeholder="Inherit global provider" /></label>
+                        <label>Model ID<input value={modelNameDraft} onChange={(event) => setModelNameDraft(event.target.value)} className="luma-input" placeholder="Inherit global model" /></label>
+                        <label className="luma-settings-full-field">API endpoint<input value={modelEndpointDraft} onChange={(event) => setModelEndpointDraft(event.target.value)} className="luma-input" placeholder="Inherit global endpoint" /></label>
+                      </div>
+                      <div className="luma-settings-save-row"><span>Provider and model IDs must be supported by your configured runtime.</span><button type="button" disabled={busy || (modelProviderDraft === (selectedAgent.configuration.provider ?? "") && modelNameDraft === (selectedAgent.configuration.model ?? "") && modelEndpointDraft === (selectedAgent.configuration.endpoint ?? ""))} onClick={() => void perform(() => saveAgentConfiguration({ ...selectedAgent.configuration, provider: modelProviderDraft.trim() || null, model: modelNameDraft.trim() || null, endpoint: modelEndpointDraft.trim() || null }))} className="luma-btn-primary">Save model settings</button></div>
+                    </section>
 
-                <section data-settings-section="memory" className="rounded-lg border border-[var(--luma-border)] p-3">
-                  <div>
-                    <h4 className="mb-2 luma-kicker">Agent memory</h4>
-                    <p className="mb-2 text-[10px] leading-relaxed text-[var(--luma-text-muted)]">This teammate can learn useful preferences and project decisions automatically, and recall them in future tasks.</p>
-                    <select value={memoryScope} onChange={(event) => setMemoryScope(event.target.value as MemoryScope)} className="luma-input mb-2 h-8 w-full text-[11px]">
-                      <option value="agent">This agent</option><option value="user">Shared user memory</option><option value="project">This workspace</option>
-                    </select>
-                    <textarea value={memoryContent} onChange={(event) => setMemoryContent(event.target.value)} rows={2} placeholder="A preference or fact this teammate should remember…" className="luma-input w-full resize-y text-[11px]" />
-                    <button type="button" disabled={busy || !memoryContent.trim() || (memoryScope === "project" && !workspacePath)} onClick={() => void perform(async () => { const scopeId = memoryScope === "agent" ? selectedAgent.id : memoryScope === "user" ? "default" : workspacePath; await window.luma.addMemory(memoryScope, scopeId, memoryContent.trim()); setMemoryContent(""); setMemoryRevision((revision) => revision + 1); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save memory</button>
-                    <div className="mt-2 max-h-32 space-y-1 overflow-auto">{memoryEntries.map((entry) => <div key={entry.id} className="flex items-start gap-2 border-t border-[var(--luma-border)] py-1.5"><p className="min-w-0 flex-1 whitespace-pre-wrap break-words text-[10px] text-[var(--luma-text-secondary)]">{entry.content}</p><button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.deleteMemory(entry.id); setMemoryRevision((revision) => revision + 1); })} className="text-[10px] text-[var(--luma-danger)] hover:underline">Delete</button></div>)}</div>
+                    <section data-settings-section="instructions" className="luma-settings-section">
+                      <div className="luma-settings-section-heading"><div><span>03 / BEHAVIOR</span><h2>Instructions</h2><p>Give this teammate a clear area of responsibility and guidance for how it should work.</p></div></div>
+                      <label className="luma-settings-field">Specialization<input value={specializationDraft} onChange={(event) => setSpecializationDraft(event.target.value)} className="luma-input" placeholder="e.g. Graphics engineer, security reviewer" /></label>
+                      <label className="luma-settings-field">System instructions<textarea value={personalityDraft} onChange={(event) => setPersonalityDraft(event.target.value)} rows={12} className="luma-input luma-settings-instructions" placeholder="Describe the teammate's role, working style, constraints, and communication preferences…" /></label>
+                      <div className="luma-settings-save-row"><span>These instructions are included when the teammate works on a task.</span><button type="button" disabled={busy || (specializationDraft.trim() === (selectedAgent.configuration.specialization ?? "") && personalityDraft === selectedAgent.configuration.system_prompt)} onClick={() => void perform(() => saveAgentConfiguration({ ...selectedAgent.configuration, specialization: specializationDraft.trim() || null, system_prompt: personalityDraft }))} className="luma-btn-primary">Save instructions</button></div>
+                    </section>
+
+                    <section data-settings-section="access" className="luma-settings-section">
+                      <div className="luma-settings-section-heading"><div><span>04 / CAPABILITIES</span><h2>Tools & access</h2><p>Control what this teammate can use and where it is allowed to work.</p></div></div>
+                      {selectedAgent.id !== "agent_global" && <div className="luma-settings-toggle-row"><div><strong>Inherit global context</strong><p>Use the global teammate's skills, memory, connectors, and shared capabilities.</p></div><input type="checkbox" checked={selectedAgent.configuration.use_global_context} onChange={(event) => void perform(() => saveAgentConfiguration({ ...selectedAgent.configuration, use_global_context: event.target.checked, ...(event.target.checked ? { skills: [] } : {}) }))} aria-label="Inherit global context" /></div>}
+                      {selectedAgent.configuration.use_global_context && selectedAgent.id !== "agent_global" && <div className="luma-settings-inherit-note"><span className="luma-settings-inherit-mark">↳</span><div><strong>Inherited from Global</strong><p>Skills, memory, and connectors are shared. Turn inheritance off to assign skills independently.</p></div></div>}
+                      <div className="luma-settings-toggle-row"><div><strong>Internet access</strong><p>Allow web search and fetching public webpages. External changes still require approval.</p></div><input type="checkbox" checked={selectedAgent.configuration.network_access ?? true} onChange={(event) => { const enabled = event.target.checked; void perform(() => saveAgentConfiguration({ ...selectedAgent.configuration, network_access: enabled, permissions: { ...selectedAgent.configuration.permissions, allow_network: enabled } })); }} aria-label="Internet access" /></div>
+                      {!selectedAgent.configuration.use_global_context && <label className="luma-settings-field">Assigned skills <input value={skillsDraft} onChange={(event) => setSkillsDraft(event.target.value)} className="luma-input" placeholder="research, writing, planning" /><small>Separate skill names with commas. Installed skills are discovered by the runtime.</small></label>}
+                      <div className="luma-settings-save-row"><span>Tool allowlists, workspace grants, and execution limits are available in Advanced.</span><button type="button" disabled={busy || (selectedAgent.configuration.use_global_context ? selectedAgent.configuration.skills.length === 0 : skillsDraft === selectedAgent.configuration.skills.join(", "))} onClick={() => void perform(() => saveAgentConfiguration({ ...selectedAgent.configuration, skills: selectedAgent.configuration.use_global_context ? [] : [...new Set(skillsDraft.split(",").map((skill) => skill.trim()).filter(Boolean))] }))} className="luma-btn-secondary">Save skills</button></div>
+                      {approvals.filter((approval) => approval.agent_id === selectedAgent.id).length > 0 && <div className="luma-settings-approvals"><div className="luma-settings-subheading"><h3>Pending approvals</h3><p>Actions waiting for your decision.</p></div>{approvals.filter((approval) => approval.agent_id === selectedAgent.id).map((approval) => <div key={approval.id} className="luma-settings-approval"><div><strong>{approval.tool}</strong><pre>{approval.arguments}</pre></div><div><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, false))}>Deny</button><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, true))}>Approve</button></div></div>)}</div>}
+                    </section>
+
+                    <section data-settings-section="memory" className="luma-settings-section">
+                      <div className="luma-settings-section-heading"><div><span>05 / CONTEXT</span><h2>Memory</h2><p>Facts and preferences available to this teammate in future work.</p></div></div>
+                      <div className="luma-settings-memory-composer"><label>Save memory to<select value={memoryScope} onChange={(event) => setMemoryScope(event.target.value as MemoryScope)} className="luma-input"><option value="agent">This teammate</option><option value="user">Shared user memory</option><option value="project">Current workspace</option></select></label><label>Memory<textarea value={memoryContent} onChange={(event) => setMemoryContent(event.target.value)} rows={3} placeholder="A preference, project decision, or useful fact…" className="luma-input" /></label><div className="luma-settings-save-row"><span>{memoryEntries.length} saved {memoryEntries.length === 1 ? "entry" : "entries"}</span><button type="button" disabled={busy || !memoryContent.trim() || (memoryScope === "project" && !workspacePath)} onClick={() => void perform(async () => { const scopeId = memoryScope === "agent" ? selectedAgent.id : memoryScope === "user" ? "default" : workspacePath; await window.luma.addMemory(memoryScope, scopeId, memoryContent.trim()); setMemoryContent(""); setMemoryRevision((revision) => revision + 1); })} className="luma-btn-primary">Save memory</button></div></div>
+                      <div className="luma-settings-memory-list">{memoryEntries.map((entry) => <div key={entry.id}><p>{entry.content}</p><small>{entry.scope} · {new Date(entry.updated_at * 1000).toLocaleDateString()}</small><button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.deleteMemory(entry.id); setMemoryRevision((revision) => revision + 1); })}>Delete</button></div>)}{memoryLoading && <p className="luma-settings-empty">Loading memory…</p>}{!memoryLoading && memoryEntries.length === 0 && <p className="luma-settings-empty">No memory saved here yet.</p>}</div>
+                    </section>
+
+                    <section data-settings-section="automation" className="luma-settings-section">
+                      <div className="luma-settings-section-heading"><div><span>06 / AUTONOMY</span><h2>Automation</h2><p>Let this teammate run recurring work or respond to events.</p></div></div>
+                      <div className="luma-settings-subheading"><h3>Recurring schedule</h3><p>Run a task at a regular interval.</p></div>
+                      <div className="luma-settings-form-grid"><label>Schedule name<input value={scheduleTitle} onChange={(event) => setScheduleTitle(event.target.value)} maxLength={120} className="luma-input" /></label><label>Repeat every (hours)<input type="number" min={1} max={8760} step={1} value={scheduleIntervalHours} onChange={(event) => setScheduleIntervalHours(event.target.value)} className="luma-input" /></label><label className="luma-settings-full-field">Task prompt<textarea value={schedulePrompt} onChange={(event) => setSchedulePrompt(event.target.value)} rows={3} className="luma-input" placeholder="What should this teammate repeat?" /></label></div>
+                      <div className="luma-settings-save-row"><span>Choose an interval between 1 hour and 1 year.</span><button type="button" disabled={busy || !schedulePrompt.trim() || !scheduleTitle.trim() || !Number.isInteger(Number(scheduleIntervalHours)) || Number(scheduleIntervalHours) < 1 || Number(scheduleIntervalHours) > 8760} onClick={() => void perform(async () => { await window.luma.createSchedule({ agentId: selectedAgent.id, title: scheduleTitle.trim(), prompt: schedulePrompt.trim(), everySeconds: Number(scheduleIntervalHours) * 3600 }); setSchedulePrompt(""); })} className="luma-btn-primary">Create schedule</button></div>
+                      <div className="luma-settings-record-list">{schedules.filter((schedule) => schedule.agent_id === selectedAgent.id).map((schedule) => <div key={schedule.id}><span><strong>{schedule.title}</strong><small>{schedule.every_seconds ? `Every ${Math.round(schedule.every_seconds / 3600 * 10) / 10} hours` : "One-time"} · {schedule.enabled ? `Next ${new Date(schedule.next_run_at * 1000).toLocaleString()}` : "Paused"}</small></span><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.setScheduleEnabled(schedule.id, !schedule.enabled))}>{schedule.enabled ? "Pause" : "Resume"}</button><button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.deleteSchedule(schedule.id); })} className="danger">Remove</button></div>)}{schedules.filter((schedule) => schedule.agent_id === selectedAgent.id).length === 0 && <p className="luma-settings-empty">No recurring schedules configured.</p>}</div>
+                      <div className="luma-settings-divider" />
+                      <div className="luma-settings-subheading"><h3>Event triggers</h3><p>Start work when a supported runtime event occurs. Triggers are deduplicated and cooldown-limited.</p></div>
+                      <div className="luma-settings-form-grid"><label>Trigger name<input value={triggerTitle} onChange={(event) => setTriggerTitle(event.target.value)} maxLength={120} className="luma-input" /></label><label>When<select value={triggerEventType} onChange={(event) => setTriggerEventType(event.target.value as EventTriggerRecord["event_type"])} className="luma-input"><option value="task.completed">A task completes</option><option value="task.failed">A task fails</option><option value="approval.requested">An approval is requested</option><option value="memory.created">Memory is saved</option></select></label><label className="luma-settings-full-field">Action prompt<textarea value={triggerPrompt} onChange={(event) => setTriggerPrompt(event.target.value)} rows={3} maxLength={8000} className="luma-input" placeholder="What should the teammate do when this happens?" /></label><label>Cooldown (minutes)<input type="number" min={1} max={1440} step={1} value={triggerCooldownMinutes} onChange={(event) => setTriggerCooldownMinutes(event.target.value)} className="luma-input" /></label></div>
+                      <div className="luma-settings-save-row"><span>Minimum 1 minute · maximum 24 hours.</span><button type="button" disabled={busy || !triggerTitle.trim() || !triggerPrompt.trim() || !Number.isInteger(Number(triggerCooldownMinutes)) || Number(triggerCooldownMinutes) < 1 || Number(triggerCooldownMinutes) > 1440} onClick={() => void perform(async () => { await window.luma.createEventTrigger({ agentId: selectedAgent.id, title: triggerTitle.trim(), prompt: triggerPrompt.trim(), eventType: triggerEventType, cooldownSeconds: Number(triggerCooldownMinutes) * 60 }); setTriggerPrompt(""); })} className="luma-btn-primary">Create trigger</button></div>
+                      <div className="luma-settings-record-list">{eventTriggers.filter((trigger) => trigger.agent_id === selectedAgent.id).map((trigger) => <div key={trigger.id}><span><strong>{trigger.title}</strong><small>{trigger.event_type.replace(/\./g, " · ")} · cooldown {Math.round(trigger.cooldown_seconds / 60)}m</small></span><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.setEventTriggerEnabled(trigger.id, !trigger.enabled))}>{trigger.enabled ? "Pause" : "Resume"}</button><button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.deleteEventTrigger(trigger.id); })} className="danger">Remove</button></div>)}{eventTriggers.filter((trigger) => trigger.agent_id === selectedAgent.id).length === 0 && <p className="luma-settings-empty">No event triggers configured.</p>}</div>
+                    </section>
+
+                    <section data-settings-section="advanced" className="luma-settings-section">
+                      <div className="luma-settings-section-heading"><div><span>07 / RUNTIME</span><h2>Advanced</h2><p>Fine-grained runtime controls for experienced users. Invalid configuration is rejected.</p></div></div>
+                      <div className="luma-settings-warning"><strong>Full configuration</strong><p>This edits the complete AgentConfiguration object, including provider overrides, workspace grants, enabled tools, permissions, concurrency, and recovery behavior. Keep required fields intact.</p></div>
+                      <textarea spellCheck={false} value={configurationDraft} onChange={(event) => setConfigurationDraft(event.target.value)} rows={22} className="luma-input luma-settings-json" />
+                      <div className="luma-settings-save-row"><span>JSON · configuration revision {selectedAgent.configuration_revision}</span><button type="button" disabled={busy || !configurationDraft.trim() || configurationDraft === JSON.stringify(selectedAgent.configuration, null, 2)} onClick={() => void perform(async () => { let configuration: AgentConfiguration; try { configuration = JSON.parse(configurationDraft) as AgentConfiguration; } catch (reason) { throw new Error(`Invalid JSON: ${reason instanceof Error ? reason.message : String(reason)}`); } if (!configuration || typeof configuration !== "object" || !configuration.permissions || !Array.isArray(configuration.skills) || !Array.isArray(configuration.allowed_workspaces) || !Array.isArray(configuration.enabled_tools)) throw new Error("Configuration must include permissions, skills, allowed_workspaces, and enabled_tools."); await window.luma.updateAgent({ id: selectedAgent.id, configuration }); setConfigurationDraft(JSON.stringify(configuration, null, 2)); })} className="luma-btn-primary">Save configuration</button></div>
+                    </section>
                   </div>
-                </section>
-                <section data-settings-section="schedules" className="rounded-lg border border-[var(--luma-border)] p-3">
-                  <div>
-                    <h4 className="mb-2 luma-kicker">Recurring work</h4>
-                    <input value={scheduleTitle} onChange={(event) => setScheduleTitle(event.target.value)} maxLength={120} placeholder="Schedule name" className="luma-input mb-2 h-8 w-full text-[11px]" />
-                    <textarea value={schedulePrompt} onChange={(event) => setSchedulePrompt(event.target.value)} rows={2} placeholder="What should this teammate repeat?" className="luma-input w-full resize-y text-[11px]" />
-                    <label className="mt-2 block text-[10px] text-[var(--luma-text-muted)]">Repeat every (hours)<input type="number" min={1} max={8760} step={1} value={scheduleIntervalHours} onChange={(event) => setScheduleIntervalHours(event.target.value)} className="luma-input mt-1 h-8 w-full text-[11px]" /></label>
-                    <button type="button" disabled={busy || !schedulePrompt.trim() || !scheduleTitle.trim() || !Number.isInteger(Number(scheduleIntervalHours)) || Number(scheduleIntervalHours) < 1 || Number(scheduleIntervalHours) > 8760} onClick={() => void perform(async () => { await window.luma.createSchedule({ agentId: selectedAgent.id, title: scheduleTitle.trim(), prompt: schedulePrompt.trim(), everySeconds: Number(scheduleIntervalHours) * 3600 }); setSchedulePrompt(""); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Create recurring schedule</button>
-                    <p className="mt-1 text-[10px] text-[var(--luma-text-muted)]">{schedules.filter((schedule) => schedule.agent_id === selectedAgent.id && schedule.enabled).length} enabled schedules</p>
-                    <div className="mt-2 space-y-1">{schedules.filter((schedule) => schedule.agent_id === selectedAgent.id).map((schedule) => <div key={schedule.id} className="flex items-center gap-2 border-t border-[var(--luma-border)] pt-1.5"><span className="min-w-0 flex-1 truncate text-[10px] text-[var(--luma-text-secondary)]">{schedule.title} · {schedule.every_seconds ? `every ${Math.round(schedule.every_seconds / 3600 * 10) / 10}h` : "one-time"} · {schedule.enabled ? `next ${new Date(schedule.next_run_at * 1000).toLocaleString()}` : "Disabled"}</span><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.setScheduleEnabled(schedule.id, !schedule.enabled))} className="text-[10px] text-[var(--luma-accent)] hover:underline">{schedule.enabled ? "Pause" : "Resume"}</button><button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.deleteSchedule(schedule.id); })} className="text-[10px] text-[var(--luma-danger)] hover:underline">Remove</button></div>)}</div>
-                    <div className="my-4 border-t border-[var(--luma-border)]" />
-                    <h4 className="mb-1 luma-kicker">Event-triggered work</h4>
-                    <p className="mb-2 text-[10px] leading-relaxed text-[var(--luma-text-muted)]">Run this teammate when a supported event occurs. Triggered runs are deduplicated, cooldown-limited, and cannot trigger themselves recursively.</p>
-                    <input value={triggerTitle} onChange={(event) => setTriggerTitle(event.target.value)} maxLength={120} placeholder="Trigger name" className="luma-input mb-2 h-8 w-full text-[11px]" />
-                    <select value={triggerEventType} onChange={(event) => setTriggerEventType(event.target.value as EventTriggerRecord["event_type"])} className="luma-input mb-2 h-8 w-full text-[11px]">
-                      <option value="task.completed">When a task completes</option>
-                      <option value="task.failed">When a task fails</option>
-                      <option value="approval.requested">When an approval is requested</option>
-                      <option value="memory.created">When a memory is saved</option>
-                    </select>
-                    <textarea value={triggerPrompt} onChange={(event) => setTriggerPrompt(event.target.value)} rows={2} maxLength={8000} placeholder="What should the teammate do when this happens?" className="luma-input w-full resize-y text-[11px]" />
-                    <label className="mt-2 block text-[10px] text-[var(--luma-text-muted)]">Minimum time between runs (minutes)<input type="number" min={1} max={1440} step={1} value={triggerCooldownMinutes} onChange={(event) => setTriggerCooldownMinutes(event.target.value)} className="luma-input mt-1 h-8 w-full text-[11px]" /></label>
-                    <button type="button" disabled={busy || !triggerTitle.trim() || !triggerPrompt.trim() || !Number.isInteger(Number(triggerCooldownMinutes)) || Number(triggerCooldownMinutes) < 1 || Number(triggerCooldownMinutes) > 1440} onClick={() => void perform(async () => { await window.luma.createEventTrigger({ agentId: selectedAgent.id, title: triggerTitle.trim(), prompt: triggerPrompt.trim(), eventType: triggerEventType, cooldownSeconds: Number(triggerCooldownMinutes) * 60 }); setTriggerPrompt(""); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Create event trigger</button>
-                    <p className="mt-2 text-[10px] text-[var(--luma-text-muted)]">{eventTriggers.filter((trigger) => trigger.agent_id === selectedAgent.id && trigger.enabled).length} enabled triggers</p>
-                    <div className="mt-2 space-y-1">{eventTriggers.filter((trigger) => trigger.agent_id === selectedAgent.id).map((trigger) => <div key={trigger.id} className="flex items-center gap-2 border-t border-[var(--luma-border)] pt-1.5"><span className="min-w-0 flex-1"><span className="block truncate text-[10px] text-[var(--luma-text-secondary)]">{trigger.title}</span><small className="block text-[9px] text-[var(--luma-text-muted)]">{trigger.event_type.replace(/\./g, " · ")} · cooldown {Math.round(trigger.cooldown_seconds / 60)}m</small></span><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.setEventTriggerEnabled(trigger.id, !trigger.enabled))} className="text-[10px] text-[var(--luma-accent)] hover:underline">{trigger.enabled ? "Pause" : "Resume"}</button><button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.deleteEventTrigger(trigger.id); })} className="text-[10px] text-[var(--luma-danger)] hover:underline">Remove</button></div>)}</div>
-                  </div>
-                </section>
+                </div>
               </div>
             )}
           </div>
@@ -4329,6 +4354,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
           </form>
         </div>}
         <footer className="flex shrink-0 items-center justify-between border-t border-[var(--luma-border)] px-5 py-2 text-[10px] text-[var(--luma-text-muted)]"><span>Work continues independently of this page.</span><button type="button" onClick={() => void refresh()} className="hover:text-[var(--luma-text)]">Refresh</button></footer>
+        {modelPickerOpen && selectedAgent && <ModelPickerDialog scope="agent" agent={selectedAgent} onClose={() => setModelPickerOpen(false)} onChanged={(config) => { setModelProviderDraft(config.model.provider); setModelNameDraft(config.model.name); setModelEndpointDraft(config.model.endpoint); setConfigurationDraft(JSON.stringify({ ...selectedAgent.configuration, provider: config.model.provider, model: config.model.name, endpoint: config.model.endpoint }, null, 2)); void refresh(); }} />}
     </section>
   );
 }
