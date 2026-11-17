@@ -3610,12 +3610,15 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [createOpen, setCreateOpen] = useState(false);
   const [agentName, setAgentName] = useState("");
   const [agentDescription, setAgentDescription] = useState("");
+  const [agentSpecialization, setAgentSpecialization] = useState("");
   const [agentPersonality, setAgentPersonality] = useState("");
   const [agentInitialMemory, setAgentInitialMemory] = useState("");
   const [agentWorkspace, setAgentWorkspace] = useState("");
+  const [agentMaxConcurrentTasks, setAgentMaxConcurrentTasks] = useState(1);
   const [agentMascot, setAgentMascot] = useState("auto");
   const [agentUseGlobalContext, setAgentUseGlobalContext] = useState(true);
   const [personalityDraft, setPersonalityDraft] = useState("");
+  const [specializationDraft, setSpecializationDraft] = useState("");
   const [skillsDraft, setSkillsDraft] = useState("");
   const [mascotDraft, setMascotDraft] = useState("auto");
   const [agentNameDraft, setAgentNameDraft] = useState("");
@@ -3961,6 +3964,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
     setAgentNameDraft(selectedAgent.name);
     setAgentDescriptionDraft(selectedAgent.description ?? "");
     setPersonalityDraft(selectedAgent.configuration.system_prompt);
+    setSpecializationDraft(selectedAgent.configuration.specialization ?? "");
     setSkillsDraft(selectedAgent.configuration.skills.join(", "));
     setMascotDraft(selectedAgent.configuration.mascot || "auto");
     setConfigurationDraft(JSON.stringify(selectedAgent.configuration, null, 2));
@@ -4178,8 +4182,9 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                 <section data-settings-section="behavior" className="rounded-lg border border-[var(--luma-border)] p-3">
                   <h4 className="mb-2 luma-kicker">Behavior & instructions</h4>
                   <p className="mb-2 text-[10px] leading-relaxed text-[var(--luma-text-muted)]">Define how this teammate approaches tasks, communicates, and makes decisions.</p>
+                  <label className="mb-3 block text-[10px] text-[var(--luma-text-muted)]">Specialization<input value={specializationDraft} onChange={(event) => setSpecializationDraft(event.target.value)} className="luma-input mt-1 h-8 w-full text-[11px]" placeholder="Graphics Engineer, Security Reviewer" /></label>
                   <textarea value={personalityDraft} onChange={(event) => setPersonalityDraft(event.target.value)} rows={8} className="luma-input w-full resize-y text-[11px]" placeholder="How should this teammate behave?" />
-                  <button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, system_prompt: personalityDraft } }); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save instructions</button>
+                  <button type="button" disabled={busy} onClick={() => void perform(async () => { await window.luma.updateAgent({ id: selectedAgent.id, configuration: { ...selectedAgent.configuration, specialization: specializationDraft.trim() || null, system_prompt: personalityDraft } }); })} className="mt-2 text-[11px] text-[var(--luma-accent)] hover:underline">Save instructions</button>
                 </section>
 
                 <section data-settings-section="capabilities" className="rounded-lg border border-[var(--luma-border)] p-3">
@@ -4193,7 +4198,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
 
                 <section data-settings-section="advanced" className="rounded-lg border border-[var(--luma-border)] p-3">
                   <h4 className="mb-2 luma-kicker">Advanced agent configuration</h4>
-                  <p className="mt-2 text-[10px] leading-5 text-[var(--luma-text-muted)]">Edit the complete AgentConfiguration object, including provider overrides, endpoint, allowed workspaces, enabled tools, permissions, network policy, and recovery behavior. Keep max_concurrent_tasks at 1 while the runtime uses a shared workspace worker.</p>
+                  <p className="mt-2 text-[10px] leading-5 text-[var(--luma-text-muted)]">Edit the complete AgentConfiguration object, including specialization, provider overrides, endpoint, allowed workspaces, enabled tools, permissions, network policy, and recovery behavior. max_concurrent_tasks accepts 1–8; simultaneous tasks require distinct workspaces.</p>
                   <textarea spellCheck={false} value={configurationDraft} onChange={(event) => setConfigurationDraft(event.target.value)} rows={18} className="luma-input mt-2 w-full resize-y font-mono text-[10px] leading-5" />
                   <div className="mt-2 flex justify-end"><button type="button" disabled={busy || !configurationDraft.trim()} onClick={() => void perform(async () => { let configuration: AgentConfiguration; try { configuration = JSON.parse(configurationDraft) as AgentConfiguration; } catch (reason) { throw new Error(`Invalid JSON: ${reason instanceof Error ? reason.message : String(reason)}`); } if (!configuration || typeof configuration !== "object" || !configuration.permissions || !Array.isArray(configuration.skills) || !Array.isArray(configuration.allowed_workspaces) || !Array.isArray(configuration.enabled_tools)) throw new Error("Configuration must include permissions, skills, allowed_workspaces, and enabled_tools."); await window.luma.updateAgent({ id: selectedAgent.id, configuration }); setConfigurationDraft(JSON.stringify(configuration, null, 2)); })} className="luma-btn-primary h-7 px-3 text-[10px]">Save full configuration</button></div>
                 </section>
@@ -4287,15 +4292,15 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
         {createOpen && <div className="luma-create-overlay fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-5" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setCreateOpen(false); }}>
           <form className="luma-create-dialog flex max-h-[min(820px,92vh)] w-full max-w-[820px] flex-col overflow-hidden rounded-xl border border-[var(--luma-border-strong)] bg-[var(--luma-surface)] shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="create-teammate-title" onSubmit={(event) => { event.preventDefault(); void perform(async () => {
             const configuration: AgentConfiguration = {
-              system_prompt: agentPersonality.trim(), mascot: agentMascot, use_global_context: agentUseGlobalContext, skills: [],
+              system_prompt: agentPersonality.trim(), specialization: agentSpecialization.trim() || null, mascot: agentMascot, use_global_context: agentUseGlobalContext, skills: [],
               provider: null, model: null, endpoint: null, workspace: agentWorkspace.trim() || workspacePath || null,
               allowed_workspaces: agentWorkspace.trim() || workspacePath ? [agentWorkspace.trim() || workspacePath] : [], enabled_tools: [],
               network_access: true,
               permissions: { allowed_tools: ["read_file", "list_directory", "search_files", "git_status", "git_diff", "find_symbols", "find_references", "git_log", "git_show", "git_blame", "git_branches", "file_metadata", "find_todos", "count_lines", "inspect_project", "list_skills", "load_skill", "web_search", "fetch_url"], denied_tools: [], auto_approve_read_only: true, require_approval_for_mutations: true, allow_network: true },
-              max_concurrent_tasks: 1, recover_interrupted_tasks: false,
+              max_concurrent_tasks: agentMaxConcurrentTasks, recover_interrupted_tasks: false,
             };
             const created = await window.luma.createAgent({ name: agentName.trim(), description: agentDescription.trim() || null, kind: "teammates", configuration });
-            setSelectedAgentId(created.id); setSelectedTaskId(null); setCreateOpen(false); setAgentName(""); setAgentDescription(""); setAgentPersonality(""); setAgentInitialMemory(""); setAgentWorkspace(""); setAgentMascot("auto"); setAgentUseGlobalContext(true); setActiveTab("chat");
+            setSelectedAgentId(created.id); setSelectedTaskId(null); setCreateOpen(false); setAgentName(""); setAgentDescription(""); setAgentSpecialization(""); setAgentPersonality(""); setAgentInitialMemory(""); setAgentWorkspace(""); setAgentMaxConcurrentTasks(1); setAgentMascot("auto"); setAgentUseGlobalContext(true); setActiveTab("chat");
             if (agentInitialMemory.trim()) {
               try { await window.luma.addMemory("agent", created.id, agentInitialMemory.trim()); }
               catch (reason) { setError(reason instanceof Error ? `Teammate created, but initial memory could not be saved: ${reason.message}` : "Teammate created, but initial memory could not be saved."); }
@@ -4307,6 +4312,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                 <div className="luma-create-section-heading"><span>01</span><div><h4>Identity</h4><p>Start with the basics and make them recognizable.</p></div></div>
                 <label className="luma-create-field">Name <span>Required</span><input autoFocus required maxLength={120} value={agentName} onChange={(event) => setAgentName(event.target.value)} placeholder="e.g. Researcher" className="luma-input mt-1.5 h-10 w-full text-[13px]" /></label>
                 <label className="luma-create-field">What do they do?<input value={agentDescription} onChange={(event) => setAgentDescription(event.target.value)} placeholder="A short description of their role" className="luma-input mt-1.5 h-10 w-full text-[12px]" /></label>
+                <label className="luma-create-field">Specialization <span>Optional</span><input value={agentSpecialization} onChange={(event) => setAgentSpecialization(event.target.value)} placeholder="e.g. Graphics Engineer, Security Reviewer" className="luma-input mt-1.5 h-10 w-full text-[12px]" /></label>
                 <div className="luma-create-mascot"><div className="luma-create-field-label">Appearance</div><MascotCustomizer value={agentMascot} seed={agentName} onChange={setAgentMascot} /></div>
               </div>
               <div className="luma-create-column luma-create-configuration">
@@ -4315,6 +4321,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                 <label className="luma-create-context"><input type="checkbox" checked={agentUseGlobalContext} onChange={(event) => setAgentUseGlobalContext(event.target.checked)} className="mt-0.5 accent-[var(--luma-accent)]" /><span><strong>Share global context</strong><small>Use the global skills, memory, connectors, etc.</small></span></label>
                 <label className="luma-create-field">Initial memory <span>Optional</span><textarea value={agentInitialMemory} onChange={(event) => setAgentInitialMemory(event.target.value)} rows={3} placeholder="Facts or preferences this teammate should remember…" className="luma-input mt-1.5 w-full resize-y text-[12px]" /></label>
                 <label className="luma-create-field">Workspace <span>Optional</span><input value={agentWorkspace} onChange={(event) => setAgentWorkspace(event.target.value)} placeholder={workspacePath || "Use current workspace"} className="luma-input mt-1.5 h-10 w-full text-[12px]" /></label>
+                <label className="luma-create-field">Parallel tasks <span>1–8</span><input type="number" min={1} max={8} value={agentMaxConcurrentTasks} onChange={(event) => setAgentMaxConcurrentTasks(Math.max(1, Math.min(8, Number(event.target.value) || 1)))} className="luma-input mt-1.5 h-10 w-full text-[12px]" /></label>
                 <div className="luma-create-security"><span aria-hidden="true">⌁</span><p><strong>Personal-agent ready.</strong> Web search and public webpages are available. External requests that can change data and workspace mutations require approval.</p></div>
               </div>
             </div>

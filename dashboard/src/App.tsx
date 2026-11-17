@@ -153,12 +153,16 @@ function TeammatesPanel({ initialAgentId, initialTab = "chat" }: { initialAgentI
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [specialization, setSpecialization] = useState("");
   const [personality, setPersonality] = useState("");
   const [initialMemory, setInitialMemory] = useState("");
   const [agentWorkspace, setAgentWorkspace] = useState("");
+  const [maxConcurrentTasks, setMaxConcurrentTasks] = useState(1);
   const [agentMascot, setAgentMascot] = useState("auto");
   const [agentUseGlobalContext, setAgentUseGlobalContext] = useState(true);
   const [editPersonality, setEditPersonality] = useState("");
+  const [editSpecialization, setEditSpecialization] = useState("");
+  const [editMaxConcurrentTasks, setEditMaxConcurrentTasks] = useState(1);
   const [editSkills, setEditSkills] = useState("");
   const [editMascot, setEditMascot] = useState("auto");
   const [prompt, setPrompt] = useState("");
@@ -214,6 +218,8 @@ function TeammatesPanel({ initialAgentId, initialTab = "chat" }: { initialAgentI
     const currentAgent = agents.find((agent) => agent.id === selected);
     if (currentAgent) {
       setEditPersonality(currentAgent.configuration.system_prompt);
+      setEditSpecialization(currentAgent.configuration.specialization ?? "");
+      setEditMaxConcurrentTasks(currentAgent.configuration.max_concurrent_tasks);
       setEditSkills(currentAgent.configuration.skills.join(", "));
       setEditMascot(currentAgent.configuration.mascot || "auto");
     }
@@ -281,7 +287,7 @@ function TeammatesPanel({ initialAgentId, initialTab = "chat" }: { initialAgentI
             {chatAttachments.length > 0 && <div className="chat-attachment-list">{chatAttachments.map((attachment, index) => <span className="chat-attachment-chip" key={`${attachment.name}-${index}`}><span>{attachment.name}</span><button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => setChatAttachments((items) => items.filter((_, itemIndex) => itemIndex !== index))}>×</button></span>)}</div>}
             <div className="teammates-chat-input-row"><button type="button" className="chat-attach-button" aria-label="Attach files" title="Attach text files" disabled={busy || activeAgent.status === "stopped" || activeAgent.status === "paused"} onClick={() => chatFileInput.current?.click()}>+</button><textarea value={chatPrompt} onChange={(event) => setChatPrompt(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder={`Message ${activeAgent.name}…`} rows={2} /></div>
             <div><span>Enter to send · Shift + Enter for a new line</span><button type="submit" disabled={busy || (!chatPrompt.trim() && chatAttachments.length === 0) || activeAgent.status === "stopped" || activeAgent.status === "paused"}>{busy ? "Sending…" : "Send"}</button></div></form></div> : <>
-          <section className="teammates-personality"><div className="teammates-section-title">IDENTITY & PERSONALITY</div><MascotCustomizer value={editMascot} seed={activeAgent.name} onChange={setEditMascot} /><label>Instructions<textarea value={editPersonality} onChange={(event) => setEditPersonality(event.target.value)} rows={4} /></label>{!activeAgent.configuration.use_global_context && <label>Attached skills<input value={editSkills} onChange={(event) => setEditSkills(event.target.value)} placeholder="research, code-review" /></label>}{activeAgent.id !== "agent_global" && <label className="teammates-global-check"><input type="checkbox" checked={activeAgent.configuration.use_global_context} onChange={(event) => { setEditSkills(""); void perform(`/api/agents/${activeAgent.id}`, { configuration: { ...activeAgent.configuration, use_global_context: event.target.checked, ...(event.target.checked ? { skills: [] } : {}) } }, "PUT"); }} /><span>Use the global skills, memory, connectors, etc.</span></label>}<button type="button" disabled={busy} onClick={() => void perform(`/api/agents/${activeAgent.id}`, { configuration: { ...activeAgent.configuration, mascot: editMascot, system_prompt: editPersonality, skills: activeAgent.configuration.use_global_context ? [] : [...new Set(editSkills.split(",").map((skill) => skill.trim()).filter(Boolean))] } }, "PUT")}>Save changes</button></section>
+          <section className="teammates-personality"><div className="teammates-section-title">IDENTITY & PERSONALITY</div><MascotCustomizer value={editMascot} seed={activeAgent.name} onChange={setEditMascot} /><label>Specialization<input value={editSpecialization} onChange={(event) => setEditSpecialization(event.target.value)} placeholder="Graphics Engineer, Security Reviewer" /></label><label>Parallel tasks<input type="number" min={1} max={8} value={editMaxConcurrentTasks} onChange={(event) => setEditMaxConcurrentTasks(Math.max(1, Math.min(8, Number(event.target.value) || 1)))} /></label><label>Instructions<textarea value={editPersonality} onChange={(event) => setEditPersonality(event.target.value)} rows={4} /></label>{!activeAgent.configuration.use_global_context && <label>Attached skills<input value={editSkills} onChange={(event) => setEditSkills(event.target.value)} placeholder="research, code-review" /></label>}{activeAgent.id !== "agent_global" && <label className="teammates-global-check"><input type="checkbox" checked={activeAgent.configuration.use_global_context} onChange={(event) => { setEditSkills(""); void perform(`/api/agents/${activeAgent.id}`, { configuration: { ...activeAgent.configuration, use_global_context: event.target.checked, ...(event.target.checked ? { skills: [] } : {}) } }, "PUT"); }} /><span>Use the global skills, memory, connectors, etc.</span></label>}<button type="button" disabled={busy} onClick={() => void perform(`/api/agents/${activeAgent.id}`, { configuration: { ...activeAgent.configuration, specialization: editSpecialization.trim() || null, max_concurrent_tasks: editMaxConcurrentTasks, mascot: editMascot, system_prompt: editPersonality, skills: activeAgent.configuration.use_global_context ? [] : [...new Set(editSkills.split(",").map((skill) => skill.trim()).filter(Boolean))] } }, "PUT")}>Save changes</button></section>
           <section className="teammates-agent-actions"><button type="button" disabled={busy || activeAgent.status === "stopped" || activeAgent.status === "active" || activeAgent.status === "waiting"} onClick={() => void perform(`/api/agents/${activeAgent.id}/status`, { status: "paused" })}>Pause</button><button type="button" disabled={busy} onClick={() => void perform(`/api/agents/${activeAgent.id}/status`, { status: "idle" })}>Resume</button><button type="button" disabled={busy} onClick={() => { if (window.confirm(`Stop ${activeAgent.name}?`)) void perform(`/api/agents/${activeAgent.id}/status`, { status: "stopped" }); }}>Stop</button></section>
           <section><div className="teammates-section-title">ACTIVITY</div>{runtimeEvents.length === 0 ? <p className="teammates-empty-inline">No recent activity.</p> : <div className="teammates-activity">{runtimeEvents.slice(-8).reverse().map((event) => <div key={event.event_id}><span>{event.event_type.replaceAll(".", " · ")}</span><time>{new Date(event.created_at * 1000).toLocaleTimeString()}</time></div>)}</div>}</section>
           <section><div className="teammates-section-title">APPROVALS</div>{approvals.filter((approval) => approval.agent_id === activeAgent.id).length === 0 ? <p className="teammates-empty-inline">No pending approvals.</p> : approvals.filter((approval) => approval.agent_id === activeAgent.id).map((approval) => <div className="teammate-approval" key={approval.id}><strong>{approval.tool}</strong><pre>{approval.arguments}</pre><div><button type="button" disabled={busy} onClick={() => void perform(`/api/approvals/${approval.id}`, { allowed: false })}>Deny</button><button type="button" disabled={busy} onClick={() => void perform(`/api/approvals/${approval.id}`, { allowed: true })}>Approve</button></div></div>)}</section>
@@ -293,14 +299,14 @@ function TeammatesPanel({ initialAgentId, initialTab = "chat" }: { initialAgentI
       {createOpen && <div className="teammates-create-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setCreateOpen(false); }}><form className="teammates-create-dialog" role="dialog" aria-modal="true" aria-labelledby="create-teammate-heading" onSubmit={(event) => { event.preventDefault(); void (async () => {
         const workspace = agentWorkspace.trim() || undefined;
         const configuration: AgentConfiguration = {
-          system_prompt: personality.trim(), skills: [], mascot: agentMascot, use_global_context: agentUseGlobalContext,
+          system_prompt: personality.trim(), specialization: specialization.trim() || null, skills: [], mascot: agentMascot, use_global_context: agentUseGlobalContext,
           provider: null, model: null, endpoint: null, workspace: workspace ?? null, allowed_workspaces: workspace ? [workspace] : [], enabled_tools: [],
           permissions: { allowed_tools: ["read_file", "list_directory", "search_files", "git_status", "git_diff", "find_symbols", "find_references", "git_log", "git_show", "git_blame", "git_branches", "file_metadata", "find_todos", "count_lines", "inspect_project", "list_skills", "load_skill"], denied_tools: [], auto_approve_read_only: true, require_approval_for_mutations: true, allow_network: false },
-          max_concurrent_tasks: 1, recover_interrupted_tasks: false,
+          max_concurrent_tasks: maxConcurrentTasks, recover_interrupted_tasks: false,
         };
         const created = await perform("/api/agents", { name: name.trim(), description: description.trim() || null, kind: "teammates", configuration }) as AgentRecord | undefined;
         if (created?.id) {
-          setSelected(created.id); setCreateOpen(false); setName(""); setDescription(""); setPersonality(""); setInitialMemory(""); setAgentWorkspace(""); setAgentMascot("auto"); setAgentUseGlobalContext(true); setActiveTab("chat");
+          setSelected(created.id); setCreateOpen(false); setName(""); setDescription(""); setSpecialization(""); setPersonality(""); setInitialMemory(""); setAgentWorkspace(""); setMaxConcurrentTasks(1); setAgentMascot("auto"); setAgentUseGlobalContext(true); setActiveTab("chat");
           if (initialMemory.trim()) await perform("/api/memory", { scope: "agent", scope_id: created.id, content: initialMemory.trim(), source: "dashboard" });
         }
       })(); }}>
@@ -308,11 +314,13 @@ function TeammatesPanel({ initialAgentId, initialTab = "chat" }: { initialAgentI
         <div className="teammates-create-fields">
           <label>Name<input autoFocus required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Researcher" /></label>
           <label>Description<input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="What should this teammate focus on?" /></label>
+          <label>Specialization<input value={specialization} onChange={(event) => setSpecialization(event.target.value)} placeholder="e.g. Graphics Engineer, Security Reviewer" /></label>
           <div><strong>Design your mascot</strong><MascotCustomizer value={agentMascot} seed={name} onChange={setAgentMascot} /></div>
           <label>Custom personality (optional)<textarea value={personality} onChange={(event) => setPersonality(event.target.value)} rows={5} placeholder="Leave blank to use Luma's default behavior." /></label>
           <label className="teammates-global-check"><input type="checkbox" checked={agentUseGlobalContext} onChange={(event) => setAgentUseGlobalContext(event.target.checked)} /><span>Use the global skills, memory, connectors, etc.</span></label>
           <label>Initial memory<textarea value={initialMemory} onChange={(event) => setInitialMemory(event.target.value)} rows={2} placeholder="Facts or preferences to remember…" /></label>
           <label>Workspace<input value={agentWorkspace} onChange={(event) => setAgentWorkspace(event.target.value)} placeholder="Current dashboard workspace" /></label>
+          <label>Parallel tasks<input type="number" min={1} max={8} value={maxConcurrentTasks} onChange={(event) => setMaxConcurrentTasks(Math.max(1, Math.min(8, Number(event.target.value) || 1)))} /></label>
           <p>Network access starts disabled. Mutating tools require approval. Selected skills are validated and loaded when tasks start.</p>
         </div>
         <footer><button type="button" onClick={() => setCreateOpen(false)}>Cancel</button><button type="submit" disabled={busy || !name.trim()}>{busy ? "Creating…" : "Create teammate"}</button></footer>

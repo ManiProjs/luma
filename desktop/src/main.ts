@@ -1125,7 +1125,7 @@ app.whenReady().then(async () => {
 
   handleIpc("luma:create-agent", async (_event, input: { name: string; description?: string | null; kind: AgentKind; configuration?: AgentConfiguration }) => {
     const configuration = input.configuration ?? {
-      system_prompt: "", mascot: "auto", use_global_context: true, provider: null, model: null, endpoint: null, workspace: workspaceRoot,
+      system_prompt: "", specialization: null, mascot: "auto", use_global_context: true, provider: null, model: null, endpoint: null, workspace: workspaceRoot,
       skills: [],
       allowed_workspaces: [workspaceRoot], enabled_tools: [],
       permissions: { allowed_tools: ["read_file", "list_directory", "search_files", "git_status", "git_diff", "find_symbols", "find_references", "git_log", "git_show", "git_blame", "git_branches", "file_metadata", "find_todos", "count_lines", "inspect_project", "list_skills", "load_skill"], denied_tools: [], auto_approve_read_only: true, require_approval_for_mutations: true, allow_network: false },

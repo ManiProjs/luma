@@ -7,6 +7,7 @@ pub mod developer;
 pub mod filesystem;
 pub mod git;
 pub mod memory;
+pub mod observability;
 pub mod shell;
 pub mod skills;
 pub mod titlebar;
@@ -33,7 +34,7 @@ impl Tool for AskQuestion {
 /// Keep registration in one place so Code and Teammates cannot silently gain
 /// different capabilities.
 pub fn default_registry() -> ToolRegistry {
-    use code_intelligence::{FindReferences, FindSymbols};
+    use code_intelligence::{AnalyzeCodebase, FindReferences, FindSymbols};
     use developer::{
         CountLines, FileMetadata, FindTodos, GitBlame, GitBranches, GitLog, GitShow, InspectProject,
     };
@@ -42,8 +43,9 @@ pub fn default_registry() -> ToolRegistry {
         search_files::SearchFiles, write_file::WriteFile,
     };
     use git::{GitDiff, GitStatus};
+    use observability::ExecutionMetrics;
     use shell::RunCommand;
-    use skills::{ListSkills, LoadSkill};
+    use skills::{ListSkills, LoadSkill, ProposeSkill};
     use titlebar::SetTitlebarStatus;
 
     let mut tools = ToolRegistry::new();
@@ -55,8 +57,9 @@ pub fn default_registry() -> ToolRegistry {
     tools.register(PatchFile);
     tools.register(GitStatus);
     tools.register(GitDiff);
-    tools.register(FindSymbols);
-    tools.register(FindReferences);
+    tools.register(FindSymbols::default());
+    tools.register(FindReferences::default());
+    tools.register(AnalyzeCodebase::default());
     tools.register(GitLog);
     tools.register(GitShow);
     tools.register(GitBlame);
@@ -67,6 +70,8 @@ pub fn default_registry() -> ToolRegistry {
     tools.register(InspectProject);
     tools.register(ListSkills);
     tools.register(LoadSkill);
+    tools.register(ProposeSkill);
+    tools.register(ExecutionMetrics::default());
     tools.register(SetTitlebarStatus);
     tools.register(AskQuestion);
     tools
@@ -266,12 +271,14 @@ mod tests {
             "git_status",
             "list_skills",
             "load_skill",
+            "execution_metrics",
         ] {
             assert!(tools.is_read_only(name), "{name} should be read-only");
         }
-        for name in ["write_file", "patch_file", "run_command"] {
+        for name in ["write_file", "patch_file", "run_command", "propose_skill"] {
             assert!(!tools.is_read_only(name), "{name} must remain mutating");
         }
+        assert!(tools.names().iter().any(|name| name == "propose_skill"));
     }
 
     #[test]

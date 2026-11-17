@@ -7,7 +7,7 @@
 
 // Runtime operations are additive to the v3 JSONL contract. New features are
 // discovered with runtime_capabilities rather than breaking existing clients.
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 3;
 
 export type ProviderProtocol = "OpenAiCompatible" | "Anthropic" | "Gemini";
 export type ProviderCategory = "Local" | "Cloud" | "Custom";
@@ -125,6 +125,7 @@ export type PermissionProfile = {
 
 export type AgentConfiguration = {
   system_prompt: string;
+  specialization: string | null;
   mascot: string;
   use_global_context: boolean;
   skills: string[];
@@ -545,7 +546,8 @@ function isAgentRecord(value: unknown): value is AgentRecord {
   return isString(value.id) && isString(value.name) && isNullableString(value.description)
     && ["code", "teammates"].includes(String(value.kind))
     && ["created", "idle", "active", "waiting", "paused", "recovering", "stopped", "error"].includes(String(value.status))
-    && isString(config.system_prompt) && isString(config.mascot) && typeof config.use_global_context === "boolean"
+    && isString(config.system_prompt) && isNullableString(config.specialization)
+    && isString(config.mascot) && typeof config.use_global_context === "boolean"
     && isNullableString(config.provider) && isNullableString(config.model)
     && isNullableString(config.endpoint) && isNullableString(config.workspace)
     && Array.isArray(config.skills) && config.skills.every(isString)

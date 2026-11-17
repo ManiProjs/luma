@@ -43,6 +43,18 @@ SQLite runtime database. It runs queued or scheduled teammate work when a UI
 client is closed and starts again when Luma is next opened after a restart.
 On Unix, its IPC endpoint is local and does not expose a network listener.
 
+Independent workspaces execute concurrently (up to eight workers globally),
+with per-Teammate concurrency limits and exclusive canonical workspace leases.
+Delegated task dependencies are stored in SQLite and checked before execution;
+cycles are rejected and failed prerequisites stop dependent work. Once every
+child finishes, the runtime atomically queues one continuation for its parent
+conversation with the collected child results.
+
+Teammates can be grouped into persistent Teams with named specialist roles.
+Their specialization is injected into task context, while team membership and
+role changes are stored in the runtime database. Scheduled repository monitors
+reuse the same durable schedule, permission, and approval infrastructure.
+
 ## Workspace memory
 
 Luma can maintain project context in `GALAXY.md`, including project identity,

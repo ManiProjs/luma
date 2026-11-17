@@ -7,9 +7,11 @@
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     sync::mpsc,
+    task::JoinSet,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -129,6 +131,15 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
         .display()
         .to_string();
     if agent_record.kind == crate::runtime::AgentKind::Teammates {
+        registry.register(tools::code_intelligence::FindSymbols::scoped(
+            std::path::PathBuf::from(&workspace_id),
+        ));
+        registry.register(tools::code_intelligence::FindReferences::scoped(
+            std::path::PathBuf::from(&workspace_id),
+        ));
+        registry.register(tools::code_intelligence::AnalyzeCodebase::scoped(
+            std::path::PathBuf::from(&workspace_id),
+        ));
         registry.register(tools::memory::SaveMemory::new(
             store.clone(),
             agent_record.id.clone(),
@@ -153,6 +164,11 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
         for name in registry.names().into_iter().chain(
             [
                 "list_teammates",
+                "create_team",
+                "list_teams",
+                "add_team_member",
+                "add_task_dependency",
+                "create_monitor",
                 "delegate_task",
                 "get_delegated_task",
                 "list_delegated_tasks",
@@ -168,6 +184,11 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
                         | "recall_memory"
                         | "save_memory"
                         | "list_teammates"
+                        | "create_team"
+                        | "list_teams"
+                        | "add_team_member"
+                        | "add_task_dependency"
+                        | "create_monitor"
                         | "delegate_task"
                         | "get_delegated_task"
                         | "list_delegated_tasks"
@@ -181,6 +202,19 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     }
     if agent_record.kind == crate::runtime::AgentKind::Teammates {
         registry.register(tools::delegation::ListTeammates::new(store.clone()));
+        registry.register(tools::delegation::CreateTeam::new(store.clone()));
+        registry.register(tools::delegation::ListTeams::new(store.clone()));
+        registry.register(tools::delegation::AddTeamMember::new(store.clone()));
+        registry.register(tools::delegation::AddTaskDependency::new(
+            store.clone(),
+            task.id.clone(),
+            agent_record.id.clone(),
+            task.conversation_id.clone(),
+        ));
+        registry.register(tools::delegation::CreateMonitor::new(
+            store.clone(),
+            agent_record.id.clone(),
+        ));
         registry.register(tools::delegation::DelegateTask::new(
             store.clone(),
             task.id.clone(),
@@ -208,6 +242,11 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
         let mut retained = enabled_tools.to_vec();
         retained.extend([
             "list_teammates".to_owned(),
+            "create_team".to_owned(),
+            "list_teams".to_owned(),
+            "add_team_member".to_owned(),
+            "add_task_dependency".to_owned(),
+            "create_monitor".to_owned(),
             "delegate_task".to_owned(),
             "get_delegated_task".to_owned(),
             "list_delegated_tasks".to_owned(),
@@ -261,6 +300,37 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     if !agent_record.configuration.system_prompt.trim().is_empty() {
         agent.add_system_context(agent_record.configuration.system_prompt.clone());
     }
+    if let Some(specialization) = agent_record
+        .configuration
+        .specialization
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        agent.add_system_context(format!(
+            "# Teammate specialization\n\nYour assigned role is **{specialization}**. Apply the methods and review standards of this specialty while respecting the task scope and your existing permissions."
+        ));
+    }
+    if agent_record.kind == crate::runtime::AgentKind::Teammates {
+        let affiliations = store.teams_for_agent(&agent_record.id)?;
+        if !affiliations.is_empty() {
+            let roles = affiliations
+                .iter()
+                .map(|(team, role)| {
+                    format!(
+                        "- {} — {} ({})",
+                        team.name,
+                        role,
+                        team.description.as_deref().unwrap_or("No team description")
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            agent.add_system_context(format!(
+                "# Team memberships\n\nYou are a member of these persistent Teams. Coordinate work toward their shared purposes and honor your assigned role in each group:\n{roles}"
+            ));
+        }
+    }
     if agent_record.kind == crate::runtime::AgentKind::Teammates {
         agent.add_system_context(
             "# Long-term memory\n\n\
@@ -276,13 +346,14 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
         );
         agent.add_system_context(
             "# Teammate collaboration\n\n\
-             You can discover other Teammates with list_teammates and hand off independent,\n\
-             well-scoped subtasks with delegate_task. Include the necessary context and a clear\n\
-             deliverable; never delegate secrets or work that requires broader permissions.\n\
-             Delegation is asynchronous: finish your current task after queuing children. In a\n\
-             later turn in this same conversation, use list_delegated_tasks and get_delegated_task\n\
-             to collect their results. Do not claim delegated work is complete until its child\n\
-             task reports a completed status and you have reviewed its response."
+             Discover specialists with list_teammates. Create persistent groups with create_team,\n\
+             add Teammates with add_team_member, and inspect teams with list_teams. Delegate\n\
+             independent subtasks with delegate_task, then use add_task_dependency when one task\n\
+             must wait for another. Include necessary context and clear deliverables; never delegate\n\
+             secrets or work requiring broader permissions. Independent workspaces can execute in\n\
+             parallel, while each checkout is protected by an exclusive workspace lease. When all\n\
+             children finish, Luma automatically queues a continuation with their results. Review\n\
+             those results before claiming delegated work is complete."
                 .to_owned(),
         );
         agent.add_system_context(
@@ -566,9 +637,10 @@ async fn write_worker_output<W: AsyncWriteExt + Unpin>(
     Ok(())
 }
 
-/// Single-host task supervisor. Work is deliberately serialized at first:
-/// this avoids concurrent edits to the same checkout until workspace leases
-/// and isolated worktrees are implemented.
+/// Single-host task supervisor. Independent workspaces can run concurrently;
+/// a canonical workspace lease prevents two workers from editing one checkout
+/// at the same time. Each Teammate also controls its own concurrency ceiling.
+#[derive(Clone)]
 pub struct RuntimeSupervisor {
     store: RuntimeStore,
 }
@@ -578,53 +650,139 @@ impl RuntimeSupervisor {
         Self { store }
     }
 
-    pub async fn run(mut self, shutdown: CancellationToken) {
+    pub async fn run(self, shutdown: CancellationToken) {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        let mut workers: JoinSet<(String, String, String, Result<()>)> = JoinSet::new();
+        let mut active_workspaces = HashSet::new();
+        let mut active_agents: HashMap<String, usize> = HashMap::new();
         loop {
             tokio::select! {
                 _ = shutdown.cancelled() => break,
+                completed = workers.join_next(), if !workers.is_empty() => {
+                    if let Some(completed) = completed {
+                        match completed {
+                            Ok((task_id, agent_id, workspace, result)) => {
+                                active_workspaces.remove(&workspace);
+                                if let Some(count) = active_agents.get_mut(&agent_id) {
+                                    *count = count.saturating_sub(1);
+                                    if *count == 0 {
+                                        active_agents.remove(&agent_id);
+                                        if let Ok(Some(agent)) = self.store.get_agent(&agent_id)
+                                            && matches!(agent.status, AgentStatus::Active | AgentStatus::Waiting | AgentStatus::Recovering) {
+                                                let _ = self.store.set_agent_status(&agent_id, AgentStatus::Idle);
+                                            }
+                                    } else if let Ok(Some(agent)) = self.store.get_agent(&agent_id)
+                                        && agent.status == AgentStatus::Waiting {
+                                            let _ = self.store.set_agent_status(&agent_id, AgentStatus::Active);
+                                    }
+                                }
+                                if let Err(error) = result {
+                                    tracing::error!(task_id = %task_id, %error, "background task failed");
+                                    if let Ok(Some(current)) = self.store.get_task(&task_id)
+                                        && matches!(current.status, TaskStatus::Queued | TaskStatus::Running | TaskStatus::WaitingForApproval | TaskStatus::WaitingForInput) {
+                                            let _ = self.store.transition_task(&task_id, TaskStatus::Failed, Some(error.to_string()), None);
+                                        }
+                                }
+                                if let Err(error) = self.resume_after_terminal(&task_id) {
+                                    tracing::warn!(task_id = %task_id, %error, "failed to resume Teammate after delegated work");
+                                }
+                            }
+                            Err(error) => tracing::error!(%error, "task supervisor worker panicked"),
+                        }
+                    }
+                }
                 _ = interval.tick() => {
                     if let Err(error) = self.enqueue_due_schedules() {
                         tracing::error!(%error, "failed to enqueue due schedules");
                     }
-                    let queued = match self.store.list_tasks(None, 500) {
-                        Ok(tasks) => {
-                            let mut eligible = None;
-                            for task in tasks.into_iter().filter(|task| task.status == TaskStatus::Queued) {
-                                match self.store.get_agent(&task.agent_id) {
-                                    Ok(Some(agent)) if agent.status == AgentStatus::Stopped => {
-                                        if let Err(error) = self.store.transition_task(
-                                            &task.id,
-                                            TaskStatus::Cancelled,
-                                            None,
-                                            None,
-                                        ) {
-                                            tracing::warn!(task_id = %task.id, %error, "failed to cancel queued work for a stopped teammate");
-                                        }
-                                    }
-                                    Ok(Some(agent)) if agent.status != AgentStatus::Paused => {
-                                        eligible = Some(task);
-                                        break;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            eligible
-                        }
-                        Err(error) => { tracing::error!(%error, "failed to inspect queued tasks"); None }
+                    if workers.len() >= 8 {
+                        continue;
+                    }
+                    let mut queued = match self.store.list_tasks(None, 500) {
+                        Ok(tasks) => tasks.into_iter().filter(|task| task.status == TaskStatus::Queued).collect::<Vec<_>>(),
+                        Err(error) => { tracing::error!(%error, "failed to inspect queued tasks"); Vec::new() }
                     };
-                    if let Some(task) = queued
-                        && let Err(error) = self.run_one(&task.id, &shutdown).await {
-                            tracing::error!(task_id = %task.id, %error, "background task failed");
-                            if let Ok(Some(current)) = self.store.get_task(&task.id)
-                                && matches!(current.status, TaskStatus::Queued | TaskStatus::Running | TaskStatus::WaitingForApproval | TaskStatus::WaitingForInput) {
-                                    let _ = self.store.transition_task(&task.id, TaskStatus::Failed, Some(error.to_string()), None);
-                                }
-                            if let Ok(Some(agent)) = self.store.get_agent(&task.agent_id)
-                                && matches!(agent.status, AgentStatus::Active | AgentStatus::Waiting | AgentStatus::Recovering) {
-                                    let _ = self.store.set_agent_status(&agent.id, AgentStatus::Idle);
-                                }
+                    queued.sort_by_key(|task| task.created_at);
+                    for task in queued {
+                        if workers.len() >= 8 { break; }
+                        let Ok(Some(agent)) = self.store.get_agent(&task.agent_id) else { continue; };
+                        if agent.status == AgentStatus::Stopped {
+                            if let Err(error) = self.store.transition_task(&task.id, TaskStatus::Cancelled, None, None) {
+                                tracing::warn!(task_id = %task.id, %error, "failed to cancel queued work for a stopped teammate");
+                            } else if let Err(error) = self.resume_after_terminal(&task.id) {
+                                tracing::warn!(task_id = %task.id, %error, "failed to resume parent after cancelling stopped Teammate work");
+                            }
+                            continue;
                         }
+                        if agent.status == AgentStatus::Paused { continue; }
+                        match self.store.task_dependencies_ready(&task.id) {
+                            Ok((true, _)) => {}
+                            Ok((false, Some(reason))) => {
+                                if let Err(error) = self.store.transition_task(&task.id, TaskStatus::Failed, Some(reason), None) {
+                                    tracing::warn!(task_id = %task.id, %error, "failed to stop task with an unsuccessful dependency");
+                                } else if let Err(error) = self.resume_after_terminal(&task.id) {
+                                    tracing::warn!(task_id = %task.id, %error, "failed to resume parent after dependency failure");
+                                }
+                                continue;
+                            }
+                            Ok((false, None)) => continue,
+                            Err(error) => {
+                                tracing::warn!(task_id = %task.id, %error, "could not inspect task dependencies");
+                                continue;
+                            }
+                        }
+                        let agent_limit = agent.configuration.max_concurrent_tasks.clamp(1, 8);
+                        if active_agents.get(&agent.id).copied().unwrap_or(0) >= agent_limit { continue; }
+                        let workspace_path = task.workspace.as_deref()
+                            .or(agent.configuration.workspace.as_deref())
+                            .map(PathBuf::from)
+                            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+                        let workspace = workspace_path.canonicalize().unwrap_or(workspace_path).to_string_lossy().into_owned();
+                        if active_workspaces.contains(&workspace) { continue; }
+                        active_workspaces.insert(workspace.clone());
+                        *active_agents.entry(agent.id.clone()).or_default() += 1;
+                        let supervisor = self.clone();
+                        let task_id = task.id.clone();
+                        let agent_id = agent.id.clone();
+                        let worker_workspace = workspace.clone();
+                        let worker_shutdown = shutdown.clone();
+                        workers.spawn(async move {
+                            let result = supervisor.run_one(&task_id, &worker_shutdown).await;
+                            (task_id, agent_id, worker_workspace, result)
+                        });
+                        }
+                }
+            }
+        }
+        while let Some(completed) = workers.join_next().await {
+            match completed {
+                Ok((task_id, _, _, result)) => {
+                    if let Err(error) = result {
+                        tracing::warn!(task_id = %task_id, %error, "task stopped during gateway shutdown");
+                        if let Ok(Some(current)) = self.store.get_task(&task_id)
+                            && matches!(
+                                current.status,
+                                TaskStatus::Queued
+                                    | TaskStatus::Running
+                                    | TaskStatus::WaitingForApproval
+                                    | TaskStatus::WaitingForInput
+                            )
+                            && let Err(transition_error) = self.store.transition_task(
+                                &task_id,
+                                TaskStatus::Failed,
+                                Some(error.to_string()),
+                                None,
+                            )
+                        {
+                            tracing::warn!(task_id = %task_id, %transition_error, "failed to persist task failure during shutdown");
+                        }
+                    }
+                    if let Err(error) = self.resume_after_terminal(&task_id) {
+                        tracing::warn!(task_id = %task_id, %error, "failed to resume parent after task shutdown");
+                    }
+                }
+                Err(error) => {
+                    tracing::error!(%error, "task supervisor worker panicked during shutdown")
                 }
             }
         }
@@ -639,7 +797,18 @@ impl RuntimeSupervisor {
         Ok(())
     }
 
-    async fn run_one(&mut self, task_id: &str, shutdown: &CancellationToken) -> Result<()> {
+    fn resume_after_terminal(&self, task_id: &str) -> Result<()> {
+        let Some(task) = self.store.get_task(task_id)? else {
+            return Ok(());
+        };
+        self.store.resume_parent_after_children(task_id)?;
+        if let Some(parent_task_id) = task.parent_task_id.as_deref() {
+            self.store.resume_parent_after_children(parent_task_id)?;
+        }
+        Ok(())
+    }
+
+    async fn run_one(&self, task_id: &str, shutdown: &CancellationToken) -> Result<()> {
         let task = self
             .store
             .get_task(task_id)?
@@ -810,14 +979,6 @@ impl RuntimeSupervisor {
         let _ = self
             .store
             .transition_task(task_id, terminal_status, failure, None);
-        if let Ok(Some(current_agent)) = self.store.get_agent(&agent.id)
-            && matches!(
-                current_agent.status,
-                AgentStatus::Active | AgentStatus::Waiting | AgentStatus::Recovering
-            )
-        {
-            let _ = self.store.set_agent_status(&agent.id, AgentStatus::Idle);
-        }
         Ok(())
     }
 }

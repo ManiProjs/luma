@@ -310,6 +310,7 @@ async function summaryAdd(id: string, summary: string[]) {
 
 const defaultAgentConfiguration = (): AgentConfiguration => ({
   system_prompt: "",
+  specialization: null,
   mascot: "auto",
   use_global_context: true,
   skills: [],

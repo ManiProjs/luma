@@ -30,15 +30,67 @@ pub struct ListDelegatedTasks {
     conversation_id: String,
 }
 
+pub struct CreateTeam {
+    store: RuntimeStore,
+}
+
+pub struct ListTeams {
+    store: RuntimeStore,
+}
+
+pub struct AddTeamMember {
+    store: RuntimeStore,
+}
+
+pub struct AddTaskDependency {
+    store: RuntimeStore,
+    parent_task_id: String,
+    parent_agent_id: String,
+    conversation_id: String,
+}
+
+pub struct CreateMonitor {
+    store: RuntimeStore,
+    agent_id: String,
+}
+
 #[derive(Deserialize)]
 struct DelegateInput {
     agent_id: String,
     task: String,
+    #[serde(default)]
+    workspace: Option<String>,
 }
 
 #[derive(Deserialize)]
 struct ChildInput {
     task_id: String,
+}
+
+#[derive(Deserialize)]
+struct CreateTeamInput {
+    name: String,
+    description: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AddTeamMemberInput {
+    team_id: String,
+    agent_id: String,
+    role: String,
+}
+
+#[derive(Deserialize)]
+struct AddTaskDependencyInput {
+    task_id: String,
+    depends_on_task_id: String,
+}
+
+#[derive(Deserialize)]
+struct CreateMonitorInput {
+    monitor_type: String,
+    interval_seconds: u64,
+    scope: Option<String>,
 }
 
 impl ListTeammates {
@@ -91,6 +143,214 @@ impl ListDelegatedTasks {
     }
 }
 
+impl CreateTeam {
+    pub fn new(store: RuntimeStore) -> Self {
+        Self { store }
+    }
+}
+
+impl ListTeams {
+    pub fn new(store: RuntimeStore) -> Self {
+        Self { store }
+    }
+}
+
+impl AddTeamMember {
+    pub fn new(store: RuntimeStore) -> Self {
+        Self { store }
+    }
+}
+
+impl AddTaskDependency {
+    pub fn new(
+        store: RuntimeStore,
+        parent_task_id: impl Into<String>,
+        parent_agent_id: impl Into<String>,
+        conversation_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            store,
+            parent_task_id: parent_task_id.into(),
+            parent_agent_id: parent_agent_id.into(),
+            conversation_id: conversation_id.into(),
+        }
+    }
+}
+
+impl CreateMonitor {
+    pub fn new(store: RuntimeStore, agent_id: impl Into<String>) -> Self {
+        Self {
+            store,
+            agent_id: agent_id.into(),
+        }
+    }
+}
+
+impl Tool for CreateTeam {
+    fn name(&self) -> &str {
+        "create_team"
+    }
+
+    fn description(&self) -> &str {
+        "Create a persistent Team of Teammates. Teams have a shared purpose and named specialist roles. Input JSON: {\"name\":\"Game Engine Development\",\"description\":\"Build and review the engine\"}."
+    }
+
+    fn execute(&self, input: &str) -> Result<String> {
+        let input: CreateTeamInput =
+            serde_json::from_str(input).context("create_team: invalid JSON input")?;
+        Ok(serde_json::to_string_pretty(
+            &self.store.create_team(&input.name, input.description)?,
+        )?)
+    }
+}
+
+impl Tool for ListTeams {
+    fn name(&self) -> &str {
+        "list_teams"
+    }
+
+    fn description(&self) -> &str {
+        "List persistent Teams and their Teammate members, including each member's assigned role. Input JSON: {}."
+    }
+
+    fn execute(&self, _input: &str) -> Result<String> {
+        let teams = self.store.list_teams()?;
+        let mut result = Vec::with_capacity(teams.len());
+        for team in teams {
+            let members = self.store.list_team_members(&team.id)?;
+            let members = members
+                .into_iter()
+                .map(|member| {
+                    let agent = self.store.get_agent(&member.agent_id).ok().flatten();
+                    serde_json::json!({
+                        "agent_id": member.agent_id,
+                        "name": agent.map(|agent| agent.name),
+                        "role": member.role,
+                    })
+                })
+                .collect::<Vec<_>>();
+            result.push(serde_json::json!({
+                "id": team.id,
+                "name": team.name,
+                "description": team.description,
+                "members": members,
+            }));
+        }
+        Ok(serde_json::to_string_pretty(&result)?)
+    }
+}
+
+impl Tool for AddTeamMember {
+    fn name(&self) -> &str {
+        "add_team_member"
+    }
+
+    fn description(&self) -> &str {
+        "Add a Teammate to a Team or update its role. Input JSON: {\"team_id\":\"team ID\",\"agent_id\":\"teammate ID\",\"role\":\"Graphics Engineer\"}. Use list_teammates to discover IDs."
+    }
+
+    fn execute(&self, input: &str) -> Result<String> {
+        let input: AddTeamMemberInput =
+            serde_json::from_str(input).context("add_team_member: invalid JSON input")?;
+        Ok(serde_json::to_string_pretty(&self.store.add_team_member(
+            &input.team_id,
+            &input.agent_id,
+            &input.role,
+        )?)?)
+    }
+}
+
+impl Tool for AddTaskDependency {
+    fn name(&self) -> &str {
+        "add_task_dependency"
+    }
+
+    fn description(&self) -> &str {
+        "Make one delegated task wait for another task in this conversation. The dependent task starts only after its prerequisite succeeds. Input JSON: {\"task_id\":\"dependent task ID\",\"depends_on_task_id\":\"prerequisite task ID\"}. Cycles are rejected."
+    }
+
+    fn execute(&self, input: &str) -> Result<String> {
+        let input: AddTaskDependencyInput =
+            serde_json::from_str(input).context("add_task_dependency: invalid JSON input")?;
+        let visible = self
+            .store
+            .list_conversation_child_tasks(&self.parent_agent_id, &self.conversation_id)?;
+        let allowed =
+            |id: &str| id == self.parent_task_id || visible.iter().any(|task| task.id == id);
+        if !allowed(&input.task_id) || !allowed(&input.depends_on_task_id) {
+            anyhow::bail!("both tasks must belong to the current Teammate conversation");
+        }
+        self.store
+            .add_task_dependency(&input.task_id, &input.depends_on_task_id)?;
+        Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "task_id": input.task_id,
+            "depends_on_task_id": input.depends_on_task_id,
+            "status": "dependency_added",
+        }))?)
+    }
+}
+
+impl Tool for CreateMonitor {
+    fn name(&self) -> &str {
+        "create_monitor"
+    }
+
+    fn description(&self) -> &str {
+        "Create a recurring background monitor for a repository. Supported monitor_type values: repository_health, ci, dependencies, security. It creates a normal Luma schedule, so permissions and approval rules still apply to every run. Input JSON: {\"monitor_type\":\"repository_health\",\"interval_seconds\":3600,\"scope\":\"current repository\"}."
+    }
+
+    fn execute(&self, input: &str) -> Result<String> {
+        let input: CreateMonitorInput =
+            serde_json::from_str(input).context("create_monitor: invalid JSON input")?;
+        let scope = input
+            .scope
+            .as_deref()
+            .unwrap_or("the configured workspace")
+            .trim();
+        if scope.is_empty() || scope.len() > 1_000 {
+            anyhow::bail!("monitor scope must contain between 1 and 1000 characters");
+        }
+        let (title, instructions) = match input.monitor_type.as_str() {
+            "repository_health" => (
+                "Repository health",
+                "Inspect git status, recent history, TODOs, test/build health, and obvious regressions. Report only actionable changes since the previous run; do not modify files.",
+            ),
+            "ci" => (
+                "CI monitor",
+                "Inspect the repository's available CI configuration and latest CI/check results using configured local tools or connected integrations. Identify failed jobs and likely causes. Do not rerun expensive jobs or modify files without a clear need.",
+            ),
+            "dependencies" => (
+                "Dependency monitor",
+                "Inspect dependency manifests and lockfiles for outdated or deprecated dependencies. Use available package-manager metadata and configured network tools to identify safe updates. Report compatibility risks; never update dependencies automatically.",
+            ),
+            "security" => (
+                "Security monitor",
+                "Review dependency advisories, exposed secrets indicators, unsafe configuration, and security-relevant code changes using available local and approved network tools. Do not print secret values; report file paths and remediation steps.",
+            ),
+            _ => anyhow::bail!(
+                "unsupported monitor_type; choose repository_health, ci, dependencies, or security"
+            ),
+        };
+        let prompt = format!(
+            "Run the {title} monitor for {scope}.\n\n{instructions}\n\nCompare with prior monitor runs in this conversation when available. Save only durable, non-sensitive findings to memory. Summarize new findings, severity, evidence, and recommended next steps."
+        );
+        let schedule = self.store.create_schedule(
+            &self.agent_id,
+            title,
+            &prompt,
+            None,
+            Some(input.interval_seconds),
+        )?;
+        Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "schedule_id": schedule.id,
+            "title": schedule.title,
+            "next_run_at": schedule.next_run_at,
+            "interval_seconds": schedule.every_seconds,
+            "enabled": schedule.enabled,
+        }))?)
+    }
+}
+
 impl Tool for ListTeammates {
     fn name(&self) -> &str {
         "list_teammates"
@@ -111,6 +371,7 @@ impl Tool for ListTeammates {
                     "id": agent.id,
                     "name": agent.name,
                     "description": agent.description,
+                    "specialization": agent.configuration.specialization,
                     "status": agent.status,
                 })
             })
@@ -129,18 +390,19 @@ impl Tool for DelegateTask {
     }
 
     fn description(&self) -> &str {
-        "Delegate an independent subtask to another Teammate. This queues a child task and returns its ID; it does not block the current task. Use list_teammates first, include enough context in the task, and do not delegate secrets or work requiring broader permissions. Input JSON: {\"agent_id\":\"target teammate ID\",\"task\":\"specific independent subtask\"}. Delegation requires the current task to be running and is bounded to depth 3, 3 children per task, and 8 descendants per root task."
+        "Delegate an independent subtask to another Teammate. This queues a child task and returns its ID; it does not block the current task. Use list_teammates first, include enough context in the task, and do not delegate secrets or work requiring broader permissions. Input JSON: {\"agent_id\":\"target teammate ID\",\"task\":\"specific independent subtask\",\"workspace\":\"optional alternate checkout path\"}. Tasks inherit the current workspace by default. Set workspace to a separate checkout for parallel work; both Teammates must have that path in their workspace grants. Delegation requires the current task to be running and is bounded to depth 3, 3 children per task, and 8 descendants per root task."
     }
 
     fn execute(&self, input: &str) -> Result<String> {
         let input: DelegateInput =
             serde_json::from_str(input).context("delegate_task: invalid JSON input")?;
-        let child = self.store.create_child_task(
+        let child = self.store.create_child_task_in_workspace(
             &self.parent_task_id,
             &self.parent_agent_id,
             input.agent_id.trim(),
             &input.task,
             &self.parent_permissions,
+            input.workspace.as_deref(),
         )?;
         Ok(serde_json::to_string_pretty(&serde_json::json!({
             "task_id": child.id,
@@ -198,7 +460,7 @@ impl Tool for ListDelegatedTasks {
     }
 
     fn description(&self) -> &str {
-        "List child tasks delegated during this conversation, including tasks delegated in earlier turns. Use this in a follow-up turn to collect completed work after the parent task has released the serialized gateway. Input JSON: {}."
+        "List child tasks delegated during this conversation, including tasks delegated in earlier turns. Use this to inspect task status and collect results; Luma also automatically resumes the parent after all delegated work finishes. Input JSON: {}."
     }
 
     fn execute(&self, _input: &str) -> Result<String> {
@@ -376,6 +638,13 @@ mod tests {
     #[test]
     fn delegation_enforces_depth_and_direct_child_limits() {
         let store = RuntimeStore::open_in_memory_for_tests();
+        let workspace = tempfile::tempdir().unwrap();
+        let workspace_path = workspace.path().display().to_string();
+        let configuration = crate::runtime::AgentConfiguration {
+            workspace: Some(workspace_path.clone()),
+            allowed_workspaces: vec![workspace_path.clone()],
+            ..crate::runtime::AgentConfiguration::default()
+        };
         let agents = (0..5)
             .map(|index| {
                 store
@@ -383,13 +652,20 @@ mod tests {
                         &format!("Teammate {index}"),
                         None,
                         AgentKind::Teammates,
-                        AgentConfiguration::default(),
+                        configuration.clone(),
                     )
                     .unwrap()
             })
             .collect::<Vec<_>>();
         let root = store
-            .create_task(&agents[0].id, "Root task", None, None, false, None)
+            .create_task(
+                &agents[0].id,
+                "Root task",
+                None,
+                Some(workspace_path),
+                false,
+                None,
+            )
             .unwrap();
         store
             .transition_task(&root.id, TaskStatus::Running, None, None)
@@ -459,6 +735,13 @@ mod tests {
     #[test]
     fn delegation_enforces_eight_descendants_across_the_entire_tree() {
         let store = RuntimeStore::open_in_memory_for_tests();
+        let workspace = tempfile::tempdir().unwrap();
+        let workspace_path = workspace.path().display().to_string();
+        let configuration = AgentConfiguration {
+            workspace: Some(workspace_path.clone()),
+            allowed_workspaces: vec![workspace_path],
+            ..AgentConfiguration::default()
+        };
         let agents = (0..10)
             .map(|index| {
                 store
@@ -466,7 +749,7 @@ mod tests {
                         &format!("Tree teammate {index}"),
                         None,
                         AgentKind::Teammates,
-                        AgentConfiguration::default(),
+                        configuration.clone(),
                     )
                     .unwrap()
             })

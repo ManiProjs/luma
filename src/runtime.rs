@@ -13,7 +13,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 8;
 pub const GLOBAL_AGENT_ID: &str = "agent_global";
 
 fn now() -> i64 {
@@ -212,6 +212,8 @@ impl PermissionProfile {
 #[serde(default)]
 pub struct AgentConfiguration {
     pub system_prompt: String,
+    /// Short role label used to focus this Teammate's default behavior.
+    pub specialization: Option<String>,
     /// Stable mascot choice shared by the desktop, dashboard and Ink clients.
     pub mascot: String,
     /// Opt in to the Global teammate's shared skills, memory and defaults.
@@ -228,9 +230,7 @@ pub struct AgentConfiguration {
     /// default (enabled) while preserving older stored configurations.
     pub network_access: Option<bool>,
     pub permissions: PermissionProfile,
-    /// Current supervisor policy is one active task per core process until
-    /// workspace leases/isolation are available. Keep this explicit so a
-    /// larger configured value is never silently ignored.
+    /// Maximum simultaneous tasks for this Teammate (bounded by the runtime).
     pub max_concurrent_tasks: usize,
     pub recover_interrupted_tasks: bool,
 }
@@ -239,6 +239,7 @@ impl Default for AgentConfiguration {
     fn default() -> Self {
         Self {
             system_prompt: String::new(),
+            specialization: None,
             mascot: "auto".into(),
             use_global_context: true,
             skills: Vec::new(),
@@ -267,6 +268,23 @@ pub struct AgentRecord {
     pub configuration_revision: u64,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamRecord {
+    pub id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TeamMemberRecord {
+    pub team_id: String,
+    pub agent_id: String,
+    pub role: String,
+    pub joined_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -607,6 +625,56 @@ impl RuntimeStore {
                 COMMIT;",
             )?;
         }
+        if version < 6 {
+            db.execute_batch(
+                "BEGIN IMMEDIATE;
+                CREATE TABLE task_resumptions (
+                    parent_task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+                    followup_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                    created_at INTEGER NOT NULL
+                );
+                CREATE INDEX task_resumptions_followup ON task_resumptions(followup_task_id);
+                PRAGMA user_version = 6;
+                COMMIT;",
+            )?;
+        }
+        if version < 7 {
+            db.execute_batch(
+                "BEGIN IMMEDIATE;
+                CREATE TABLE teams (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    description TEXT,
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL
+                );
+                CREATE TABLE team_members (
+                    team_id TEXT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+                    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+                    role TEXT NOT NULL DEFAULT 'member',
+                    joined_at INTEGER NOT NULL,
+                    PRIMARY KEY(team_id, agent_id)
+                );
+                CREATE INDEX team_members_agent ON team_members(agent_id, joined_at);
+                PRAGMA user_version = 7;
+                COMMIT;",
+            )?;
+        }
+        if version < 8 {
+            db.execute_batch(
+                "BEGIN IMMEDIATE;
+                CREATE TABLE task_dependencies (
+                    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                    depends_on_task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY(task_id, depends_on_task_id),
+                    CHECK(task_id <> depends_on_task_id)
+                );
+                CREATE INDEX task_dependencies_parent ON task_dependencies(depends_on_task_id);
+                PRAGMA user_version = 8;
+                COMMIT;",
+            )?;
+        }
         Ok(())
     }
 
@@ -621,11 +689,10 @@ impl RuntimeStore {
         if name.is_empty() || name.len() > 120 {
             bail!("agent name must contain between 1 and 120 characters");
         }
-        if configuration.max_concurrent_tasks != 1 {
-            bail!(
-                "max_concurrent_tasks must be 1; the supervisor serializes tasks until workspace isolation is available"
-            );
+        if !(1..=8).contains(&configuration.max_concurrent_tasks) {
+            bail!("max_concurrent_tasks must be between 1 and 8");
         }
+        validate_specialization(configuration.specialization.as_deref())?;
         if kind == AgentKind::Teammates {
             enable_teammate_network_tools(&mut configuration);
         }
@@ -679,6 +746,129 @@ impl RuntimeStore {
                 created_at: row.get(7)?,
                 updated_at: row.get(8)?,
             })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn create_team(&self, name: &str, description: Option<String>) -> Result<TeamRecord> {
+        let name = name.trim();
+        if name.is_empty() || name.len() > 120 {
+            bail!("team name must contain between 1 and 120 characters");
+        }
+        if description
+            .as_ref()
+            .is_some_and(|value| value.len() > 2_000)
+        {
+            bail!("team description must be at most 2000 characters");
+        }
+        let timestamp = now();
+        let team = TeamRecord {
+            id: new_id("team"),
+            name: name.to_owned(),
+            description,
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+        let db = self.db()?;
+        db.execute(
+            "INSERT INTO teams(id,name,description,created_at,updated_at) VALUES(?1,?2,?3,?4,?4)",
+            params![team.id, team.name, team.description, timestamp],
+        )?;
+        drop(db);
+        self.append_event(None, None, "team.created", serde_json::to_value(&team)?)?;
+        Ok(team)
+    }
+
+    pub fn list_teams(&self) -> Result<Vec<TeamRecord>> {
+        let db = self.db()?;
+        let mut statement = db.prepare(
+            "SELECT id,name,description,created_at,updated_at FROM teams ORDER BY name COLLATE NOCASE",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(TeamRecord {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn add_team_member(
+        &self,
+        team_id: &str,
+        agent_id: &str,
+        role: &str,
+    ) -> Result<TeamMemberRecord> {
+        let role = role.trim();
+        if role.is_empty() || role.len() > 80 {
+            bail!("team member role must contain between 1 and 80 characters");
+        }
+        let agent = self
+            .get_agent(agent_id)?
+            .ok_or_else(|| anyhow!("teammate not found: {agent_id}"))?;
+        if agent.kind != AgentKind::Teammates {
+            bail!("only Teammates can join a team");
+        }
+        let timestamp = now();
+        let member = TeamMemberRecord {
+            team_id: team_id.to_owned(),
+            agent_id: agent_id.to_owned(),
+            role: role.to_owned(),
+            joined_at: timestamp,
+        };
+        let db = self.db()?;
+        db.execute(
+            "INSERT INTO team_members(team_id,agent_id,role,joined_at) VALUES(?1,?2,?3,?4) ON CONFLICT(team_id,agent_id) DO UPDATE SET role=excluded.role",
+            params![team_id, agent_id, role, timestamp],
+        )?;
+        drop(db);
+        self.append_event(
+            Some(agent_id),
+            None,
+            "team.member_added",
+            serde_json::to_value(&member)?,
+        )?;
+        Ok(member)
+    }
+
+    pub fn list_team_members(&self, team_id: &str) -> Result<Vec<TeamMemberRecord>> {
+        let db = self.db()?;
+        let mut statement = db.prepare(
+            "SELECT team_id,agent_id,role,joined_at FROM team_members WHERE team_id=?1 ORDER BY joined_at",
+        )?;
+        let rows = statement.query_map([team_id], |row| {
+            Ok(TeamMemberRecord {
+                team_id: row.get(0)?,
+                agent_id: row.get(1)?,
+                role: row.get(2)?,
+                joined_at: row.get(3)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn teams_for_agent(&self, agent_id: &str) -> Result<Vec<(TeamRecord, String)>> {
+        let db = self.db()?;
+        let mut statement = db.prepare(
+            "SELECT team.id,team.name,team.description,team.created_at,team.updated_at,membership.role FROM teams team JOIN team_members membership ON membership.team_id=team.id WHERE membership.agent_id=?1 ORDER BY team.name COLLATE NOCASE",
+        )?;
+        let rows = statement.query_map([agent_id], |row| {
+            Ok((
+                TeamRecord {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    description: row.get(2)?,
+                    created_at: row.get(3)?,
+                    updated_at: row.get(4)?,
+                },
+                row.get(5)?,
+            ))
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
@@ -752,11 +942,10 @@ impl RuntimeStore {
             agent.description = Some(description);
         }
         if let Some(configuration) = configuration {
-            if configuration.max_concurrent_tasks != 1 {
-                bail!(
-                    "max_concurrent_tasks must be 1; the supervisor serializes tasks until workspace isolation is available"
-                );
+            if !(1..=8).contains(&configuration.max_concurrent_tasks) {
+                bail!("max_concurrent_tasks must be between 1 and 8");
             }
+            validate_specialization(configuration.specialization.as_deref())?;
             agent.configuration = configuration;
             agent.configuration_revision += 1;
         }
@@ -949,6 +1138,7 @@ impl RuntimeStore {
     /// Queue a bounded child task for another Teammate. The child's effective
     /// permissions are capped by the intersection of the parent's current
     /// permissions and the target Teammate's own profile.
+    #[allow(dead_code)] // Public convenience API retained for downstream runtime users.
     pub fn create_child_task(
         &self,
         parent_task_id: &str,
@@ -956,6 +1146,25 @@ impl RuntimeStore {
         target_agent_id: &str,
         prompt: &str,
         parent_permissions: &PermissionProfile,
+    ) -> Result<TaskRecord> {
+        self.create_child_task_in_workspace(
+            parent_task_id,
+            parent_agent_id,
+            target_agent_id,
+            prompt,
+            parent_permissions,
+            None,
+        )
+    }
+
+    pub fn create_child_task_in_workspace(
+        &self,
+        parent_task_id: &str,
+        parent_agent_id: &str,
+        target_agent_id: &str,
+        prompt: &str,
+        parent_permissions: &PermissionProfile,
+        requested_workspace: Option<&str>,
     ) -> Result<TaskRecord> {
         const MAX_DELEGATION_DEPTH: u32 = 3;
         const MAX_CHILDREN_PER_TASK: i64 = 3;
@@ -996,9 +1205,9 @@ impl RuntimeStore {
             bail!("delegated task prompt must contain 1–20000 characters");
         }
 
-        let workspace = parent
-            .workspace
-            .clone()
+        let workspace = requested_workspace
+            .map(str::to_owned)
+            .or(parent.workspace.clone())
             .or(parent_agent.configuration.workspace.clone())
             .unwrap_or(std::env::current_dir()?.display().to_string());
         validate_workspace(&workspace, &parent_agent.configuration)?;
@@ -1120,6 +1329,209 @@ impl RuntimeStore {
         let rows = statement.query_map([parent_task_id], task_from_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
+    }
+
+    fn list_descendant_tasks(&self, parent_task_id: &str) -> Result<Vec<TaskRecord>> {
+        let db = self.db()?;
+        let mut statement = db.prepare(
+            "WITH RECURSIVE descendants(id) AS (
+                SELECT id FROM tasks WHERE parent_task_id=?1
+                UNION ALL
+                SELECT task.id FROM tasks task JOIN descendants ON task.parent_task_id=descendants.id
+             )
+             SELECT task.id,task.agent_id,task.title,task.request,task.status,task.workspace,task.checkpoint,task.error,task.attempt,task.recover_on_restart,task.schedule_id,task.created_at,task.updated_at,task.conversation_id,task.origin_trigger_id,task.parent_task_id,task.delegation_depth,task.permission_ceiling
+             FROM tasks task JOIN descendants ON descendants.id=task.id ORDER BY task.created_at ASC",
+        )?;
+        let rows = statement.query_map([parent_task_id], task_from_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn add_task_dependency(&self, task_id: &str, depends_on_task_id: &str) -> Result<()> {
+        if task_id == depends_on_task_id {
+            bail!("a task cannot depend on itself");
+        }
+        let mut db = self.db()?;
+        let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task_status: String =
+            transaction.query_row("SELECT status FROM tasks WHERE id=?1", [task_id], |row| {
+                row.get(0)
+            })?;
+        let dependency_status: String = transaction.query_row(
+            "SELECT status FROM tasks WHERE id=?1",
+            [depends_on_task_id],
+            |row| row.get(0),
+        )?;
+        let task_status: TaskStatus = from_json_or_plain_string(&task_status)?;
+        let dependency_status: TaskStatus = from_json_or_plain_string(&dependency_status)?;
+        if task_status != TaskStatus::Queued {
+            bail!("dependencies can only be added to queued tasks");
+        }
+        if matches!(
+            dependency_status,
+            TaskStatus::Failed | TaskStatus::Cancelled | TaskStatus::Interrupted
+        ) {
+            bail!("a task cannot depend on work that has already failed or been cancelled");
+        }
+        let would_cycle: bool = transaction.query_row(
+            "WITH RECURSIVE ancestors(id) AS (
+                SELECT depends_on_task_id FROM task_dependencies WHERE task_id=?1
+                UNION
+                SELECT dependency.depends_on_task_id FROM task_dependencies dependency JOIN ancestors ON dependency.task_id=ancestors.id
+             ) SELECT EXISTS(SELECT 1 FROM ancestors WHERE id=?2)",
+            params![depends_on_task_id, task_id],
+            |row| row.get(0),
+        )?;
+        if would_cycle {
+            bail!("task dependency would create a cycle");
+        }
+        transaction.execute(
+            "INSERT OR IGNORE INTO task_dependencies(task_id,depends_on_task_id,created_at) VALUES(?1,?2,?3)",
+            params![task_id, depends_on_task_id, now()],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Returns whether dependencies are complete and an explanation when a
+    /// prerequisite has failed permanently.
+    pub fn task_dependencies_ready(&self, task_id: &str) -> Result<(bool, Option<String>)> {
+        let db = self.db()?;
+        let mut statement = db.prepare(
+            "SELECT dependency.title,dependency.status FROM task_dependencies edge JOIN tasks dependency ON dependency.id=edge.depends_on_task_id WHERE edge.task_id=?1",
+        )?;
+        let rows = statement.query_map([task_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut waiting = false;
+        for row in rows {
+            let (title, raw_status) = row?;
+            let status: TaskStatus = from_json_or_plain_string(&raw_status)?;
+            match status {
+                TaskStatus::Completed => {}
+                TaskStatus::Failed | TaskStatus::Cancelled | TaskStatus::Interrupted => {
+                    return Ok((
+                        false,
+                        Some(format!("dependency '{title}' ended with status {status:?}")),
+                    ));
+                }
+                _ => waiting = true,
+            }
+        }
+        Ok((!waiting, None))
+    }
+
+    /// Queue exactly one continuation after every delegated child has reached
+    /// a terminal state. The marker and follow-up task are committed together.
+    pub fn resume_parent_after_children(&self, parent_task_id: &str) -> Result<Option<TaskRecord>> {
+        let parent = self
+            .get_task(parent_task_id)?
+            .ok_or_else(|| anyhow!("parent task not found: {parent_task_id}"))?;
+        if parent.status != TaskStatus::Completed {
+            return Ok(None);
+        }
+        let descendants = self.list_descendant_tasks(parent_task_id)?;
+        if descendants.is_empty()
+            || descendants.iter().any(|child| {
+                !matches!(
+                    child.status,
+                    TaskStatus::Completed
+                        | TaskStatus::Failed
+                        | TaskStatus::Cancelled
+                        | TaskStatus::Interrupted
+                )
+            })
+        {
+            return Ok(None);
+        }
+
+        let mut report = String::from(
+            "Your delegated Teammate tasks have finished. Review their results, integrate useful findings, and continue the original request.\n\n",
+        );
+        for child in &descendants {
+            let response = self.task_text_response(&child.id)?;
+            let response = response
+                .char_indices()
+                .take_while(|(index, character)| index + character.len_utf8() <= 8_000)
+                .map(|(_, character)| character)
+                .collect::<String>();
+            use std::fmt::Write as _;
+            let _ = writeln!(
+                report,
+                "## {} ({:?})\nTeammate: {}\n{}\n",
+                child.title,
+                child.status,
+                child.agent_id,
+                if response.trim().is_empty() {
+                    child
+                        .error
+                        .as_deref()
+                        .unwrap_or("No response was recorded.")
+                } else {
+                    response.trim()
+                }
+            );
+        }
+        report.push_str("\nOriginal request:\n");
+        report.push_str(&parent.request);
+        if report.len() > 95_000 {
+            let boundary = report
+                .char_indices()
+                .take_while(|(index, character)| index + character.len_utf8() <= 95_000)
+                .map(|(index, character)| index + character.len_utf8())
+                .last()
+                .unwrap_or_default();
+            report.truncate(boundary);
+        }
+
+        let timestamp = now();
+        let followup = TaskRecord {
+            id: new_id("task"),
+            conversation_id: parent.conversation_id.clone(),
+            origin_trigger_id: None,
+            parent_task_id: parent.parent_task_id.clone(),
+            delegation_depth: parent.delegation_depth,
+            permission_ceiling: parent.permission_ceiling.clone(),
+            agent_id: parent.agent_id.clone(),
+            title: format!(
+                "Continue: {}",
+                parent.title.chars().take(88).collect::<String>()
+            ),
+            request: report,
+            status: TaskStatus::Queued,
+            workspace: parent.workspace.clone(),
+            checkpoint: None,
+            error: None,
+            attempt: 0,
+            recover_on_restart: false,
+            schedule_id: None,
+            created_at: timestamp,
+            updated_at: timestamp,
+        };
+        let mut db = self.db()?;
+        let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let already_resumed: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM task_resumptions WHERE parent_task_id=?1)",
+            [parent_task_id],
+            |row| row.get(0),
+        )?;
+        if already_resumed {
+            return Ok(None);
+        }
+        transaction.execute(
+            "INSERT INTO tasks (id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling) VALUES (?1,?2,?3,?4,?5,?6,NULL,NULL,0,0,NULL,?7,?7,?8,NULL,?9,?10,?11)",
+            params![followup.id, followup.agent_id, followup.title, followup.request, serde_json::to_string(&followup.status)?, followup.workspace, timestamp, followup.conversation_id, followup.parent_task_id, followup.delegation_depth, followup.permission_ceiling.as_ref().map(serde_json::to_string).transpose()?],
+        )?;
+        transaction.execute(
+            "INSERT INTO task_resumptions(parent_task_id,followup_task_id,created_at) VALUES(?1,?2,?3)",
+            params![parent_task_id, followup.id, timestamp],
+        )?;
+        transaction.execute(
+            "INSERT INTO events(event_id,agent_id,task_id,event_type,payload,created_at) VALUES(?1,?2,?3,'task.queued',?4,?5)",
+            params![new_id("evt"), followup.agent_id, followup.id, serde_json::to_string(&followup)?, timestamp],
+        )?;
+        transaction.commit()?;
+        Ok(Some(followup))
     }
 
     #[allow(dead_code)] // Public query API retained for downstream runtime users.
@@ -1249,6 +1661,25 @@ impl RuntimeStore {
             .map_err(Into::into)
     }
 
+    fn list_active_tasks(&self) -> Result<Vec<TaskRecord>> {
+        let db = self.db()?;
+        let statuses = [
+            serde_json::to_string(&TaskStatus::Running)?,
+            serde_json::to_string(&TaskStatus::WaitingForApproval)?,
+            serde_json::to_string(&TaskStatus::WaitingForInput)?,
+        ];
+        let mut statement = db.prepare(
+            "SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling
+             FROM tasks WHERE status IN (?1,?2,?3) ORDER BY created_at ASC, rowid ASC",
+        )?;
+        let rows = statement.query_map(
+            params![statuses[0], statuses[1], statuses[2]],
+            task_from_row,
+        )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
     pub fn transition_task(
         &self,
         id: &str,
@@ -1306,19 +1737,16 @@ impl RuntimeStore {
     }
 
     pub fn recover_after_restart(&self) -> Result<Vec<TaskRecord>> {
-        let running = self
-            .list_tasks(None, 500)?
-            .into_iter()
-            .filter(|task| {
-                task.status == TaskStatus::Running
-                    || task.status == TaskStatus::WaitingForApproval
-                    || task.status == TaskStatus::WaitingForInput
-            })
-            .collect::<Vec<_>>();
+        // Recovery must include every in-flight task, not just the newest page
+        // returned by the UI-facing, deliberately bounded list_tasks API.
+        let running = self.list_active_tasks()?;
         let mut recovered = Vec::new();
         for task in running {
             let interrupted = self.transition_task(&task.id, TaskStatus::Interrupted, Some("Runtime restarted before this task reached a terminal state; external side effects must be reconciled before retry.".into()), None)?;
             self.expire_pending_approvals(&task.id)?;
+            if let Some(parent_task_id) = task.parent_task_id.as_deref() {
+                self.resume_parent_after_children(parent_task_id)?;
+            }
             // The worker does not yet persist an idempotent action cursor, so
             // restarting from the original request could repeat external side
             // effects. Recovery is reconciliation, never automatic replay.
@@ -1659,6 +2087,34 @@ impl RuntimeStore {
                 })
             },
         )?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn recent_events_for_agent(
+        &self,
+        agent_id: &str,
+        limit: usize,
+    ) -> Result<Vec<RuntimeEvent>> {
+        let db = self.db()?;
+        let mut statement = db.prepare(
+            "SELECT sequence,event_id,agent_id,task_id,event_type,payload,created_at FROM (
+                SELECT sequence,event_id,agent_id,task_id,event_type,payload,created_at
+                FROM events WHERE agent_id=?1 ORDER BY sequence DESC LIMIT ?2
+             ) ORDER BY sequence ASC",
+        )?;
+        let rows = statement.query_map(params![agent_id, limit.clamp(1, 1000) as i64], |row| {
+            let payload: String = row.get(5)?;
+            Ok(RuntimeEvent {
+                sequence: row.get(0)?,
+                event_id: row.get(1)?,
+                agent_id: row.get(2)?,
+                task_id: row.get(3)?,
+                event_type: row.get(4)?,
+                payload: serde_json::from_str(&payload).map_err(to_sql_error)?,
+                created_at: row.get(6)?,
+            })
+        })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
     }
@@ -2177,6 +2633,13 @@ impl RuntimeStore {
     }
 }
 
+fn validate_specialization(specialization: Option<&str>) -> Result<()> {
+    if specialization.is_some_and(|value| value.trim().is_empty() || value.len() > 160) {
+        bail!("specialization must contain between 1 and 160 characters");
+    }
+    Ok(())
+}
+
 fn enable_teammate_network_tools(configuration: &mut AgentConfiguration) {
     let enabled = configuration.network_access.unwrap_or(true);
     configuration.network_access = Some(enabled);
@@ -2426,7 +2889,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 8);
         assert!(table_exists);
         let conversation_column: bool = db
             .query_row(
@@ -2724,6 +3187,34 @@ mod tests {
     }
 
     #[test]
+    fn recent_agent_events_return_the_latest_bounded_window_in_order() {
+        let store = RuntimeStore::in_memory();
+        let agent = store
+            .create_agent(
+                "Metrics",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        for index in 0..4 {
+            store
+                .append_event(
+                    Some(&agent.id),
+                    None,
+                    "metric.test",
+                    serde_json::json!({"index": index}),
+                )
+                .unwrap();
+        }
+        let events = store.recent_events_for_agent(&agent.id, 2).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].payload["index"], 2);
+        assert_eq!(events[1].payload["index"], 3);
+        assert!(events[0].sequence < events[1].sequence);
+    }
+
+    #[test]
     fn legacy_agent_configuration_receives_safe_new_defaults() {
         let configuration: AgentConfiguration = serde_json::from_str(
             r#"{"system_prompt":"","skills":[],"provider":null,"model":null,"endpoint":null,"workspace":null,"allowed_workspaces":[],"enabled_tools":[],"permissions":{"allowed_tools":[],"denied_tools":[],"auto_approve_read_only":false,"require_approval_for_mutations":true,"allow_network":false},"max_concurrent_tasks":1,"recover_interrupted_tasks":false}"#,
@@ -2975,6 +3466,99 @@ mod tests {
                 .iter()
                 .all(|item| item.status != TaskStatus::Queued)
         );
+    }
+
+    #[test]
+    fn restart_recovery_includes_active_tasks_beyond_the_ui_page_limit() {
+        let store = RuntimeStore::in_memory();
+        let agent = store
+            .create_agent(
+                "Recovery",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        for index in 0..501 {
+            let task = store
+                .create_task(&agent.id, &format!("Task {index}"), None, None, false, None)
+                .unwrap();
+            store
+                .transition_task(&task.id, TaskStatus::Running, None, None)
+                .unwrap();
+        }
+
+        let recovered = store.recover_after_restart().unwrap();
+        assert_eq!(recovered.len(), 501);
+        assert!(
+            recovered
+                .iter()
+                .all(|task| task.status == TaskStatus::Interrupted)
+        );
+    }
+
+    #[test]
+    fn restart_recovery_resumes_completed_parent_after_interrupted_child() {
+        let store = RuntimeStore::in_memory();
+        let workspace = tempfile::tempdir().unwrap();
+        let workspace_path = workspace.path().display().to_string();
+        let configuration = AgentConfiguration {
+            workspace: Some(workspace_path.clone()),
+            allowed_workspaces: vec![workspace_path.clone()],
+            ..AgentConfiguration::default()
+        };
+        let parent_agent = store
+            .create_agent(
+                "Coordinator",
+                None,
+                AgentKind::Teammates,
+                configuration.clone(),
+            )
+            .unwrap();
+        let child_agent = store
+            .create_agent("Worker", None, AgentKind::Teammates, configuration)
+            .unwrap();
+        let parent = store
+            .create_task(
+                &parent_agent.id,
+                "Coordinate work",
+                None,
+                Some(workspace_path),
+                false,
+                None,
+            )
+            .unwrap();
+        store
+            .transition_task(&parent.id, TaskStatus::Running, None, None)
+            .unwrap();
+        let child = store
+            .create_child_task(
+                &parent.id,
+                &parent_agent.id,
+                &child_agent.id,
+                "Implement subtask",
+                &parent_agent.configuration.permissions,
+            )
+            .unwrap();
+        store
+            .transition_task(&child.id, TaskStatus::Running, None, None)
+            .unwrap();
+        store
+            .transition_task(&parent.id, TaskStatus::Completed, None, None)
+            .unwrap();
+
+        let recovered = store.recover_after_restart().unwrap();
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].id, child.id);
+        assert_eq!(recovered[0].status, TaskStatus::Interrupted);
+        let continuation = store
+            .list_tasks(Some(&parent_agent.id), 20)
+            .unwrap()
+            .into_iter()
+            .find(|task| task.title.starts_with("Continue:"))
+            .unwrap();
+        assert_eq!(continuation.status, TaskStatus::Queued);
+        assert!(continuation.request.contains("Implement subtask"));
     }
 
     #[test]
@@ -3368,5 +3952,327 @@ mod tests {
             profile.decide_with_capabilities("mcp__filesystem__write_file", true, true, false),
             PermissionDecision::RequireApproval
         );
+    }
+
+    #[test]
+    fn teammate_concurrency_is_bounded_and_team_membership_is_persistent() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("runtime.sqlite3");
+        let (team_id, agent_id) = {
+            let store = RuntimeStore::open(&path).unwrap();
+            let configuration = AgentConfiguration {
+                max_concurrent_tasks: 4,
+                specialization: Some("Security reviewer".into()),
+                ..AgentConfiguration::default()
+            };
+            let agent = store
+                .create_agent("Security", None, AgentKind::Teammates, configuration)
+                .unwrap();
+            let team = store
+                .create_team("Engine", Some("Engine development team".into()))
+                .unwrap();
+            store
+                .add_team_member(&team.id, &agent.id, "Security")
+                .unwrap();
+            assert_eq!(store.list_team_members(&team.id).unwrap().len(), 1);
+            assert_eq!(store.teams_for_agent(&agent.id).unwrap()[0].1, "Security");
+            (team.id, agent.id)
+        };
+
+        let store = RuntimeStore::open(&path).unwrap();
+        let team = store.list_teams().unwrap().pop().unwrap();
+        assert_eq!(team.id, team_id);
+        let member = store.list_team_members(&team_id).unwrap().pop().unwrap();
+        assert_eq!(member.agent_id, agent_id);
+        assert_eq!(member.role, "Security");
+        assert_eq!(
+            store
+                .get_agent(&agent_id)
+                .unwrap()
+                .unwrap()
+                .configuration
+                .max_concurrent_tasks,
+            4
+        );
+    }
+
+    #[test]
+    fn teammate_concurrency_rejects_values_above_runtime_limit() {
+        let store = RuntimeStore::in_memory();
+        let configuration = AgentConfiguration {
+            max_concurrent_tasks: 9,
+            ..AgentConfiguration::default()
+        };
+        assert!(
+            store
+                .create_agent("Too many", None, AgentKind::Teammates, configuration)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn task_dependencies_are_cycle_checked_and_gate_execution() {
+        let store = RuntimeStore::in_memory();
+        let agent = store
+            .create_agent(
+                "Planner",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let first = store
+            .create_task(&agent.id, "First", None, None, false, None)
+            .unwrap();
+        let second = store
+            .create_task(&agent.id, "Second", None, None, false, None)
+            .unwrap();
+        store.add_task_dependency(&second.id, &first.id).unwrap();
+        assert_eq!(
+            store.task_dependencies_ready(&second.id).unwrap(),
+            (false, None)
+        );
+        assert!(store.add_task_dependency(&first.id, &second.id).is_err());
+        store
+            .transition_task(&first.id, TaskStatus::Running, None, None)
+            .unwrap();
+        store
+            .transition_task(&first.id, TaskStatus::Completed, None, None)
+            .unwrap();
+        assert_eq!(
+            store.task_dependencies_ready(&second.id).unwrap(),
+            (true, None)
+        );
+    }
+
+    #[test]
+    fn delegated_children_automatically_queue_one_parent_continuation() {
+        let store = RuntimeStore::in_memory();
+        let parent_agent = store
+            .create_agent(
+                "Coordinator",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let child_agent = store
+            .create_agent(
+                "Researcher",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let parent = store
+            .create_task(
+                &parent_agent.id,
+                "Coordinate research",
+                None,
+                None,
+                false,
+                None,
+            )
+            .unwrap();
+        store
+            .transition_task(&parent.id, TaskStatus::Running, None, None)
+            .unwrap();
+        let child = store
+            .create_child_task(
+                &parent.id,
+                &parent_agent.id,
+                &child_agent.id,
+                "Research the API",
+                &parent_agent.configuration.permissions,
+            )
+            .unwrap();
+        store
+            .transition_task(&parent.id, TaskStatus::Completed, None, None)
+            .unwrap();
+        assert!(
+            store
+                .resume_parent_after_children(&parent.id)
+                .unwrap()
+                .is_none()
+        );
+        store
+            .transition_task(&child.id, TaskStatus::Running, None, None)
+            .unwrap();
+        store
+            .transition_task(&child.id, TaskStatus::Completed, None, None)
+            .unwrap();
+        let continuation = store
+            .resume_parent_after_children(&parent.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(continuation.status, TaskStatus::Queued);
+        assert_eq!(continuation.conversation_id, parent.conversation_id);
+        assert!(continuation.request.contains("Research the API"));
+        assert!(
+            store
+                .resume_parent_after_children(&parent.id)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            store
+                .list_tasks(Some(&parent_agent.id), 20)
+                .unwrap()
+                .iter()
+                .filter(|task| task.title.starts_with("Continue:"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn parent_continuations_wait_for_nested_delegation_trees() {
+        let store = RuntimeStore::open_in_memory_for_tests();
+        let workspace = tempfile::tempdir().unwrap();
+        let workspace_path = workspace.path().display().to_string();
+        let configuration = AgentConfiguration {
+            workspace: Some(workspace_path.clone()),
+            allowed_workspaces: vec![workspace_path],
+            ..AgentConfiguration::default()
+        };
+        let root_agent = store
+            .create_agent("Root", None, AgentKind::Teammates, configuration.clone())
+            .unwrap();
+        let middle_agent = store
+            .create_agent("Middle", None, AgentKind::Teammates, configuration.clone())
+            .unwrap();
+        let leaf_agent = store
+            .create_agent("Leaf", None, AgentKind::Teammates, configuration)
+            .unwrap();
+        let root = store
+            .create_task(&root_agent.id, "Coordinate", None, None, false, None)
+            .unwrap();
+        store
+            .transition_task(&root.id, TaskStatus::Running, None, None)
+            .unwrap();
+        let middle = store
+            .create_child_task(
+                &root.id,
+                &root_agent.id,
+                &middle_agent.id,
+                "Middle work",
+                &root_agent.configuration.permissions,
+            )
+            .unwrap();
+        store
+            .transition_task(&middle.id, TaskStatus::Running, None, None)
+            .unwrap();
+        let leaf = store
+            .create_child_task(
+                &middle.id,
+                &middle_agent.id,
+                &leaf_agent.id,
+                "Leaf work",
+                &middle_agent.configuration.permissions,
+            )
+            .unwrap();
+        store
+            .transition_task(&root.id, TaskStatus::Completed, None, None)
+            .unwrap();
+        store
+            .transition_task(&middle.id, TaskStatus::Completed, None, None)
+            .unwrap();
+
+        assert!(
+            store
+                .resume_parent_after_children(&root.id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .resume_parent_after_children(&middle.id)
+                .unwrap()
+                .is_none()
+        );
+        store
+            .transition_task(&leaf.id, TaskStatus::Running, None, None)
+            .unwrap();
+        store
+            .transition_task(&leaf.id, TaskStatus::Completed, None, None)
+            .unwrap();
+
+        let middle_continuation = store
+            .resume_parent_after_children(&middle.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            middle_continuation.parent_task_id.as_deref(),
+            Some(root.id.as_str())
+        );
+        assert!(
+            store
+                .resume_parent_after_children(&root.id)
+                .unwrap()
+                .is_none()
+        );
+        store
+            .transition_task(&middle_continuation.id, TaskStatus::Running, None, None)
+            .unwrap();
+        store
+            .transition_task(&middle_continuation.id, TaskStatus::Completed, None, None)
+            .unwrap();
+
+        let root_continuation = store
+            .resume_parent_after_children(&root.id)
+            .unwrap()
+            .unwrap();
+        assert!(root_continuation.parent_task_id.is_none());
+        assert!(root_continuation.request.contains("Leaf work"));
+    }
+
+    #[test]
+    fn delegation_can_target_an_explicitly_granted_parallel_workspace() {
+        let store = RuntimeStore::open_in_memory_for_tests();
+        let primary = tempfile::tempdir().unwrap();
+        let secondary = tempfile::tempdir().unwrap();
+        let primary_path = primary.path().display().to_string();
+        let secondary_path = secondary.path().display().to_string();
+        let configuration = AgentConfiguration {
+            workspace: Some(primary_path.clone()),
+            allowed_workspaces: vec![primary_path.clone(), secondary_path.clone()],
+            ..AgentConfiguration::default()
+        };
+        let parent_agent = store
+            .create_agent(
+                "Coordinator",
+                None,
+                AgentKind::Teammates,
+                configuration.clone(),
+            )
+            .unwrap();
+        let child_agent = store
+            .create_agent("Engineer", None, AgentKind::Teammates, configuration)
+            .unwrap();
+        let parent = store
+            .create_task(
+                &parent_agent.id,
+                "Coordinate",
+                None,
+                Some(primary_path),
+                false,
+                None,
+            )
+            .unwrap();
+        store
+            .transition_task(&parent.id, TaskStatus::Running, None, None)
+            .unwrap();
+
+        let child = store
+            .create_child_task_in_workspace(
+                &parent.id,
+                &parent_agent.id,
+                &child_agent.id,
+                "Implement isolated component",
+                &parent_agent.configuration.permissions,
+                Some(&secondary_path),
+            )
+            .unwrap();
+        assert_eq!(child.workspace.as_deref(), Some(secondary_path.as_str()));
     }
 }

@@ -5,6 +5,18 @@ identity, permissions, memory, task history, schedules, and event triggers are
 stored in the shared SQLite runtime database. The gateway supervises queued
 work independently of the Desktop and Dashboard clients.
 
+## Teams and specializations
+
+Teammates can have a specialization such as Architect, Graphics Engineer,
+Reviewer, Tester, Researcher, or Security. The runtime adds that role to the
+Teammate's task context while preserving its configured system instructions
+and permission profile.
+
+Persistent Teams group Teammates around a shared purpose. A Teammate can use
+`create_team`, `add_team_member`, and `list_teams` to create a group, assign
+named roles, and inspect its roster. Membership and role changes are stored in
+SQLite and survive restarts.
+
 ## Conversations and tasks
 
 A conversation has a stable ID and can contain multiple task runs. Each user
@@ -68,6 +80,12 @@ Teammates do not receive new trigger work. Trigger prompts are background
 instructions, not approvals: tool permissions, workspace grants, network
 policy, and approval requirements continue to apply normally.
 
+`create_monitor` creates a recurring schedule for repository health, CI,
+dependency, or security checks. These monitors run as ordinary Teammate tasks
+and inherit the Teammate's workspace grants, network policy, and approval
+requirements. Dependency updates and repository mutations are recommendations
+that still require the normal approval flow.
+
 ## Delegation and handoffs
 
 Teammates can discover peers with `list_teammates`, queue independent work with
@@ -80,10 +98,26 @@ own Teammate owner and task history. The parent conversation shows each direct
 handoff with its target and status; selecting one opens the target Teammate's
 child task. The returned child task ID is the handle used to retrieve its status,
 error, and recorded response. Child tasks appear in the target Teammate's
-history with a delegated marker. Because the gateway currently serializes task
-execution, child work starts after the parent task finishes. A later turn in
-the same conversation can list the earlier handoffs and collect their results;
-the parent is not automatically resumed when a child finishes.
+history with a delegated marker. The gateway runs independent workspaces
+concurrently, up to eight workers globally and the configured per-Teammate
+limit (1–8). A canonical workspace lease prevents simultaneous workers from
+modifying the same checkout. Tasks targeting a leased workspace remain queued
+until it becomes available. `delegate_task` accepts an optional `workspace`
+path for an explicitly granted alternate checkout, allowing parallel work on
+separate checkouts of the same project. Both Teammates must have the path in
+their workspace grants.
+
+When a parent finishes before its children, Luma waits for every direct child
+to reach a terminal state and then queues one continuation in the original
+conversation. The continuation includes each child's response or failure so
+the parent can review and integrate the results. A durable unique marker keeps
+restarts and simultaneous child completions from creating duplicate
+continuations.
+
+Use `add_task_dependency` to make one queued delegated task wait for another.
+Dependencies are cycle-checked; a task runs only after every prerequisite
+completes successfully, and it fails with an explanation if a prerequisite
+fails or is cancelled.
 
 Delegation is bounded to depth 3, three direct children per task, and eight
 descendants per root task. Only Teammates can delegate to other Teammates;
@@ -94,4 +128,4 @@ and the target Teammate's own profile: denials are combined, approval
 requirements become stricter, and network access is never widened. The normal
 tool approval flow applies to `delegate_task` unless the parent has explicitly
 allowed it. Delegation queues work asynchronously rather than blocking the
-single-task supervisor, avoiding parent/child deadlocks.
+supervisor, avoiding parent/child deadlocks.

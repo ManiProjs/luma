@@ -31,6 +31,14 @@ struct LoadInput {
 
 pub struct ListSkills;
 pub struct LoadSkill;
+pub struct ProposeSkill;
+
+#[derive(Debug, Deserialize)]
+struct ProposeSkillInput {
+    name: String,
+    description: String,
+    instructions: String,
+}
 
 impl Tool for ListSkills {
     fn name(&self) -> &str {
@@ -106,6 +114,66 @@ impl Tool for LoadSkill {
             body.trim()
         ))
     }
+}
+
+impl Tool for ProposeSkill {
+    fn name(&self) -> &str {
+        "propose_skill"
+    }
+
+    fn description(&self) -> &str {
+        "Create a reusable Agent Skill draft from a workflow or lesson. Drafts are saved under .luma/skill-drafts and are deliberately excluded from skill discovery until a human reviews and moves them into .agents/skills. Input JSON: {\"name\":\"rust-testing\",\"description\":\"Run focused Rust tests and diagnose failures\",\"instructions\":\"Step-by-step reusable workflow...\"}."
+    }
+
+    fn execute(&self, input: &str) -> Result<String> {
+        let input: ProposeSkillInput =
+            serde_json::from_str(input).context("propose_skill: invalid JSON input")?;
+        validate_name(&input.name)?;
+        if input.description.trim().is_empty() || input.description.len() > 1_024 {
+            bail!("skill description must contain between 1 and 1024 characters");
+        }
+        if input.instructions.trim().is_empty()
+            || input.instructions.len() > MAX_SKILL_BYTES as usize - 2_048
+        {
+            bail!("skill instructions must contain between 1 character and 254 KB");
+        }
+        let path = write_skill_draft(&workspace_dir()?, &input)?;
+        Ok(format!(
+            "Created skill draft at {}. Review its instructions, then move the directory into .agents/skills/{} to make it available to Teammates.",
+            path.display(),
+            input.name
+        ))
+    }
+}
+
+fn write_skill_draft(workspace: &Path, input: &ProposeSkillInput) -> Result<PathBuf> {
+    let workspace = workspace.canonicalize()?;
+    let metadata_dir = workspace.join(".luma");
+    if fs::symlink_metadata(&metadata_dir).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        bail!("refusing to write skill drafts through a .luma symlink");
+    }
+    let drafts_dir = metadata_dir.join("skill-drafts");
+    fs::create_dir_all(&drafts_dir)?;
+    let canonical_drafts = fs::canonicalize(&drafts_dir)?;
+    if !canonical_drafts.starts_with(&workspace) {
+        bail!("skill draft directory resolves outside the workspace");
+    }
+    let skill_dir = canonical_drafts.join(&input.name);
+    fs::create_dir(&skill_dir)
+        .with_context(|| format!("creating skill draft {}; it may already exist", input.name))?;
+    let path = skill_dir.join("SKILL.md");
+    let description = serde_json::to_string(input.description.trim())?;
+    let content = format!(
+        "---\nname: {}\ndescription: {}\n---\n\n{}\n",
+        input.name,
+        description,
+        input.instructions.trim()
+    );
+    if let Err(error) = fs::write(&path, content) {
+        let _ = fs::remove_dir(&skill_dir);
+        return Err(error).with_context(|| format!("writing skill draft {}", path.display()));
+    }
+    Ok(path)
 }
 
 fn workspace_dir() -> Result<PathBuf> {
@@ -418,5 +486,36 @@ mod tests {
         .unwrap();
         assert_eq!(metadata.0, "rust-testing");
         assert_eq!(metadata.1, "Run focused tests. Explain failures clearly.");
+    }
+
+    #[test]
+    fn proposed_skill_stays_in_review_drafts_until_explicitly_installed() {
+        let workspace = tempfile::tempdir().unwrap();
+        let input = ProposeSkillInput {
+            name: "rust-testing".into(),
+            description: "Run focused tests: explain failures".into(),
+            instructions: "1. Run the smallest relevant test.\n2. Explain the failure.".into(),
+        };
+        let draft = write_skill_draft(workspace.path(), &input).unwrap();
+        let content = fs::read_to_string(&draft).unwrap();
+        let (frontmatter, body) = split_frontmatter(&content).unwrap();
+        let metadata = parse_metadata(frontmatter).unwrap();
+        assert_eq!(metadata.0, "rust-testing");
+        assert_eq!(metadata.1, input.description);
+        assert!(body.contains("Run the smallest relevant test"));
+        assert!(
+            discover_skills(workspace.path(), &[])
+                .iter()
+                .all(|skill| skill.name != "rust-testing")
+        );
+
+        let installed = workspace.path().join(".agents/skills/rust-testing");
+        fs::create_dir_all(installed.parent().unwrap()).unwrap();
+        fs::rename(draft.parent().unwrap(), &installed).unwrap();
+        assert!(
+            discover_skills(workspace.path(), &[])
+                .iter()
+                .any(|skill| skill.name == "rust-testing")
+        );
     }
 }

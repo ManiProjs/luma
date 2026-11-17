@@ -1,5 +1,10 @@
 # Agent Skills
 
+Teammates can use `propose_skill` to turn a reusable workflow or lesson into a
+reviewable draft under `.luma/skill-drafts/`. Drafts are excluded from skill
+discovery and cannot affect agent behavior until a person reviews them and
+moves the skill directory into `.agents/skills/`.
+
 Luma supports the open Agent Skills directory convention. A skill is a
 directory containing a `SKILL.md` file with YAML frontmatter. The frontmatter
 must declare a `name` matching the directory and a non-empty `description`.
