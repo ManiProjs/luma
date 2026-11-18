@@ -40,7 +40,14 @@ fn main() {
 }
 
 fn run_npm(label: &str, args: &[&str], description: &str) {
-    let status = Command::new("npm")
+    let mut command = if cfg!(windows) {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg("npm");
+        command
+    } else {
+        Command::new("npm")
+    };
+    let status = command
         .args(args)
         .current_dir("dashboard")
         .status()

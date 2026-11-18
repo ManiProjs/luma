@@ -1,7 +1,6 @@
 import React from "react";
 import { render } from "ink";
 import { Command } from "commander";
-import { spawn } from "bun";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -452,14 +451,8 @@ async function scheduleCreate(agentId: string, interval: string, prompt: string[
   });
 }
 
-async function startDevelopmentEnvironment(
-  host: string,
-  port: number,
-  viteHost: string,
-  vitePort: number,
-) {
+async function startDashboardEnvironment(host: string, port: number) {
   const client = new LumaClient();
-  let vite: ReturnType<typeof spawn> | null = null;
   let shutdown: (() => void) | null = null;
 
   const waitForShutdown = new Promise<void>((resolveShutdown) => {
@@ -478,22 +471,8 @@ async function startDevelopmentEnvironment(
       data: { request_id: requestId, host, port },
     }, "dashboard_started", requestId);
 
-    const dashboardDirectory = resolve(import.meta.dir, "../../dashboard");
-    vite = spawn([
-      "npm", "run", "dev", "--prefix", dashboardDirectory,
-      "--", "--host", viteHost, "--port", String(vitePort), "--strictPort",
-    ], {
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-      env: {
-        ...process.env,
-        LUMA_CORE_URL: `http://${event.data.address}`,
-      },
-    });
-
     process.stdout.write(
-      `Luma development environment\nCore API: http://${event.data.address}\nDashboard: http://${viteHost}:${vitePort}\nPress Ctrl+C to stop both servers.\n`,
+      `Luma dashboard\nURL: http://${event.data.address}\nPress Ctrl+C to stop the server.\n`,
     );
 
     await Promise.race([
@@ -501,16 +480,12 @@ async function startDevelopmentEnvironment(
       core.exited.then((code) => {
         throw new Error(`Luma core exited${code === 0 ? "" : ` with code ${code}`}.`);
       }),
-      vite.exited.then((code) => {
-        if (code !== 0) throw new Error(`Vite exited with code ${code}.`);
-      }),
     ]);
   } finally {
     if (shutdown) {
       process.removeListener("SIGINT", shutdown);
       process.removeListener("SIGTERM", shutdown);
     }
-    vite?.kill();
     client.disconnect();
     stopDesktopServer();
   }
@@ -559,7 +534,7 @@ export async function runCli(argv: string[]) {
   const program = new Command()
     .name("luma")
     .description("Luma — an AI coding agent")
-    .version("0.1.0")
+    .version(process.env.LUMA_VERSION ?? "development")
     .action(() => launchInteractive());
 
   program.command("setup")
@@ -659,21 +634,15 @@ export async function runCli(argv: string[]) {
   schedules.command("create <agent-id> <seconds> <prompt...>").description("Schedule a recurring task").action(scheduleCreate);
 
   program.command("dashboard")
-    .description("Start the Rust core and browser dashboard together")
+    .description("Start the embedded Luma browser dashboard")
     .option("--host <host>", "Core API bind address", "127.0.0.1")
     .option("--port <port>", "Core API port", "3000")
-    .option("--vite-host <host>", "Dashboard bind address", "127.0.0.1")
-    .option("--vite-port <port>", "Dashboard port", "5173")
-    .action((options: { host: string; port: string; viteHost: string; vitePort: string }) => {
+    .action((options: { host: string; port: string }) => {
       const port = Number(options.port);
-      const vitePort = Number(options.vitePort);
-      for (const [name, value] of [["Core port", port], ["Dashboard port", vitePort]] as const) {
-        const minimum = name === "Dashboard port" ? 1 : 0;
-        if (!Number.isInteger(value) || value < minimum || value > 65535) {
-          throw new Error(`${name} must be an integer from ${minimum} to 65535.`);
-        }
+      if (!Number.isInteger(port) || port < 0 || port > 65535) {
+        throw new Error("Port must be an integer from 0 to 65535.");
       }
-      return startDevelopmentEnvironment(options.host, port, options.viteHost, vitePort);
+      return startDashboardEnvironment(options.host, port);
     });
 
   program.command("ask <prompt...>")

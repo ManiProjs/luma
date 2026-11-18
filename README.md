@@ -9,31 +9,47 @@ workspace.
 
 ## Quick start
 
-Luma currently ships its Rust Core, Ink terminal client, local dashboard, and
-Electron desktop app as source-buildable components. The first 1.0 beta is a
-prerelease; packaged desktop installers are not yet published.
+The installer provisions the complete terminal runtime: Luma Core, the Ink
+client, embedded browser dashboard, pinned Bun and Node.js runtimes, Playwright
+with Chromium, ripgrep, and the built-in Agent Skills.
 
 ```sh
-git clone https://github.com/ManiProjs/luma.git
-cd luma
-cargo build --release --no-default-features
-
-cd ui
-bun install
-bun run start
+curl -fsSL https://raw.githubusercontent.com/ManiProjs/luma/main/scripts/install.sh | bash
+luma setup
+luma
 ```
 
-The terminal client starts the Rust Core automatically. To use a different
-Core executable, set `LUMA_BINARY` to its path. From `ui/`, start the local
-dashboard with `bun run src/index.tsx dashboard`.
+On Windows, run this from PowerShell:
 
-To build the desktop app on your current platform:
+```powershell
+irm https://raw.githubusercontent.com/ManiProjs/luma/main/scripts/install.ps1 | iex
+luma setup
+```
+
+The installer supports macOS and glibc Linux on x64/ARM64, plus Windows x64.
+Debian/Ubuntu browser system libraries are installed automatically and may
+prompt for `sudo`; other Linux distributions need their Chromium shared
+libraries installed with their package manager. Git is installed when missing
+on Debian or Ubuntu; macOS requires the Xcode Command Line Tools, and Windows
+uses `winget` to install Git for Windows when needed.
+
+To install a specific prerelease:
 
 ```sh
-cd desktop
-npm ci
-npm run make
+curl -fsSL https://raw.githubusercontent.com/ManiProjs/luma/main/scripts/install.sh | LUMA_VERSION=v1.0.0-beta.1 bash
 ```
+
+To remove the program and its bundled runtimes without deleting user
+configuration, memories, tasks, skills, or browser caches, run:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ManiProjs/luma/main/scripts/install.sh | bash -s -- --uninstall
+```
+
+On Windows, run the saved PowerShell installer with `-Uninstall`.
+
+The Electron desktop app remains a separate application build; this installer
+sets up the complete Core, terminal, dashboard, and browser-automation runtime.
 
 ## What Luma includes
 
@@ -54,6 +70,7 @@ npm run make
 ## Documentation
 
 - [Architecture and runtime](docs/architecture.md)
+- [Installation and runtime dependencies](docs/installation.md)
 - [CLI and terminal interface](docs/cli.md)
 - [Tools and change approval](docs/tools.md)
 - [Configuration and models](docs/configuration.md)

@@ -13,12 +13,6 @@ readme = "README.md"
 keywords = ["ai", "coding-agent", "llm", "developer-tools", "rust"]
 categories = ["command-line-utilities", "development-tools"]
 
-[package.metadata.wix]
-upgrade-guid = "64608215-1097-4F96-B056-9D6A31F62AED"
-path-guid = "2F6C7A45-FDA5-4DB6-85A8-47FA2EB747FA"
-license = false
-eula = false
-
 [features]
 # The Ratatui terminal front end. It is being replaced by an Ink client that
 # speaks `src/protocol.rs` over JSONL, so the core is being made buildable
@@ -60,11 +54,6 @@ ratatui = { version = "0.30.2", optional = true }
 unicode-width = { version = "0.2.2", optional = true }
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 uuid = { version = "1", features = ["v4", "serde"] }
-
-# The profile that 'dist' will build with
-[profile.dist]
-inherits = "release"
-lto = "thin"
 
 [dev-dependencies]
 tempfile = "3.27.0"

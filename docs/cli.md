@@ -9,7 +9,7 @@ history, teammate management, task inspection, and one-shot prompts.
 luma setup
 luma
 luma dashboard
-luma dashboard --port 3001 --vite-port 5174
+luma dashboard --port 3001
 luma history
 luma history show <chat-id>
 luma summary add <chat-id> "What this chat accomplished"
@@ -26,14 +26,12 @@ Ratatui entrypoint remains available in the Rust core. `luma teammates` opens
 an interactive manager: use the arrow keys to select a teammate, `d` to
 delete, `r` to refresh, and `q` to quit.
 
-## Dashboard development
+## Dashboard
 
-`luma dashboard` starts the Rust Core API and Vite development server as one
-managed process group; Ctrl+C stops both. The Vite proxy targets the selected
-Core address automatically. Cargo builds the dashboard before compiling
-`luma-core` and embeds the production assets in the executable. For local
-development, use `luma dashboard` to run the Vite server and API together.
-`LUMA_DASHBOARD_DIR` can override the on-disk assets directory.
+`luma dashboard` starts the Rust Core and its embedded production dashboard;
+Ctrl+C stops the process. The default bind address is loopback-only. Cargo
+builds the dashboard before compiling `luma-core` and embeds the production
+assets in the executable.
 
 ## Saved conversations
 
