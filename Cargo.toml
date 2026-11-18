@@ -3,7 +3,7 @@
 # belongs to the Ink client, which is what people will actually type. This
 # binary is the stdio JSONL server that client drives.
 name = "luma-core"
-version = "0.1.0"
+version = "1.0.0-beta.1"
 edition = "2024"
 description = "The Luma core: a lightweight AI coding agent engine optimized for local models and low-memory environments"
 authors = ["Mani Arasteh"]

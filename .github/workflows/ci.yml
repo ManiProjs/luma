@@ -16,6 +16,39 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install terminal client dependencies
+        working-directory: ui
+        run: bun install --frozen-lockfile
+
+      - name: Check terminal client
+        working-directory: ui
+        run: bun run typecheck
+
+      - name: Check dashboard
+        working-directory: dashboard
+        run: |
+          npm install --no-package-lock
+          npm run typecheck
+          npm run build
+
+      - name: Install desktop dependencies
+        working-directory: desktop
+        run: npm ci
+
+      - name: Check desktop
+        working-directory: desktop
+        run: |
+          npm run typecheck
+          npm run lint
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:

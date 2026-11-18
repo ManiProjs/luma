@@ -9,15 +9,31 @@ workspace.
 
 ## Quick start
 
+Luma currently ships its Rust Core, Ink terminal client, local dashboard, and
+Electron desktop app as source-buildable components. The first 1.0 beta is a
+prerelease; packaged desktop installers are not yet published.
+
 ```sh
-git clone https://github.com/ManiArasteh/luma
+git clone https://github.com/ManiProjs/luma.git
 cd luma
-cargo build --release
-cargo run -- setup
+cargo build --release --no-default-features
+
+cd ui
+bun install
+bun run start
 ```
 
-Run the interactive terminal client with `cd ui && bun install && bun run
-start`, or start the browser dashboard with `cargo run -- dashboard`.
+The terminal client starts the Rust Core automatically. To use a different
+Core executable, set `LUMA_BINARY` to its path. From `ui/`, start the local
+dashboard with `bun run src/index.tsx dashboard`.
+
+To build the desktop app on your current platform:
+
+```sh
+cd desktop
+npm ci
+npm run make
+```
 
 ## What Luma includes
 
@@ -52,6 +68,9 @@ start`, or start the browser dashboard with `cargo run -- dashboard`.
 cargo test --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 ```
+
+The UI checks are `bun run typecheck` in `ui`, `npm run typecheck && npm run
+build` in `dashboard`, and `npm run typecheck && npm run lint` in `desktop`.
 
 Luma is licensed under MIT. Its name comes from the star-like creatures in
 *Super Mario Galaxy*.

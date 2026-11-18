@@ -1,7 +1,7 @@
 {
   "name": "desktop",
   "productName": "Luma",
-  "version": "1.0.0",
+  "version": "1.0.0-beta.1",
   "description": "Luma desktop workspace for Code and Teammates",
   "main": ".vite/build/main.js",
   "private": true,
@@ -10,6 +10,7 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint --ext .ts,.tsx ."
   },
   "keywords": [],
