@@ -2,8 +2,9 @@
 
 Luma uses a ReAct (Reason + Act) loop. The configured model chooses an action,
 the runtime executes it, and the resulting observation is supplied to the
-model on the next step. There is no separate planner model or mandatory
-plan-generation pass between the agent and its tools.
+model on the next step. Agents can propose structured plans inside this loop;
+the runtime persists the plan and its approval state alongside the task before
+implementation continues.
 
 ```text
 User request
@@ -54,6 +55,19 @@ Teammates can be grouped into persistent Teams with named specialist roles.
 Their specialization is injected into task context, while team membership and
 role changes are stored in the runtime database. Scheduled repository monitors
 reuse the same durable schedule, permission, and approval infrastructure.
+
+Teammate execution records each tool action in SQLite before and after the
+operation. On restart, unfinished actions become uncertain and require explicit
+user reconciliation before retry. The retry context carries the acknowledged
+action history so the agent can inspect current state and avoid repeating
+completed work. This does not claim exactly-once execution for arbitrary
+external services.
+
+The Desktop Inbox aggregates approvals, questions, failed/interrupted work,
+and completions across Teammates. Insights and the `evaluate_agent` tool derive
+operational reliability from persisted task outcomes and tool events. Teammates
+also have first-party GitHub REST tools and bounded, approval-gated Playwright
+automation; both obey the normal network permission boundary.
 
 ## Workspace memory
 

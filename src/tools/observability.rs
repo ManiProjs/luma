@@ -18,8 +18,20 @@ pub struct ExecutionMetrics {
     store: Option<RuntimeStore>,
 }
 
+#[derive(Default)]
+pub struct AgentEvaluation {
+    store: Option<RuntimeStore>,
+}
+
 impl ExecutionMetrics {
     /// Use an explicitly supplied store (also useful for in-memory tests).
+    #[cfg(test)]
+    pub fn new(store: RuntimeStore) -> Self {
+        Self { store: Some(store) }
+    }
+}
+
+impl AgentEvaluation {
     #[cfg(test)]
     pub fn new(store: RuntimeStore) -> Self {
         Self { store: Some(store) }
@@ -153,6 +165,8 @@ impl Tool for ExecutionMetrics {
                 "name": agent.name,
                 "kind": agent.kind,
                 "status": agent.status,
+                "provider": agent.configuration.provider,
+                "model": agent.configuration.model,
                 "metrics": counters.into_json(),
                 "events_analyzed": events.len(),
                 "event_window_full": events.len() == EVENT_LIMIT_PER_AGENT,
@@ -202,6 +216,140 @@ impl Tool for ExecutionMetrics {
                 "task_limit": task_limit,
                 "events_per_agent": EVENT_LIMIT_PER_AGENT,
             }
+        }))?)
+    }
+
+    fn is_read_only(&self) -> bool {
+        true
+    }
+}
+
+impl Tool for AgentEvaluation {
+    fn name(&self) -> &str {
+        "evaluate_agent"
+    }
+
+    fn description(&self) -> &str {
+        "Build an operational scorecard from persisted task outcomes and tool events. Input JSON: {\"agent_id\":\"optional agent ID\",\"task_limit\":25}. Reports completion rate, tool success rate, failures, interruptions, token use, reliability score, and per-agent provider/model comparisons. It does not judge answer quality."
+    }
+
+    fn model_guide(&self) -> &str {
+        "Use evaluate_agent to assess an agent's operational reliability before changing its model, tools or instructions. Treat small samples as inconclusive. The score measures persisted task completion and tool-call success only; it is not a benchmark of reasoning or answer correctness."
+    }
+
+    fn execute(&self, input: &str) -> Result<String> {
+        let input: MetricsInput =
+            serde_json::from_str(input).context("evaluate_agent: invalid JSON input")?;
+        let agent_id = input
+            .agent_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|id| !id.is_empty());
+        let task_limit = input
+            .task_limit
+            .unwrap_or(DEFAULT_TASK_LIMIT)
+            .clamp(1, MAX_TASK_LIMIT);
+        let opened;
+        let store = if let Some(store) = self.store.as_ref() {
+            store
+        } else {
+            opened = RuntimeStore::open_default().context("opening persisted runtime store")?;
+            &opened
+        };
+        let metrics_input = serde_json::json!({ "agent_id": agent_id, "task_limit": task_limit });
+        let metrics = ExecutionMetrics {
+            store: Some(store.clone()),
+        }
+        .execute(&metrics_input.to_string())?;
+        let metrics: Value = serde_json::from_str(&metrics)?;
+        let tasks = metrics["tasks"].as_array().cloned().unwrap_or_default();
+        let agents = metrics["agents"].as_array().cloned().unwrap_or_default();
+        let task_count = tasks.len();
+        let completed = tasks
+            .iter()
+            .filter(|task| task["status"] == "completed")
+            .count();
+        let failed = tasks
+            .iter()
+            .filter(|task| task["status"] == "failed")
+            .count();
+        let interrupted = tasks
+            .iter()
+            .filter(|task| task["status"] == "interrupted")
+            .count();
+        let cancelled = tasks
+            .iter()
+            .filter(|task| task["status"] == "cancelled")
+            .count();
+        let terminal = completed + failed + interrupted + cancelled;
+        let tool_started: u64 = agents
+            .iter()
+            .map(|agent| agent["metrics"]["tools_started"].as_u64().unwrap_or(0))
+            .sum();
+        let tool_finished: u64 = agents
+            .iter()
+            .map(|agent| agent["metrics"]["tools_finished"].as_u64().unwrap_or(0))
+            .sum();
+        let tool_failures: u64 = agents
+            .iter()
+            .map(|agent| agent["metrics"]["tool_failures"].as_u64().unwrap_or(0))
+            .sum();
+        let tokens: u64 = agents
+            .iter()
+            .map(|agent| agent["metrics"]["total_tokens"].as_u64().unwrap_or(0))
+            .sum();
+        let completion_rate = (terminal > 0).then_some(completed as f64 / terminal as f64);
+        let tool_success_rate = (tool_finished > 0)
+            .then_some((tool_finished.saturating_sub(tool_failures)) as f64 / tool_finished as f64);
+        let score = match (completion_rate, tool_success_rate) {
+            (Some(tasks), Some(tools)) => {
+                Some(((tasks * 0.65 + tools * 0.35) * 100.0).round() as u8)
+            }
+            (Some(tasks), None) => Some((tasks * 100.0).round() as u8),
+            (None, Some(tools)) => Some((tools * 100.0).round() as u8),
+            (None, None) => None,
+        };
+        let health = match score {
+            Some(score) if terminal >= 10 && score >= 90 => "reliable",
+            Some(score) if terminal >= 5 && score < 70 => "needs_attention",
+            Some(_) => "developing",
+            None => "insufficient_data",
+        };
+        let model_comparison = agents.iter().map(|agent| {
+            let id = agent["agent_id"].as_str().unwrap_or_default();
+            let agent_tasks = tasks.iter().filter(|task| task["agent_id"] == id).collect::<Vec<_>>();
+            let task_completed = agent_tasks.iter().filter(|task| task["status"] == "completed").count();
+            let task_failed = agent_tasks.iter().filter(|task| task["status"] == "failed").count();
+            let task_interrupted = agent_tasks.iter().filter(|task| task["status"] == "interrupted").count();
+            let agent_terminal = agent_tasks.iter().filter(|task| ["completed", "failed", "cancelled", "interrupted"].contains(&task["status"].as_str().unwrap_or_default())).count();
+            let metrics = &agent["metrics"];
+            let finished = metrics["tools_finished"].as_u64().unwrap_or(0);
+            let failures = metrics["tool_failures"].as_u64().unwrap_or(0);
+            json!({
+                "agent_id": id,
+                "name": agent["name"],
+                "provider": agent["provider"],
+                "model": agent["model"],
+                "tasks_sampled": agent_tasks.len(),
+                "completed": task_completed,
+                "failed": task_failed,
+                "interrupted": task_interrupted,
+                "completion_rate": (agent_terminal > 0).then_some(task_completed as f64 / agent_terminal as f64),
+                "tool_success_rate": (finished > 0).then_some(finished.saturating_sub(failures) as f64 / finished as f64),
+                "total_tokens": metrics["total_tokens"],
+            })
+        }).collect::<Vec<_>>();
+        Ok(serde_json::to_string_pretty(&json!({
+            "agent_id": agent_id,
+            "health": health,
+            "reliability_score": score,
+            "sample": { "tasks": task_count, "terminal_tasks": terminal, "tool_calls_started": tool_started, "tool_calls_finished": tool_finished },
+            "task_outcomes": { "completed": completed, "failed": failed, "interrupted": interrupted, "cancelled": cancelled, "completion_rate": completion_rate },
+            "tool_reliability": { "successful": tool_finished.saturating_sub(tool_failures), "failed": tool_failures, "success_rate": tool_success_rate },
+            "total_tokens": tokens,
+            "model_comparison": model_comparison,
+            "limits": metrics["limits"],
+            "interpretation": "Operational reliability only. This score does not measure answer correctness, code quality, or benchmark performance. Small samples are inconclusive."
         }))?)
     }
 
@@ -356,5 +504,49 @@ mod tests {
                 .iter()
                 .any(|task| task["task_id"] == first_task.id)
         );
+    }
+
+    #[test]
+    fn evaluation_scorecard_reports_task_and_tool_reliability() {
+        let store = RuntimeStore::open_in_memory_for_tests();
+        let agent = store
+            .create_agent(
+                "Evaluator",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let task = store
+            .create_task(&agent.id, "Successful task", None, None, false, None)
+            .unwrap();
+        store
+            .transition_task(&task.id, TaskStatus::Running, None, None)
+            .unwrap();
+        append_agent_event(
+            &store,
+            &agent.id,
+            &task.id,
+            json!({"type":"ToolStarted","data":{"name":"read_file","input":"{}"}}),
+        );
+        append_agent_event(
+            &store,
+            &agent.id,
+            &task.id,
+            json!({"type":"ToolFinished","data":{"name":"read_file","duration_ms":12,"failed":false}}),
+        );
+        store
+            .transition_task(&task.id, TaskStatus::Completed, None, None)
+            .unwrap();
+        let output = AgentEvaluation::new(store)
+            .execute(&json!({"agent_id":agent.id.clone()}).to_string())
+            .unwrap();
+        let value: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(value["health"], "developing");
+        assert_eq!(value["reliability_score"], 100);
+        assert_eq!(value["task_outcomes"]["completion_rate"], 1.0);
+        assert_eq!(value["tool_reliability"]["success_rate"], 1.0);
+        assert_eq!(value["model_comparison"][0]["agent_id"], agent.id);
+        assert_eq!(value["model_comparison"][0]["tasks_sampled"], 1);
     }
 }

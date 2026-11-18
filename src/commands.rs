@@ -401,7 +401,7 @@ pub fn suggestions(input: &str) -> Vec<String> {
 }
 
 #[cfg(all(test, feature = "tui"))]
-mod tests {
+mod tui_tests {
     use super::{Command, suggestions};
 
     #[test]

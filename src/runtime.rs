@@ -13,7 +13,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 10;
+const MAX_ACTION_INPUT_BYTES: usize = 8 * 1024;
+const MAX_ACTION_OUTPUT_BYTES: usize = 8 * 1024;
+const MAX_TASK_PLAN_BYTES: usize = 16 * 1024;
 pub const GLOBAL_AGENT_ID: &str = "agent_global";
 
 fn now() -> i64 {
@@ -412,6 +415,32 @@ pub struct RuntimeEvent {
     pub created_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskActionRecord {
+    pub id: String,
+    pub task_id: String,
+    pub sequence: i64,
+    pub attempt: u32,
+    pub tool_name: String,
+    pub input: String,
+    pub output: Option<String>,
+    /// started, finished, failed, or uncertain. Reconciliation is recorded
+    /// separately so the original execution outcome remains visible.
+    pub status: String,
+    pub started_at: i64,
+    pub updated_at: i64,
+    pub finished_at: Option<i64>,
+    pub reconciliation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskPlanRecord {
+    pub task_id: String,
+    pub plan: String,
+    pub approved: bool,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum GatewayCommand {
@@ -679,6 +708,43 @@ impl RuntimeStore {
                 );
                 CREATE INDEX task_dependencies_parent ON task_dependencies(depends_on_task_id);
                 PRAGMA user_version = 8;
+                COMMIT;",
+            )?;
+        }
+        if version < 9 {
+            db.execute_batch(
+                "BEGIN IMMEDIATE;
+                CREATE TABLE task_actions (
+                    id TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL,
+                    attempt INTEGER NOT NULL,
+                    tool_name TEXT NOT NULL,
+                    input TEXT NOT NULL,
+                    output TEXT,
+                    status TEXT NOT NULL CHECK(status IN ('started','finished','failed','uncertain','reconciled')),
+                    started_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    finished_at INTEGER,
+                    reconciliation TEXT,
+                    UNIQUE(task_id, sequence)
+                );
+                CREATE INDEX task_actions_task_sequence ON task_actions(task_id, sequence);
+                CREATE INDEX task_actions_unresolved ON task_actions(task_id, status);
+                PRAGMA user_version = 9;
+                COMMIT;",
+            )?;
+        }
+        if version < 10 {
+            db.execute_batch(
+                "BEGIN IMMEDIATE;
+                CREATE TABLE task_plans (
+                    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+                    plan TEXT NOT NULL,
+                    approved INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL
+                );
+                PRAGMA user_version = 10;
                 COMMIT;",
             )?;
         }
@@ -1668,6 +1734,315 @@ impl RuntimeStore {
             .map_err(Into::into)
     }
 
+    /// Return every queued task in dispatch order. This intentionally bypasses
+    /// the bounded, newest-first UI history query so old work cannot starve.
+    pub fn list_queued_tasks(&self) -> Result<Vec<TaskRecord>> {
+        let db = self.db()?;
+        let queued = serde_json::to_string(&TaskStatus::Queued)?;
+        let mut statement = db.prepare(
+            "SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling FROM tasks WHERE status=?1 ORDER BY created_at ASC, rowid ASC",
+        )?;
+        let rows = statement.query_map([queued], task_from_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    /// Atomically claim a queued task. Only one supervisor can change a given
+    /// row from queued to running, even when multiple SQLite connections race.
+    pub fn claim_queued_task(&self, id: &str) -> Result<Option<TaskRecord>> {
+        let mut db = self.db()?;
+        let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let queued = serde_json::to_string(&TaskStatus::Queued)?;
+        let running = serde_json::to_string(&TaskStatus::Running)?;
+        let timestamp = now();
+        let changed = transaction.execute(
+            "UPDATE tasks SET status=?2,attempt=attempt+1,updated_at=?3 WHERE id=?1 AND status=?4",
+            params![id, running, timestamp, queued],
+        )?;
+        if changed == 0 {
+            transaction.commit()?;
+            return Ok(None);
+        }
+        let task = transaction.query_row(
+            "SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling FROM tasks WHERE id=?1",
+            [id],
+            task_from_row,
+        )?;
+        transaction.execute(
+            "INSERT INTO events (event_id,agent_id,task_id,event_type,payload,created_at) VALUES (?1,?2,?3,'task.started',?4,?5)",
+            params![new_id("evt"), task.agent_id, task.id, serde_json::to_string(&task)?, timestamp],
+        )?;
+        transaction.commit()?;
+        Ok(Some(task))
+    }
+
+    pub fn start_task_action(
+        &self,
+        task_id: &str,
+        tool_name: &str,
+        input: &str,
+    ) -> Result<TaskActionRecord> {
+        let tool_name = bounded_text(tool_name, 256);
+        let input = bounded_text(&redact_action_text(input), MAX_ACTION_INPUT_BYTES);
+        let mut db = self.db()?;
+        let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task_attempt: i64 = transaction
+            .query_row("SELECT attempt FROM tasks WHERE id=?1", [task_id], |row| {
+                row.get(0)
+            })
+            .optional()?
+            .ok_or_else(|| anyhow!("task not found: {task_id}"))?;
+        let sequence: i64 = transaction.query_row(
+            "SELECT COALESCE(MAX(sequence),0)+1 FROM task_actions WHERE task_id=?1",
+            [task_id],
+            |row| row.get(0),
+        )?;
+        let timestamp = now();
+        let record = TaskActionRecord {
+            id: new_id("action"),
+            task_id: task_id.into(),
+            sequence,
+            attempt: task_attempt.max(0) as u32,
+            tool_name,
+            input,
+            output: None,
+            status: "started".into(),
+            started_at: timestamp,
+            updated_at: timestamp,
+            finished_at: None,
+            reconciliation: None,
+        };
+        transaction.execute(
+            "INSERT INTO task_actions (id,task_id,sequence,attempt,tool_name,input,output,status,started_at,updated_at,finished_at,reconciliation) VALUES (?1,?2,?3,?4,?5,?6,NULL,'started',?7,?7,NULL,NULL)",
+            params![record.id, record.task_id, record.sequence, record.attempt, record.tool_name, record.input, timestamp],
+        )?;
+        transaction.commit()?;
+        Ok(record)
+    }
+
+    pub fn update_task_action_progress(&self, action_id: &str, output: &str) -> Result<()> {
+        let output = bounded_text(&redact_action_text(output), MAX_ACTION_OUTPUT_BYTES);
+        let db = self.db()?;
+        db.execute(
+            "UPDATE task_actions SET output=?2,updated_at=?3 WHERE id=?1 AND status='started'",
+            params![action_id, output, now()],
+        )?;
+        Ok(())
+    }
+
+    pub fn finish_task_action(
+        &self,
+        action_id: &str,
+        output: Option<&str>,
+        failed: bool,
+    ) -> Result<()> {
+        let output =
+            output.map(|value| bounded_text(&redact_action_text(value), MAX_ACTION_OUTPUT_BYTES));
+        let status = if failed { "failed" } else { "finished" };
+        let timestamp = now();
+        let db = self.db()?;
+        let changed = db.execute(
+            "UPDATE task_actions SET status=?2,output=COALESCE(?3,output),updated_at=?4,finished_at=?4 WHERE id=?1 AND status='started'",
+            params![action_id, status, output, timestamp],
+        )?;
+        if changed == 0 {
+            bail!("task action is missing or no longer active: {action_id}");
+        }
+        Ok(())
+    }
+
+    pub fn list_task_actions(&self, task_id: &str) -> Result<Vec<TaskActionRecord>> {
+        let db = self.db()?;
+        let mut statement = db.prepare(
+            "SELECT id,task_id,sequence,attempt,tool_name,input,output,status,started_at,updated_at,finished_at,reconciliation FROM task_actions WHERE task_id=?1 ORDER BY sequence ASC",
+        )?;
+        let rows = statement.query_map([task_id], task_action_from_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    pub fn save_task_plan(&self, task_id: &str, plan: &str) -> Result<TaskPlanRecord> {
+        let plan = bounded_text(plan, MAX_TASK_PLAN_BYTES);
+        if plan.trim().is_empty() {
+            bail!("task plan cannot be empty");
+        }
+        let timestamp = now();
+        let db = self.db()?;
+        let agent_id: String =
+            db.query_row("SELECT agent_id FROM tasks WHERE id=?1", [task_id], |row| {
+                row.get(0)
+            })?;
+        db.execute(
+            "INSERT INTO task_plans(task_id,plan,approved,updated_at) VALUES(?1,?2,0,?3) ON CONFLICT(task_id) DO UPDATE SET plan=excluded.plan,approved=0,updated_at=excluded.updated_at",
+            params![task_id, plan, timestamp],
+        )?;
+        drop(db);
+        self.append_event(
+            Some(&agent_id),
+            Some(task_id),
+            "task.plan_generated",
+            serde_json::json!({"plan":plan,"approved":false}),
+        )?;
+        Ok(TaskPlanRecord {
+            task_id: task_id.into(),
+            plan,
+            approved: false,
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn approve_task_plan(&self, task_id: &str) -> Result<TaskPlanRecord> {
+        let timestamp = now();
+        let db = self.db()?;
+        let agent_id: String =
+            db.query_row("SELECT agent_id FROM tasks WHERE id=?1", [task_id], |row| {
+                row.get(0)
+            })?;
+        let changed = db.execute(
+            "UPDATE task_plans SET approved=1,updated_at=?2 WHERE task_id=?1",
+            params![task_id, timestamp],
+        )?;
+        if changed == 0 {
+            bail!("no proposed plan exists for task {task_id}");
+        }
+        let plan = db.query_row(
+            "SELECT plan FROM task_plans WHERE task_id=?1",
+            [task_id],
+            |row| row.get::<_, String>(0),
+        )?;
+        drop(db);
+        self.append_event(
+            Some(&agent_id),
+            Some(task_id),
+            "task.plan_approved",
+            serde_json::json!({"plan":plan,"approved":true}),
+        )?;
+        Ok(TaskPlanRecord {
+            task_id: task_id.into(),
+            plan,
+            approved: true,
+            updated_at: timestamp,
+        })
+    }
+
+    pub fn get_task_plan(&self, task_id: &str) -> Result<Option<TaskPlanRecord>> {
+        let db = self.db()?;
+        db.query_row(
+            "SELECT task_id,plan,approved,updated_at FROM task_plans WHERE task_id=?1",
+            [task_id],
+            |row| {
+                Ok(TaskPlanRecord {
+                    task_id: row.get(0)?,
+                    plan: row.get(1)?,
+                    approved: row.get(2)?,
+                    updated_at: row.get(3)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(Into::into)
+    }
+
+    /// Any action still marked started when its worker disappears has an
+    /// unknown outcome: its external side effect may already have happened.
+    pub fn mark_unfinished_task_actions_uncertain(&self, task_id: &str) -> Result<usize> {
+        let timestamp = now();
+        let db = self.db()?;
+        let changed = db.execute(
+            "UPDATE task_actions SET status='uncertain',updated_at=?2 WHERE task_id=?1 AND status='started'",
+            params![task_id, timestamp],
+        )?;
+        Ok(changed)
+    }
+
+    /// Explicitly acknowledge every prior tool action before allowing a retry.
+    /// The original outcome stays intact and the acknowledgement is retained
+    /// alongside each action for later review.
+    pub fn reconcile_task_actions(&self, task_id: &str, acknowledgement: &str) -> Result<usize> {
+        let acknowledgement = acknowledgement.trim();
+        if acknowledgement.is_empty() || acknowledgement.len() > 2_000 {
+            bail!("reconciliation acknowledgement must contain 1 to 2000 characters");
+        }
+        let timestamp = now();
+        let mut db = self.db()?;
+        let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task = transaction
+            .query_row(
+                "SELECT status,checkpoint FROM tasks WHERE id=?1",
+                [task_id],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()?
+            .ok_or_else(|| anyhow!("task not found: {task_id}"))?;
+        let task_status: TaskStatus = serde_json::from_str(&task.0)?;
+        if !matches!(task_status, TaskStatus::Failed | TaskStatus::Interrupted) {
+            bail!("tool actions can only be reconciled for failed or interrupted tasks");
+        }
+        let active: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM task_actions WHERE task_id=?1 AND status='started'",
+            [task_id],
+            |row| row.get(0),
+        )?;
+        if active > 0 {
+            bail!(
+                "task still has active tool actions; wait for the worker to stop before reconciling"
+            );
+        }
+        let mut statement = transaction.prepare(
+            "SELECT sequence,tool_name,input,output,status,started_at,finished_at FROM task_actions WHERE task_id=?1 ORDER BY sequence DESC LIMIT 24",
+        )?;
+        let actions = statement.query_map([task_id], |row| {
+            Ok(serde_json::json!({
+                "sequence": row.get::<_, i64>(0)?,
+                "tool": row.get::<_, String>(1)?,
+                "input": bounded_text(&row.get::<_, String>(2)?, 512),
+                "output": row.get::<_, Option<String>>(3)?.map(|value| bounded_text(&value, 512)),
+                "outcome": row.get::<_, String>(4)?,
+                "started_at": row.get::<_, i64>(5)?,
+                "finished_at": row.get::<_, Option<i64>>(6)?,
+            }))
+        })?.collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(statement);
+        let total_actions: i64 = transaction.query_row(
+            "SELECT COUNT(*) FROM task_actions WHERE task_id=?1",
+            [task_id],
+            |row| row.get(0),
+        )?;
+        if total_actions == 0 {
+            transaction.commit()?;
+            return Ok(0);
+        }
+        let mut checkpoint = match task.1.as_deref() {
+            Some(value) => serde_json::from_str::<serde_json::Value>(value).unwrap_or_else(
+                |_| serde_json::json!({"previous_checkpoint_raw":bounded_text(value, 2_000)}),
+            ),
+            None => serde_json::json!({}),
+        };
+        if !checkpoint.is_object() {
+            checkpoint = serde_json::json!({"previous_checkpoint":checkpoint});
+        }
+        checkpoint["action_recovery"] = serde_json::json!({
+            "acknowledgement": acknowledgement,
+            "actions": actions.into_iter().rev().collect::<Vec<_>>(),
+            "omitted_older_actions": total_actions.saturating_sub(24),
+            "reconciled_at": timestamp,
+        });
+        let changed = transaction.execute(
+            "UPDATE task_actions SET reconciliation=?2,updated_at=?3 WHERE task_id=?1",
+            params![task_id, acknowledgement, timestamp],
+        )?;
+        transaction.execute(
+            "UPDATE tasks SET checkpoint=?2,updated_at=?3 WHERE id=?1",
+            params![task_id, serde_json::to_string(&checkpoint)?, timestamp],
+        )?;
+        transaction.execute(
+            "INSERT INTO events (event_id,task_id,event_type,payload,created_at) VALUES (?1,?2,'task.actions_reconciled',?3,?4)",
+            params![new_id("evt"), task_id, serde_json::to_string(&serde_json::json!({"count":changed,"acknowledgement":acknowledgement}))?, timestamp],
+        )?;
+        transaction.commit()?;
+        Ok(changed)
+    }
+
     fn list_active_tasks(&self) -> Result<Vec<TaskRecord>> {
         let db = self.db()?;
         let statuses = [
@@ -1694,23 +2069,63 @@ impl RuntimeStore {
         error: Option<String>,
         checkpoint: Option<serde_json::Value>,
     ) -> Result<TaskRecord> {
-        let mut task = self
-            .get_task(id)?
-            .ok_or_else(|| anyhow!("task not found: {id}"))?;
+        let mut db = self.db()?;
+        let transaction = db.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut task = transaction.query_row(
+            "SELECT id,agent_id,title,request,status,workspace,checkpoint,error,attempt,recover_on_restart,schedule_id,created_at,updated_at,conversation_id,origin_trigger_id,parent_task_id,delegation_depth,permission_ceiling FROM tasks WHERE id=?1",
+            [id],
+            task_from_row,
+        ).optional()?.ok_or_else(|| anyhow!("task not found: {id}"))?;
         if !valid_task_transition(task.status, status) {
             bail!("invalid task transition: {:?} -> {:?}", task.status, status);
         }
+        if status == TaskStatus::Queued {
+            let unresolved: i64 = transaction.query_row(
+                "SELECT COUNT(*) FROM task_actions WHERE task_id=?1 AND reconciliation IS NULL",
+                [id],
+                |row| row.get(0),
+            )?;
+            if unresolved > 0 {
+                bail!(
+                    "task has {unresolved} unacknowledged tool action(s); call reconcile_task_actions with an explicit acknowledgement before retrying"
+                );
+            }
+        }
+        if matches!(
+            status,
+            TaskStatus::Failed | TaskStatus::Interrupted | TaskStatus::Cancelled
+        ) {
+            transaction.execute(
+                "UPDATE task_actions SET status='uncertain',updated_at=?2 WHERE task_id=?1 AND status='started'",
+                params![id, now()],
+            )?;
+        }
+        let previous_status = task.status;
         task.status = status;
         task.error = error;
-        if checkpoint.is_some() {
-            task.checkpoint = checkpoint;
+        if let Some(mut next_checkpoint) = checkpoint {
+            if let Some(recovery) = task
+                .checkpoint
+                .as_ref()
+                .and_then(|value| value.get("action_recovery"))
+                .cloned()
+            {
+                if !next_checkpoint.is_object() {
+                    next_checkpoint = serde_json::json!({"previous_checkpoint":next_checkpoint});
+                }
+                next_checkpoint["action_recovery"] = recovery;
+            }
+            task.checkpoint = Some(next_checkpoint);
         }
         if status == TaskStatus::Running {
             task.attempt = task.attempt.saturating_add(1);
         }
         task.updated_at = now();
-        let db = self.db()?;
-        db.execute("UPDATE tasks SET status=?2,error=?3,checkpoint=?4,attempt=?5,updated_at=?6 WHERE id=?1", params![id, serde_json::to_string(&task.status)?, task.error, task.checkpoint.as_ref().map(serde_json::to_string).transpose()?, task.attempt, task.updated_at])?;
+        let changed = transaction.execute("UPDATE tasks SET status=?2,error=?3,checkpoint=?4,attempt=?5,updated_at=?6 WHERE id=?1 AND status=?7", params![id, serde_json::to_string(&task.status)?, task.error, task.checkpoint.as_ref().map(serde_json::to_string).transpose()?, task.attempt, task.updated_at, serde_json::to_string(&previous_status)?])?;
+        if changed != 1 {
+            bail!("task changed concurrently; retry the transition");
+        }
+        transaction.commit()?;
         drop(db);
         let event = match status {
             TaskStatus::Running => "task.started",
@@ -1746,6 +2161,12 @@ impl RuntimeStore {
     pub fn recover_after_restart(&self) -> Result<Vec<TaskRecord>> {
         // Recovery must include every in-flight task, not just the newest page
         // returned by the UI-facing, deliberately bounded list_tasks API.
+        let db = self.db()?;
+        db.execute(
+            "UPDATE task_actions SET status='uncertain',updated_at=?1 WHERE status='started'",
+            [now()],
+        )?;
+        drop(db);
         let running = self.list_active_tasks()?;
         let mut recovered = Vec::new();
         for task in running {
@@ -2759,6 +3180,82 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecord> {
     })
 }
 
+fn task_action_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskActionRecord> {
+    Ok(TaskActionRecord {
+        id: row.get(0)?,
+        task_id: row.get(1)?,
+        sequence: row.get(2)?,
+        attempt: row.get::<_, i64>(3)?.max(0) as u32,
+        tool_name: row.get(4)?,
+        input: row.get(5)?,
+        output: row.get(6)?,
+        status: row.get(7)?,
+        started_at: row.get(8)?,
+        updated_at: row.get(9)?,
+        finished_at: row.get(10)?,
+        reconciliation: row.get(11)?,
+    })
+}
+
+fn bounded_text(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_owned();
+    }
+    let mut end = max_bytes.saturating_sub("…".len());
+    while !value.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    format!("{}…", &value[..end])
+}
+
+fn redact_action_text(value: &str) -> String {
+    fn redact(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(object) => {
+                for (key, item) in object.iter_mut() {
+                    let normalized = key.to_ascii_lowercase().replace('-', "_");
+                    if [
+                        "authorization",
+                        "token",
+                        "api_key",
+                        "apikey",
+                        "password",
+                        "secret",
+                        "cookie",
+                    ]
+                    .iter()
+                    .any(|needle| normalized.contains(needle))
+                    {
+                        *item = serde_json::Value::String("[REDACTED]".into());
+                    } else {
+                        redact(item);
+                    }
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    redact(item);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let (prefix, candidate) = value
+        .split_once(" → ")
+        .map_or((None, value), |(prefix, candidate)| {
+            (Some(prefix), candidate)
+        });
+    let Ok(mut json) = serde_json::from_str::<serde_json::Value>(candidate) else {
+        return value.to_owned();
+    };
+    redact(&mut json);
+    let serialized = serde_json::to_string(&json).unwrap_or_else(|_| candidate.to_owned());
+    prefix.map_or(serialized.clone(), |prefix| {
+        format!("{prefix} → {serialized}")
+    })
+}
+
 fn to_sql_error(error: serde_json::Error) -> rusqlite::Error {
     rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error))
 }
@@ -2896,8 +3393,24 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 8);
+        assert_eq!(version, 10);
         assert!(table_exists);
+        let action_table_exists: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_actions')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let plan_table_exists: bool = db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_plans')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(action_table_exists);
+        assert!(plan_table_exists);
         let conversation_column: bool = db
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM pragma_table_info('tasks') WHERE name='conversation_id')",
@@ -3473,6 +3986,258 @@ mod tests {
                 .iter()
                 .all(|item| item.status != TaskStatus::Queued)
         );
+    }
+
+    #[test]
+    fn task_action_journal_tracks_progress_and_requires_reconciliation_before_retry() {
+        let store = RuntimeStore::in_memory();
+        let agent = store
+            .create_agent(
+                "Journal",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let task = store
+            .create_task(&agent.id, "Run tool", None, None, false, None)
+            .unwrap();
+        store
+            .transition_task(&task.id, TaskStatus::Running, None, None)
+            .unwrap();
+
+        let action = store
+            .start_task_action(&task.id, "run_command", &"x".repeat(9_000))
+            .unwrap();
+        assert!(action.input.len() <= MAX_ACTION_INPUT_BYTES);
+        store
+            .update_task_action_progress(&action.id, &"y".repeat(9_000))
+            .unwrap();
+        let in_progress = store.list_task_actions(&task.id).unwrap();
+        assert_eq!(in_progress[0].status, "started");
+        assert!(in_progress[0].output.as_ref().unwrap().len() <= MAX_ACTION_OUTPUT_BYTES);
+
+        store.recover_after_restart().unwrap();
+        let uncertain = store.list_task_actions(&task.id).unwrap();
+        assert_eq!(uncertain[0].status, "uncertain");
+        assert!(
+            store
+                .transition_task(&task.id, TaskStatus::Queued, None, None)
+                .is_err()
+        );
+
+        assert_eq!(
+            store
+                .reconcile_task_actions(&task.id, "Checked command outcome manually")
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            store.list_task_actions(&task.id).unwrap()[0].status,
+            "uncertain"
+        );
+        assert!(
+            store.list_task_actions(&task.id).unwrap()[0]
+                .reconciliation
+                .is_some()
+        );
+        let recovery = store
+            .get_task(&task.id)
+            .unwrap()
+            .unwrap()
+            .checkpoint
+            .unwrap();
+        assert_eq!(
+            recovery["action_recovery"]["acknowledgement"],
+            "Checked command outcome manually"
+        );
+        assert_eq!(
+            store
+                .transition_task(&task.id, TaskStatus::Queued, None, None)
+                .unwrap()
+                .status,
+            TaskStatus::Queued
+        );
+    }
+
+    #[test]
+    fn completed_and_failed_tool_actions_keep_stable_order_and_timestamps() {
+        let store = RuntimeStore::in_memory();
+        let agent = store
+            .create_agent(
+                "Journal",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let task = store
+            .create_task(&agent.id, "Run tools", None, None, false, None)
+            .unwrap();
+        let first = store
+            .start_task_action(&task.id, "read_file", "{\"path\":\"a\"}")
+            .unwrap();
+        store
+            .finish_task_action(&first.id, Some("file contents"), false)
+            .unwrap();
+        let second = store
+            .start_task_action(&task.id, "write_file", "{\"path\":\"b\"}")
+            .unwrap();
+        store
+            .finish_task_action(&second.id, Some("write failed"), true)
+            .unwrap();
+
+        let actions = store.list_task_actions(&task.id).unwrap();
+        assert_eq!(
+            actions
+                .iter()
+                .map(|action| action.sequence)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(actions[0].status, "finished");
+        assert_eq!(actions[1].status, "failed");
+        assert!(actions.iter().all(|action| action.finished_at.is_some()));
+        assert!(actions[0].updated_at >= actions[0].started_at);
+        store
+            .transition_task(
+                &task.id,
+                TaskStatus::Failed,
+                Some("task failed".into()),
+                None,
+            )
+            .unwrap();
+        assert!(
+            store
+                .transition_task(&task.id, TaskStatus::Queued, None, None)
+                .is_err()
+        );
+        assert_eq!(
+            store
+                .reconcile_task_actions(&task.id, "Reviewed all tool outcomes")
+                .unwrap(),
+            2
+        );
+        assert!(
+            store
+                .transition_task(&task.id, TaskStatus::Queued, None, None)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn task_plan_is_persisted_and_approval_is_audited() {
+        let store = RuntimeStore::in_memory();
+        let agent = store
+            .create_agent(
+                "Planner",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let task = store
+            .create_task(&agent.id, "Plan work", None, None, false, None)
+            .unwrap();
+        let proposed = store
+            .save_task_plan(&task.id, &"plan ".repeat(4_000))
+            .unwrap();
+        assert!(!proposed.approved);
+        assert!(proposed.plan.len() <= MAX_TASK_PLAN_BYTES);
+        assert!(!store.get_task_plan(&task.id).unwrap().unwrap().approved);
+
+        let approved = store.approve_task_plan(&task.id).unwrap();
+        assert!(approved.approved);
+        assert!(store.get_task_plan(&task.id).unwrap().unwrap().approved);
+        let events = store.events_since(0, 100).unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|event| event.event_type == "task.plan_generated"
+                    && event.agent_id.as_deref() == Some(agent.id.as_str()))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| event.event_type == "task.plan_approved"
+                    && event.agent_id.as_deref() == Some(agent.id.as_str()))
+        );
+    }
+
+    #[test]
+    fn concurrent_task_claim_has_exactly_one_winner() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("runtime.sqlite3");
+        let first_store = RuntimeStore::open(&path).unwrap();
+        let agent = first_store
+            .create_agent(
+                "Claim",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        let task = first_store
+            .create_task(&agent.id, "Claim me", None, None, false, None)
+            .unwrap();
+        let second_store = RuntimeStore::open(&path).unwrap();
+        let assertion_store = first_store.clone();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let first_barrier = barrier.clone();
+        let task_id = task.id.clone();
+        let first = std::thread::spawn(move || {
+            first_barrier.wait();
+            first_store.claim_queued_task(&task_id).unwrap().is_some()
+        });
+        let second_barrier = barrier.clone();
+        let task_id = task.id.clone();
+        let second = std::thread::spawn(move || {
+            second_barrier.wait();
+            second_store.claim_queued_task(&task_id).unwrap().is_some()
+        });
+        assert_ne!(first.join().unwrap(), second.join().unwrap());
+        assert_eq!(
+            assertion_store.get_task(&task.id).unwrap().unwrap().attempt,
+            1
+        );
+    }
+
+    #[test]
+    fn queued_task_query_is_not_limited_by_ui_history_page_size() {
+        let store = RuntimeStore::in_memory();
+        let agent = store
+            .create_agent(
+                "Queue",
+                None,
+                AgentKind::Teammates,
+                AgentConfiguration::default(),
+            )
+            .unwrap();
+        for index in 0..501 {
+            store
+                .create_task(
+                    &agent.id,
+                    &format!("Queued {index}"),
+                    None,
+                    None,
+                    false,
+                    None,
+                )
+                .unwrap();
+        }
+        assert_eq!(store.list_tasks(None, 500).unwrap().len(), 500);
+        assert_eq!(store.list_queued_tasks().unwrap().len(), 501);
+    }
+
+    #[test]
+    fn task_action_journal_redacts_nested_secret_fields() {
+        let input = r#"http_request → {"url":"https://example.test","headers":{"Authorization":"Bearer abc","x-api-key":"key-value"},"options":{"password":"pw","keep":"visible"}}"#;
+        let redacted = redact_action_text(input);
+        assert!(!redacted.contains("Bearer abc"));
+        assert!(!redacted.contains("key-value"));
+        assert!(!redacted.contains("pw"));
+        assert!(redacted.contains("https://example.test"));
+        assert!(redacted.contains("visible"));
     }
 
     #[test]

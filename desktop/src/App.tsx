@@ -29,7 +29,7 @@ import { useSetupStore } from "./stores/setupStore";
 
 import { useWorkspaceStore, type Chat } from "./stores/workspaceStore";
 import { MascotAvatar } from "./components/MascotAvatar";
-import type { AgentConfiguration, AgentRecord, ApprovalRecord, CommandDescriptor, MemoryEntry, MemoryScope, ScheduleRecord, EventTriggerRecord, TaskRecord, RuntimeEvent } from "../../shared/protocol";
+import type { AgentConfiguration, AgentRecord, ApprovalRecord, CommandDescriptor, MemoryEntry, MemoryScope, ScheduleRecord, EventTriggerRecord, TaskRecord, TaskActionRecord, RuntimeEvent } from "../../shared/protocol";
 import { formatChatPrompt, type ChatAttachment } from "../../shared/attachments";
 import { MascotCustomizer } from "./components/MascotCustomizer";
 import { getProfileDisplayName, useProfileStore } from "./stores/profileStore";
@@ -118,6 +118,21 @@ const TEAMMATE_SLASH_COMMANDS = [
   { command: "/pause", description: "Pause this teammate" },
   { command: "/resume", description: "Resume this teammate" },
   { command: "/stop", description: "Stop the active task" },
+];
+
+const SPECIALIZATION_PRESETS = [
+  "Software Architect",
+  "Frontend Developer",
+  "Backend Developer",
+  "Security Reviewer",
+  "QA Engineer",
+  "DevOps Engineer",
+  "Code Reviewer",
+  "Technical Writer",
+  "Research Analyst",
+  "Data Analyst",
+  "Product Strategist",
+  "Performance Engineer",
 ];
 
 function ChevronIcon({ open }: { open: boolean }) {
@@ -3747,6 +3762,10 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   const [approvals, setApprovals] = useState<ApprovalRecord[]>([]);
   const [schedules, setSchedules] = useState<ScheduleRecord[]>([]);
   const [eventTriggers, setEventTriggers] = useState<EventTriggerRecord[]>([]);
+  const [recoveryTaskId, setRecoveryTaskId] = useState<string | null>(null);
+  const [recoveryActions, setRecoveryActions] = useState<TaskActionRecord[]>([]);
+  const [recoveryAcknowledgement, setRecoveryAcknowledgement] = useState("");
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
   const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>([]);
   const [memoryLoading, setMemoryLoading] = useState(false);
   const [memoryScope, setMemoryScope] = useState<MemoryScope>("agent");
@@ -3814,10 +3833,10 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
     try { return window.localStorage.getItem("luma.teammates-active-tab") === "settings" ? "settings" : "chat"; }
     catch { return "chat"; }
   });
-  const [inspectorTab, setInspectorTab] = useState<"tasks" | "notes" | "files">(() => {
+  const [inspectorTab, setInspectorTab] = useState<"inbox" | "tasks" | "insights" | "notes" | "files">(() => {
     try {
       const saved = window.localStorage.getItem("luma.teammates-inspector-tab");
-      return saved === "notes" || saved === "files" ? saved : "tasks";
+      return saved === "inbox" || saved === "insights" || saved === "notes" || saved === "files" ? saved : "tasks";
     } catch { return "tasks"; }
   });
   const [memoryContent, setMemoryContent] = useState("");
@@ -4115,15 +4134,25 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
   }, [selectedTaskId, selectedAgentId]);
   const taskTimeline = (taskId: string): TeammateTimelineSegment[] => {
     const segments: TeammateTimelineSegment[] = [];
-    for (const event of runtimeEvents
-      .filter((item) => item.task_id === taskId && item.event_type === "task.agent_event")
-      .sort((left, right) => left.sequence - right.sequence)) {
+    const taskEvents = runtimeEvents
+      .filter((item) => item.task_id === taskId)
+      .sort((left, right) => left.sequence - right.sequence);
+    const hasPersistedPlan = taskEvents.some((item) => item.event_type === "task.plan_generated");
+    for (const event of taskEvents) {
+      if (event.event_type === "task.plan_generated" || event.event_type === "task.plan_approved") {
+        const payload = event.payload as { plan?: unknown };
+        if (typeof payload.plan === "string") {
+          segments.push({ kind: "text", id: event.event_id, content: `### ${event.event_type === "task.plan_approved" ? "Approved plan" : "Proposed plan"}\n${payload.plan}` });
+        }
+        continue;
+      }
+      if (event.event_type !== "task.agent_event") continue;
       const agentEvent = event.payload as { type?: string; data?: unknown };
       if (agentEvent.type === "TextDelta" && typeof agentEvent.data === "string") {
         const last = segments[segments.length - 1];
         if (last?.kind === "text") last.content += agentEvent.data;
         else segments.push({ kind: "text", id: event.event_id, content: agentEvent.data });
-      } else if (agentEvent.type === "PlanGenerated" && typeof agentEvent.data === "string") {
+      } else if (agentEvent.type === "PlanGenerated" && typeof agentEvent.data === "string" && !hasPersistedPlan) {
         segments.push({ kind: "text", id: event.event_id, content: `### Plan\n${agentEvent.data}` });
       } else if (agentEvent.type === "ToolStarted" && typeof agentEvent.data === "object" && agentEvent.data !== null && "name" in agentEvent.data) {
         const data = agentEvent.data as { name: string; input?: string };
@@ -4233,6 +4262,21 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
     await perform(() => window.luma.answerTaskQuestion(taskId, questionId, answer));
   }
 
+  async function inspectTaskRecovery(taskId: string) {
+    setInspectorTab("inbox");
+    setRecoveryTaskId(taskId);
+    setRecoveryActions([]);
+    setRecoveryAcknowledgement("");
+    setRecoveryLoading(true);
+    try {
+      setRecoveryActions(await window.luma.getTaskActions(taskId));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setRecoveryLoading(false);
+    }
+  }
+
   async function attachChatFiles() {
     setError(null);
     try {
@@ -4283,7 +4327,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                         ) : <div key={segment.id} className="text-[12px] leading-6"><RichResponse content={segment.content} /></div>)}
                         <TaskQuestionCard task={task} busy={busy} onAnswer={answerTaskQuestion} />
                         {!hasAnswer && timeline.length === 0 && task.status !== "waiting_for_input" && <div className="text-[11px] text-[var(--luma-text-muted)]">{task.status === "completed" ? "No text response was recorded for this task." : task.error ?? (task.status === "failed" ? "Task failed." : task.status === "cancelled" ? "Cancelled." : "Thinking…")}</div>}
-                        {task.status === "failed" || task.status === "interrupted" ? <button type="button" disabled={busy} onClick={() => void perform(() => window.luma.retryTask(task.id))} className="mt-2 text-[10px] text-[var(--luma-accent)] hover:underline">Retry</button> : null}
+                        {task.status === "failed" || task.status === "interrupted" ? <button type="button" disabled={recoveryLoading} onClick={() => void inspectTaskRecovery(task.id)} className="mt-2 text-[10px] text-[var(--luma-accent)] hover:underline">Review recovery</button> : null}
                       </div></div></div>
                       {tasks.filter((child) => child.parent_task_id === task.id).length > 0 && <div className="ml-12 space-y-1.5 border-l border-[var(--luma-border)] pl-3">
                         <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">Delegated work</div>
@@ -4439,7 +4483,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
 
                     <section data-settings-section="instructions" className="luma-settings-section">
                       <div className="luma-settings-section-heading"><div><span>03 / BEHAVIOR</span><h2>Instructions</h2><p>Give this teammate a clear area of responsibility and guidance for how it should work.</p></div></div>
-                      <label className="luma-settings-field">Specialization<input value={specializationDraft} onChange={(event) => setSpecializationDraft(event.target.value)} className="luma-input" placeholder="e.g. Graphics engineer, security reviewer" /></label>
+                      <label className="luma-settings-field">Specialization<input list="luma-specialization-presets" value={specializationDraft} onChange={(event) => setSpecializationDraft(event.target.value)} className="luma-input" placeholder="e.g. Graphics engineer, security reviewer" /></label>
                       <label className="luma-settings-field">System instructions<textarea value={personalityDraft} onChange={(event) => setPersonalityDraft(event.target.value)} rows={12} className="luma-input luma-settings-instructions" placeholder="Describe the teammate's role, working style, constraints, and communication preferences…" /></label>
                       <div className="luma-settings-save-row"><span>These instructions are included when the teammate works on a task.</span><button type="button" disabled={busy || (specializationDraft.trim() === (selectedAgent.configuration.specialization ?? "") && personalityDraft === selectedAgent.configuration.system_prompt)} onClick={() => void perform(() => saveAgentConfiguration({ ...selectedAgent.configuration, specialization: specializationDraft.trim() || null, system_prompt: personalityDraft }))} className="luma-btn-primary">Save instructions</button></div>
                     </section>
@@ -4485,13 +4529,53 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
             )}
           </div>
         </div>
-        {inspectorVisible && <aside className="luma-teammate-inspector" aria-label="Teammate tasks, notes and files">
+        {inspectorVisible && <aside className="luma-teammate-inspector" aria-label="Teammate inbox, tasks, insights, notes and files">
           <div className="luma-teammate-inspector-tabs">
+            <button type="button" data-active={inspectorTab === "inbox"} onClick={() => setInspectorTab("inbox")}>Inbox <span>{approvals.length + tasks.filter((task) => ["waiting_for_input", "failed", "interrupted"].includes(task.status)).length}</span></button>
             <button type="button" data-active={inspectorTab === "tasks"} onClick={() => setInspectorTab("tasks")}>Tasks <span>{agentTasks.length}</span></button>
+            <button type="button" data-active={inspectorTab === "insights"} onClick={() => setInspectorTab("insights")}>Insights</button>
             <button type="button" data-active={inspectorTab === "notes"} onClick={() => setInspectorTab("notes")}>Notes</button>
             <button type="button" data-active={inspectorTab === "files"} onClick={() => setInspectorTab("files")}>Files</button>
           </div>
-          {inspectorTab === "tasks" ? <div className="luma-teammate-inspector-body">
+          {inspectorTab === "inbox" ? <div className="luma-teammate-inspector-body">
+            <section>
+              <h3 className="is-attention">Needs your attention</h3>
+              {approvals.length === 0 && !tasks.some((task) => ["waiting_for_input", "failed", "interrupted"].includes(task.status)) ? <p className="luma-inspector-empty">All caught up. Your teammates don't need anything right now.</p> : null}
+              {approvals.map((approval) => {
+                const owner = agents.find((agent) => agent.id === approval.agent_id);
+                return <div key={approval.id} className="luma-inspector-task is-attention">
+                  <div className="luma-inspector-task-title">Approval · {approval.tool}</div>
+                  <div className="luma-inspector-task-subtitle">{owner?.name ?? "Teammate"} is waiting for permission</div>
+                  <pre className="luma-tool-detail">{approval.arguments}</pre>
+                  <div className="mt-2 flex gap-2"><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, false))}>Deny</button><button type="button" disabled={busy} onClick={() => void perform(() => window.luma.resolveApproval(approval.id, true))}>Approve</button></div>
+                </div>;
+              })}
+              {tasks.filter((task) => ["waiting_for_input", "failed", "interrupted"].includes(task.status)).sort((left, right) => right.updated_at - left.updated_at).map((task) => {
+                const owner = agents.find((agent) => agent.id === task.agent_id);
+                return <div key={task.id} className="luma-inspector-task is-attention">
+                  <button type="button" className="block w-full text-left" onClick={() => { setSelectedAgentId(task.agent_id); setSelectedTaskId(task.conversation_id); setActiveTab("chat"); }}>
+                    <div className="luma-inspector-task-title">{task.status === "waiting_for_input" ? "Question" : task.status === "interrupted" ? "Interrupted task" : "Failed task"} · {task.title || task.request.slice(0, 64)}</div>
+                    <div className="luma-inspector-task-subtitle">{owner?.name ?? "Teammate"} · {task.status.replace(/_/g, " ")}</div>
+                  </button>
+                  {task.status === "waiting_for_input" && <TaskQuestionCard task={task} busy={busy} onAnswer={answerTaskQuestion} />}
+                  {(task.status === "failed" || task.status === "interrupted") && <button type="button" disabled={recoveryLoading} onClick={() => void inspectTaskRecovery(task.id)}>Inspect recovery</button>}
+                  {recoveryTaskId === task.id && <div className="mt-2 space-y-2">
+                    <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--luma-text-muted)]">Action journal</div>
+                    {recoveryActions.length === 0 ? <p className="luma-inspector-empty">No recorded tool actions. This task can be retried.</p> : recoveryActions.map((action) => <div key={action.id} className="rounded border border-[var(--luma-border)] px-2 py-1.5"><div className="flex items-center justify-between gap-2"><strong className="text-[10px]">{action.sequence}. {action.tool_name}</strong><span className="text-[9px] text-[var(--luma-text-muted)]">{action.reconciliation ? "acknowledged" : action.status}</span></div><p className="mt-1 text-[9px] leading-4 text-[var(--luma-text-muted)]">{action.input.slice(0, 220)}</p>{action.output && <p className="mt-1 text-[9px] leading-4">Result: {action.output.slice(0, 220)}</p>}{action.reconciliation && <p className="mt-1 text-[9px]">Reconciled: {action.reconciliation}</p>}</div>)}
+                    {recoveryActions.some((action) => action.reconciliation === null) ? <>
+                      <label className="block text-[10px] text-[var(--luma-text-muted)]">Describe how you checked the recorded actions and current state<textarea value={recoveryAcknowledgement} onChange={(event) => setRecoveryAcknowledgement(event.target.value)} rows={3} className="luma-input mt-1 w-full resize-y text-[10px]" placeholder="I checked the repository and confirmed the recorded changes are already present…" /></label>
+                      <button type="button" disabled={busy || recoveryAcknowledgement.trim().length < 8} onClick={() => void perform(async () => {
+                        await window.luma.reconcileTaskActions(task.id, recoveryAcknowledgement.trim());
+                        setRecoveryActions(await window.luma.getTaskActions(task.id));
+                        setRecoveryAcknowledgement("");
+                      })}>Confirm reconciliation</button>
+                    </> : <button type="button" disabled={busy} onClick={() => void perform(() => window.luma.retryTask(task.id))}>Retry task</button>}
+                  </div>}
+                </div>;
+              })}
+            </section>
+            <section><h3>Recent completions</h3>{tasks.filter((task) => task.status === "completed").sort((left, right) => right.updated_at - left.updated_at).slice(0, 8).map((task) => <button key={task.id} type="button" className="luma-inspector-task" onClick={() => { setSelectedAgentId(task.agent_id); setSelectedTaskId(task.conversation_id); setActiveTab("chat"); }}><span className="luma-inspector-task-title">{task.title || task.request.slice(0, 64)}</span><span className="luma-inspector-task-subtitle">{agents.find((agent) => agent.id === task.agent_id)?.name ?? "Teammate"} · completed</span></button>)}</section>
+          </div> : inspectorTab === "tasks" ? <div className="luma-teammate-inspector-body">
             {agentApprovals.length > 0 && <section>
               <h3 className="is-attention">Needs you</h3>
               {agentApprovals.map((approval) => <div key={approval.id} className="luma-inspector-task is-attention">
@@ -4514,6 +4598,29 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                 <span className="min-w-0 flex-1"><span className="luma-inspector-task-title">{task.title || task.request}</span><span className="luma-inspector-task-subtitle">{task.status} · {new Date(task.created_at * 1000).toLocaleDateString()}</span></span>
               </button>)}
             </section>
+          </div> : inspectorTab === "insights" ? <div className="luma-teammate-inspector-body">
+            {(() => {
+              const terminal = agentTasks.filter((task) => ["completed", "failed", "cancelled", "interrupted"].includes(task.status));
+              const completed = terminal.filter((task) => task.status === "completed").length;
+              const failed = terminal.filter((task) => task.status === "failed").length;
+              const interrupted = terminal.filter((task) => task.status === "interrupted").length;
+              const toolEvents = runtimeEvents.filter((event) => event.event_type === "task.agent_event").map((event) => event.payload as { type?: string; data?: { failed?: boolean; duration_ms?: number; prompt_tokens?: number; completion_tokens?: number } });
+              const toolFinished = toolEvents.filter((event) => event.type === "ToolFinished");
+              const toolFailures = toolFinished.filter((event) => event.data?.failed).length;
+              const usage = toolEvents.filter((event) => event.type === "Usage").reduce((total, event) => total + (event.data?.prompt_tokens ?? 0) + (event.data?.completion_tokens ?? 0), 0);
+              const completionRate = terminal.length ? Math.round((completed / terminal.length) * 100) : null;
+              const toolSuccessRate = toolFinished.length ? Math.round(((toolFinished.length - toolFailures) / toolFinished.length) * 100) : null;
+              return <section><h3>Agent evaluation</h3><p className="mb-1 text-[10px] leading-5 text-[var(--luma-text-muted)]">A scorecard from persisted task outcomes and tool events. It measures operational reliability, not the quality of generated answers.</p><p className="mb-3 text-[10px] text-[var(--luma-text-muted)]">Model · {selectedAgent?.configuration.provider ?? "Global provider"} / {selectedAgent?.configuration.model ?? "Global model"}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="luma-inspector-task"><span className="luma-inspector-task-subtitle">Task completion</span><strong className="text-lg">{completionRate === null ? "—" : `${completionRate}%`}</strong><span className="luma-inspector-task-subtitle">{completed} of {terminal.length} finished</span></div>
+                  <div className="luma-inspector-task"><span className="luma-inspector-task-subtitle">Tool success</span><strong className="text-lg">{toolSuccessRate === null ? "—" : `${toolSuccessRate}%`}</strong><span className="luma-inspector-task-subtitle">{toolFinished.length - toolFailures} of {toolFinished.length} calls</span></div>
+                  <div className="luma-inspector-task"><span className="luma-inspector-task-subtitle">Failed tasks</span><strong className="text-lg">{failed}</strong></div>
+                  <div className="luma-inspector-task"><span className="luma-inspector-task-subtitle">Interrupted tasks</span><strong className="text-lg">{interrupted}</strong></div>
+                  <div className="luma-inspector-task col-span-2"><span className="luma-inspector-task-subtitle">Recorded token usage</span><strong>{usage.toLocaleString()}</strong></div>
+                </div>
+                <p className="mt-3 text-[10px] leading-5 text-[var(--luma-text-muted)]">Based on {agentTasks.length} saved tasks and {runtimeEvents.length} retained runtime events. Old events may fall outside the retention window.</p>
+              </section>;
+            })()}
           </div> : inspectorTab === "notes" ? <div className="luma-teammate-inspector-body">
             <section><h3>Notes for {selectedAgent?.name ?? "this teammate"}</h3>
               <textarea value={memoryContent} onChange={(event) => setMemoryContent(event.target.value)} rows={3} placeholder="Add a note or something this teammate should remember…" className="luma-input w-full resize-y text-[11px]" />
@@ -4578,7 +4685,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                 <section className="luma-create-section" aria-labelledby="create-identity-heading"><div className="luma-create-section-heading"><span>01</span><div><h4 id="create-identity-heading">Who are they?</h4><p>Start with a name and the kind of work they own.</p></div></div>
                   <label className="luma-create-field">Name <span>Required</span><input autoFocus required maxLength={120} value={agentName} onChange={(event) => { setAgentName(event.target.value); setCreateError(null); }} placeholder="e.g. Researcher, Release Engineer" className="luma-input luma-create-input luma-create-name-input" /></label>
                   <label className="luma-create-field">Description <span>Optional</span><input value={agentDescription} onChange={(event) => setAgentDescription(event.target.value)} placeholder="What should teammates come to them for?" className="luma-input luma-create-input" /></label>
-                  <label className="luma-create-field">Specialization <span>Optional</span><input value={agentSpecialization} onChange={(event) => setAgentSpecialization(event.target.value)} placeholder="e.g. Rust performance, product research" className="luma-input luma-create-input" /></label>
+                  <label className="luma-create-field">Specialization <span>Optional</span><input list="luma-specialization-presets" value={agentSpecialization} onChange={(event) => setAgentSpecialization(event.target.value)} placeholder="e.g. Rust performance, product research" className="luma-input luma-create-input" /></label>
                 </section>
                 <section className="luma-create-section luma-create-intelligence" aria-labelledby="create-intelligence-heading"><div className="luma-create-section-heading"><span>02</span><div><h4 id="create-intelligence-heading">How they think</h4><p>Good defaults now; tune the details whenever you need.</p></div></div>
                   <div className="luma-create-model-row"><span className="luma-create-model-glyph" aria-hidden="true">◈</span><span className="luma-create-model-copy"><strong>{createModelOverride ? createModelOverride.name : createGlobalModel?.name || "Your global model"}</strong><small>{createModelOverride ? `${createModelOverride.provider} · dedicated model for this teammate` : createGlobalModel ? `${createGlobalModel.provider} · inherited from your default configuration` : "Uses your default provider and model."}</small></span><button type="button" className="luma-create-model-action" onClick={() => setCreateModelPickerOpen(true)}>{createModelOverride ? "Change" : "Choose model"}</button>{createModelOverride && <button type="button" className="luma-create-model-reset" onClick={() => setCreateModelOverride(null)} aria-label="Use global model">Reset</button>}</div>
@@ -4599,6 +4706,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
             </section>
           </form>
         </div>}
+        <datalist id="luma-specialization-presets">{SPECIALIZATION_PRESETS.map((preset) => <option key={preset} value={preset} />)}</datalist>
         {createModelPickerOpen && <ModelPickerDialog scope="agent" draftAgent onClose={() => setCreateModelPickerOpen(false)} onChanged={(config) => setCreateModelOverride(config.model)} />}
         <footer className="flex shrink-0 items-center justify-between border-t border-[var(--luma-border)] px-5 py-2 text-[10px] text-[var(--luma-text-muted)]"><span>Work continues independently of this page.</span><button type="button" onClick={() => void refresh()} className="hover:text-[var(--luma-text)]">Refresh</button></footer>
         {modelPickerOpen && selectedAgent && <ModelPickerDialog scope="agent" agent={selectedAgent} onClose={() => setModelPickerOpen(false)} onChanged={(config) => { setModelProviderDraft(config.model.provider); setModelNameDraft(config.model.name); setModelEndpointDraft(config.model.endpoint); setConfigurationDraft(JSON.stringify({ ...selectedAgent.configuration, provider: config.model.provider, model: config.model.name, endpoint: config.model.endpoint }, null, 2)); void refresh(); }} />}

@@ -210,6 +210,15 @@ pub enum ClientMessage {
         request_id: String,
         id: String,
     },
+    TaskActionsList {
+        request_id: String,
+        id: String,
+    },
+    TaskActionsReconcile {
+        request_id: String,
+        id: String,
+        acknowledgement: String,
+    },
     TaskRename {
         request_id: String,
         id: String,
@@ -381,6 +390,8 @@ impl ClientMessage {
             | Self::TaskCancel { request_id, .. }
             | Self::TaskAnswerQuestion { request_id, .. }
             | Self::TaskRetry { request_id, .. }
+            | Self::TaskActionsList { request_id, .. }
+            | Self::TaskActionsReconcile { request_id, .. }
             | Self::TaskRename { request_id, .. }
             | Self::TaskDelete { request_id, .. }
             | Self::PluginsList { request_id }
@@ -479,6 +490,8 @@ impl ClientMessage {
             | Self::TaskCancel { .. }
             | Self::TaskAnswerQuestion { .. }
             | Self::TaskRetry { .. }
+            | Self::TaskActionsList { .. }
+            | Self::TaskActionsReconcile { .. }
             | Self::TaskRename { .. }
             | Self::TaskDelete { .. }
             | Self::PluginsList { .. }
@@ -633,6 +646,16 @@ pub enum ServerEvent {
         request_id: String,
         task: crate::runtime::TaskRecord,
     },
+    TaskActions {
+        request_id: String,
+        id: String,
+        actions: Vec<crate::runtime::TaskActionRecord>,
+    },
+    TaskActionsReconciled {
+        request_id: String,
+        id: String,
+        reconciled: usize,
+    },
     TaskDeleted {
         request_id: String,
         id: String,
@@ -725,7 +748,7 @@ pub enum ServerEvent {
     },
 }
 
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -943,6 +966,15 @@ mod tests {
                 request_id: "task-delete".into(),
                 id: "task-1".into(),
             },
+            ClientMessage::TaskActionsList {
+                request_id: "task-actions-list".into(),
+                id: "task-1".into(),
+            },
+            ClientMessage::TaskActionsReconcile {
+                request_id: "task-actions-reconcile".into(),
+                id: "task-1".into(),
+                acknowledgement: "I inspected the external state.".into(),
+            },
             ClientMessage::PluginsList {
                 request_id: "plugins-list".into(),
             },
@@ -1020,5 +1052,13 @@ mod tests {
         .unwrap();
 
         assert!(line.contains(r#""type":"ready""#), "got {line}");
+
+        let actions = encode(&ServerEvent::TaskActionsReconciled {
+            request_id: "reconcile-1".into(),
+            id: "task-1".into(),
+            reconciled: 2,
+        })
+        .unwrap();
+        assert!(actions.contains(r#""type":"task_actions_reconciled""#));
     }
 }

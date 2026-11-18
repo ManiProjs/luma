@@ -287,6 +287,33 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
     agent.set_force_react(agent_record.kind == crate::runtime::AgentKind::Teammates);
     agent.set_permission_profile(permissions);
     agent.set_workspace_root(&std::env::current_dir()?)?;
+    if let Some(plan) = store.get_task_plan(&task.id)? {
+        agent.add_system_context(format!(
+            "# Persisted task plan\n\nApproval status: {}. Follow this plan if approved. If it is not approved, treat it only as a proposal and request approval before implementing it.\n\n{}",
+            if plan.approved { "approved" } else { "not approved" },
+            plan.plan
+        ));
+    }
+    if let Some(recovery) = task
+        .checkpoint
+        .as_ref()
+        .and_then(|checkpoint| checkpoint.get("action_recovery"))
+    {
+        agent.add_system_context(format!(
+            "# Required task recovery\n\n\
+             The user explicitly acknowledged the prior tool-action journal before this retry.\n\
+             Treat the journal below as execution history. Inspect the current workspace and\n\
+             external state before taking action. Do not repeat actions recorded as finished.\n\
+             For actions recorded as failed or uncertain, verify whether their intended effect\n\
+             occurred before deciding whether another attempt is necessary. Never assume an\n\
+             uncertain action did not happen. Continue from the current state and explain any\n\
+             discrepancy you discover. If omitted_older_actions is greater than zero, this\n\
+             journal is incomplete: inspect the workspace and every relevant external system\n\
+             broadly, and ask the user before repeating any operation whose outcome cannot be\n\
+             established.\n\n{}",
+            serde_json::to_string_pretty(recovery)?
+        ));
+    }
     if inherit_global && let Some(global_configuration) = global_configuration {
         if !global_configuration.system_prompt.trim().is_empty() {
             agent.add_system_context(global_configuration.system_prompt.clone());
@@ -307,8 +334,9 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
+        let guidance = specialization_guidance(specialization);
         agent.add_system_context(format!(
-            "# Teammate specialization\n\nYour assigned role is **{specialization}**. Apply the methods and review standards of this specialty while respecting the task scope and your existing permissions."
+            "# Teammate specialization\n\nYour assigned role is **{specialization}**. Apply the methods and review standards of this specialty while respecting the task scope and your existing permissions.\n\n{guidance}"
         ));
     }
     if agent_record.kind == crate::runtime::AgentKind::Teammates {
@@ -678,6 +706,9 @@ impl RuntimeSupervisor {
                                 }
                                 if let Err(error) = result {
                                     tracing::error!(task_id = %task_id, %error, "background task failed");
+                                    if let Err(journal_error) = self.store.mark_unfinished_task_actions_uncertain(&task_id) {
+                                        tracing::warn!(task_id = %task_id, %journal_error, "failed to mark unfinished tool actions uncertain");
+                                    }
                                     if let Ok(Some(current)) = self.store.get_task(&task_id)
                                         && matches!(current.status, TaskStatus::Queued | TaskStatus::Running | TaskStatus::WaitingForApproval | TaskStatus::WaitingForInput) {
                                             let _ = self.store.transition_task(&task_id, TaskStatus::Failed, Some(error.to_string()), None);
@@ -698,11 +729,10 @@ impl RuntimeSupervisor {
                     if workers.len() >= 8 {
                         continue;
                     }
-                    let mut queued = match self.store.list_tasks(None, 500) {
-                        Ok(tasks) => tasks.into_iter().filter(|task| task.status == TaskStatus::Queued).collect::<Vec<_>>(),
+                    let queued = match self.store.list_queued_tasks() {
+                        Ok(tasks) => tasks,
                         Err(error) => { tracing::error!(%error, "failed to inspect queued tasks"); Vec::new() }
                     };
-                    queued.sort_by_key(|task| task.created_at);
                     for task in queued {
                         if workers.len() >= 8 { break; }
                         let Ok(Some(agent)) = self.store.get_agent(&task.agent_id) else { continue; };
@@ -739,10 +769,18 @@ impl RuntimeSupervisor {
                             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
                         let workspace = workspace_path.canonicalize().unwrap_or(workspace_path).to_string_lossy().into_owned();
                         if active_workspaces.contains(&workspace) { continue; }
+                        let claimed = match self.store.claim_queued_task(&task.id) {
+                            Ok(Some(task)) => task,
+                            Ok(None) => continue,
+                            Err(error) => {
+                                tracing::warn!(task_id = %task.id, %error, "could not claim queued task");
+                                continue;
+                            }
+                        };
                         active_workspaces.insert(workspace.clone());
                         *active_agents.entry(agent.id.clone()).or_default() += 1;
                         let supervisor = self.clone();
-                        let task_id = task.id.clone();
+                        let task_id = claimed.id.clone();
                         let agent_id = agent.id.clone();
                         let worker_workspace = workspace.clone();
                         let worker_shutdown = shutdown.clone();
@@ -759,6 +797,11 @@ impl RuntimeSupervisor {
                 Ok((task_id, _, _, result)) => {
                     if let Err(error) = result {
                         tracing::warn!(task_id = %task_id, %error, "task stopped during gateway shutdown");
+                        if let Err(journal_error) =
+                            self.store.mark_unfinished_task_actions_uncertain(&task_id)
+                        {
+                            tracing::warn!(task_id = %task_id, %journal_error, "failed to mark unfinished tool actions uncertain during shutdown");
+                        }
                         if let Ok(Some(current)) = self.store.get_task(&task_id)
                             && matches!(
                                 current.status,
@@ -834,9 +877,12 @@ impl RuntimeSupervisor {
                 .ok_or_else(|| anyhow!("workspace path is not valid UTF-8"))?,
             &agent.configuration,
         )?;
-        let _ = self
-            .store
-            .transition_task(task_id, TaskStatus::Running, None, None)?;
+        if task.status != TaskStatus::Running {
+            bail!(
+                "task must be atomically claimed before worker launch (current status: {:?})",
+                task.status
+            );
+        }
         self.store
             .set_agent_status(&agent.id, AgentStatus::Active)?;
 
@@ -867,6 +913,8 @@ impl RuntimeSupervisor {
         let mut failure: Option<String> = None;
         let mut cancelled = false;
         let mut pending_approval_id: Option<String> = None;
+        let mut pending_approval_tool: Option<String> = None;
+        let mut active_actions: HashMap<String, Vec<String>> = HashMap::new();
         let mut command_interval = tokio::time::interval(std::time::Duration::from_millis(150));
         loop {
             tokio::select! {
@@ -900,6 +948,10 @@ impl RuntimeSupervisor {
                                 stdin.flush().await?;
                                 self.store.mark_gateway_command_processed(&command.id)?;
                                 pending_approval_id = None;
+                                if allowed && pending_approval_tool.as_deref() == Some("approve_plan") {
+                                    self.store.approve_task_plan(task_id)?;
+                                }
+                                pending_approval_tool = None;
                                 let _ = self.store.transition_task(task_id, TaskStatus::Running, None, None);
                                 let _ = self.store.set_agent_status(&agent.id, AgentStatus::Active);
                             }
@@ -925,6 +977,29 @@ impl RuntimeSupervisor {
                         } else if value.get("type").and_then(|v| v.as_str()) == Some("event")
                             && let Ok(event) = serde_json::from_value::<AgentEvent>(value["data"].clone()) {
                                 match &event {
+                                    AgentEvent::PlanGenerated(plan) => {
+                                        self.store.save_task_plan(task_id, plan)?;
+                                    }
+                                    AgentEvent::ToolStarted { name, input } => {
+                                        let action = self.store.start_task_action(task_id, name, input)?;
+                                        active_actions.entry(name.clone()).or_default().push(action.id);
+                                    }
+                                    AgentEvent::ToolProgress { name, output, progress_percent } => {
+                                        if let Some(action_id) = active_actions.get(name).and_then(|items| items.last()) {
+                                            let summary = progress_percent
+                                                .map(|percent| format!("[{percent}%] {output}"))
+                                                .unwrap_or_else(|| output.clone());
+                                            self.store.update_task_action_progress(action_id, &summary)?;
+                                        }
+                                    }
+                                    AgentEvent::ToolFinished { name, duration_ms, failed, diff } => {
+                                        if let Some(action_id) = active_actions.get_mut(name).and_then(Vec::pop) {
+                                            let summary = diff.clone().unwrap_or_else(|| {
+                                                format!("Tool {} in {duration_ms} ms", if *failed { "failed" } else { "finished" })
+                                            });
+                                            self.store.finish_task_action(&action_id, Some(&summary), *failed)?;
+                                        }
+                                    }
                                     AgentEvent::Status { state } if *state == crate::event::AgentStatus::Waiting => {
                                         let _ = self.store.set_agent_status(&agent.id, AgentStatus::Waiting);
                                     }
@@ -938,6 +1013,7 @@ impl RuntimeSupervisor {
                                         self.store.expire_pending_approvals(task_id)?;
                                         let approval = self.store.create_approval(&agent.id, task_id, name, input)?;
                                         pending_approval_id = Some(approval.id);
+                                        pending_approval_tool = Some(name.clone());
                                     }
                                     AgentEvent::QuestionRequired { question_id, prompt, choices } => {
                                         let checkpoint = serde_json::json!({"question_id":question_id,"prompt":prompt,"choices":choices});
@@ -949,7 +1025,9 @@ impl RuntimeSupervisor {
                                         if !cancelled => { terminal_status = if failure.is_some() { TaskStatus::Failed } else { TaskStatus::Completed }; }
                                     _ => {}
                                 }
-                                let _ = self.store.append_event(Some(&agent.id), Some(task_id), "task.agent_event", serde_json::to_value(&event)?);
+                                if !matches!(event, AgentEvent::PlanGenerated(_)) {
+                                    let _ = self.store.append_event(Some(&agent.id), Some(task_id), "task.agent_event", serde_json::to_value(&event)?);
+                                }
                             }
                     }
                     line.clear();
@@ -976,6 +1054,7 @@ impl RuntimeSupervisor {
                 TaskStatus::Cancelled
             };
         }
+        self.store.mark_unfinished_task_actions_uncertain(task_id)?;
         let _ = self
             .store
             .transition_task(task_id, terminal_status, failure, None);
@@ -983,15 +1062,83 @@ impl RuntimeSupervisor {
     }
 }
 
+fn specialization_guidance(role: &str) -> &'static str {
+    match role.to_ascii_lowercase().as_str() {
+        "software architect" => {
+            "Define clear boundaries and interfaces, trace data flow, compare viable designs, and account for migration, failure modes, and long-term maintenance before recommending structural changes."
+        }
+        "frontend developer" => {
+            "Trace the existing component and state patterns, build accessible responsive interactions, preserve established visual language, and verify loading, empty, error, and keyboard states."
+        }
+        "backend developer" => {
+            "Follow the service and persistence boundaries, validate inputs, make state changes transactional where needed, handle failures explicitly, and preserve API compatibility."
+        }
+        "security reviewer" => {
+            "Threat-model trust boundaries and attacker-controlled inputs, inspect authorization and secret handling, verify dependency and execution risks, and report concrete exploit paths with practical mitigations."
+        }
+        "qa engineer" => {
+            "Derive tests from user-visible behavior and failure cases, reproduce defects with minimal fixtures, cover regressions at the narrowest useful level, and report exact commands and outcomes."
+        }
+        "devops engineer" => {
+            "Inspect deployment and runtime assumptions, make operations observable and repeatable, account for rollback and resource limits, and validate configuration across supported environments."
+        }
+        "code reviewer" => {
+            "Prioritize correctness, regressions, security, and maintainability; trace changed behavior through callers; cite concrete locations; and omit stylistic findings without user impact."
+        }
+        "technical writer" => {
+            "Write task-focused documentation with accurate prerequisites, runnable examples, expected results, and recovery guidance; verify every command and keep terminology consistent with the product."
+        }
+        "research analyst" => {
+            "Separate verified facts from assumptions, compare primary sources, record dates and uncertainty, and connect evidence directly to the decision the task needs."
+        }
+        "data analyst" => {
+            "Validate data shape and quality, state assumptions, choose methods appropriate to the question, check edge cases, and make conclusions traceable to the underlying data."
+        }
+        "product strategist" => {
+            "Clarify the user problem and target outcome, map workflows and trade-offs, prioritize by impact and effort, and define observable success criteria before proposing scope."
+        }
+        "performance engineer" => {
+            "Measure before changing code, identify the dominant bottleneck, distinguish CPU, memory, I/O, and rendering costs, and verify improvements with repeatable benchmarks and regression checks."
+        }
+        _ => {
+            "Apply the relevant professional methods for this specialty. Make assumptions explicit, inspect existing project conventions, produce evidence for recommendations, and stay within the task scope and granted permissions."
+        }
+    }
+}
+
 use std::path::PathBuf;
 
 #[cfg(test)]
 mod tests {
-    use super::WorkerOutput;
+    use super::{WorkerOutput, specialization_guidance};
 
     #[test]
     fn worker_done_message_has_a_stable_supervisor_protocol_tag() {
         let value = serde_json::to_value(WorkerOutput::Done).unwrap();
         assert_eq!(value, serde_json::json!({ "type": "done" }));
+    }
+
+    #[test]
+    fn specialization_presets_have_distinct_guidance_and_custom_roles_fall_back() {
+        let roles = [
+            "Software Architect",
+            "Frontend Developer",
+            "Backend Developer",
+            "Security Reviewer",
+            "QA Engineer",
+            "DevOps Engineer",
+            "Code Reviewer",
+            "Technical Writer",
+            "Research Analyst",
+            "Data Analyst",
+            "Product Strategist",
+            "Performance Engineer",
+        ];
+        let guidance = roles
+            .iter()
+            .map(|role| specialization_guidance(role))
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(guidance.len(), roles.len());
+        assert!(specialization_guidance("Custom specialist").contains("professional methods"));
     }
 }

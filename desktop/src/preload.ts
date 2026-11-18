@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import { parseServerEvent, type ServerEvent, type AgentConfiguration, type AgentKind, type AgentRecord, type ApprovalRecord, type ChatSummary, type CommandDescriptor, type MemoryEntry, type MemoryScope, type ScheduleRecord, type EventTriggerRecord, type TaskRecord, type RuntimeEvent, type PluginEntry, type InstalledPlugin, type McpServerConfig } from "../../shared/protocol";
+import { parseServerEvent, type ServerEvent, type AgentConfiguration, type AgentKind, type AgentRecord, type ApprovalRecord, type ChatSummary, type CommandDescriptor, type MemoryEntry, type MemoryScope, type ScheduleRecord, type EventTriggerRecord, type TaskRecord, type TaskActionRecord, type RuntimeEvent, type PluginEntry, type InstalledPlugin, type McpServerConfig } from "../../shared/protocol";
 import type { ChatAttachment } from "../../shared/attachments";
 
 export type LumaAgentEvent = ServerEvent;
@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld("luma", {
   updateAgent: (input: { id: string; name?: string | null; description?: string | null; configuration?: AgentConfiguration | null }): Promise<AgentRecord> => invoke("luma:update-agent", input),
   setAgentStatus: (id: string, status: "idle" | "paused" | "stopped"): Promise<AgentRecord> => invoke("luma:set-agent-status", id, status),
   getTasks: (agentId?: string): Promise<TaskRecord[]> => invoke("luma:get-tasks", agentId),
+  getTaskActions: (id: string): Promise<TaskActionRecord[]> => invoke("luma:get-task-actions", id),
+  reconcileTaskActions: (id: string, acknowledgement: string): Promise<number> => invoke("luma:reconcile-task-actions", id, acknowledgement),
   getRuntimeEvents: (agentId: string): Promise<RuntimeEvent[]> => invoke("luma:get-runtime-events", agentId),
   createTask: (input: { agentId: string; request: string; workspace?: string; conversationId?: string }): Promise<TaskRecord> => invoke("luma:create-task", input),
   cancelTask: (id: string): Promise<TaskRecord> => invoke("luma:cancel-task", id),

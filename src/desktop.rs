@@ -443,6 +443,20 @@ impl DesktopServer {
                             .transition_task(&id, TaskStatus::Queued, None, None)?,
                     }
                 }
+                ClientMessage::TaskActionsList { request_id, id } => ServerEvent::TaskActions {
+                    request_id,
+                    actions: self.runtime.list_task_actions(&id)?,
+                    id,
+                },
+                ClientMessage::TaskActionsReconcile {
+                    request_id,
+                    id,
+                    acknowledgement,
+                } => ServerEvent::TaskActionsReconciled {
+                    request_id,
+                    reconciled: self.runtime.reconcile_task_actions(&id, &acknowledgement)?,
+                    id,
+                },
                 ClientMessage::TaskRename {
                     request_id,
                     id,
@@ -654,8 +668,14 @@ impl DesktopServer {
                             "permission_profiles".into(),
                             "restart_reconciliation".into(),
                             "persistent_gateway".into(),
+                            "task_action_journal".into(),
+                            "persistent_task_plans".into(),
+                            "agent_evaluation".into(),
+                            "github_integration".into(),
+                            "browser_automation".into(),
+                            "global_agent_inbox".into(),
                         ],
-                        storage_schema: 5,
+                        storage_schema: 10,
                     }
                 }
                 _ => anyhow::bail!("not a runtime request"),
@@ -1215,6 +1235,8 @@ fn is_runtime_message(message: &ClientMessage) -> bool {
             | ClientMessage::TaskCancel { .. }
             | ClientMessage::TaskAnswerQuestion { .. }
             | ClientMessage::TaskRetry { .. }
+            | ClientMessage::TaskActionsList { .. }
+            | ClientMessage::TaskActionsReconcile { .. }
             | ClientMessage::TaskRename { .. }
             | ClientMessage::TaskDelete { .. }
             | ClientMessage::ApprovalsList { .. }
@@ -1300,8 +1322,10 @@ fn execute_core_command(id: &str, query: Option<&str>) -> Result<String> {
             let files = filesystem::search_files::SearchFiles.execute(
                 &json!({"path": workspace.display().to_string(), "pattern": pattern}).to_string(),
             )?;
-            let files = serde_json::from_str::<serde_json::Value>(&files)
-                .unwrap_or_else(|_| serde_json::Value::String(files));
+            let files = match serde_json::from_str::<serde_json::Value>(&files) {
+                Ok(value) => value,
+                Err(_) => serde_json::Value::String(files),
+            };
             let conversations = crate::chats::search(pattern)?;
             Ok(serde_json::to_string_pretty(&json!({
                 "workspace_files": files,
@@ -1435,75 +1459,6 @@ fn execute_core_command(id: &str, query: Option<&str>) -> Result<String> {
             }
         }
         _ => anyhow::bail!("unsupported Core command: {id}"),
-    }
-}
-
-#[cfg(test)]
-mod core_command_tests {
-    use super::{execute_core_command, is_runtime_message};
-    use crate::protocol::ClientMessage;
-
-    #[test]
-    fn task_rename_and_delete_are_dispatched_to_runtime() {
-        let rename = ClientMessage::TaskRename {
-            request_id: "rename-1".into(),
-            id: "task-1".into(),
-            title: "Renamed task".into(),
-        };
-        let delete = ClientMessage::TaskDelete {
-            request_id: "delete-1".into(),
-            id: "task-1".into(),
-        };
-
-        assert!(is_runtime_message(&rename));
-        assert!(is_runtime_message(&delete));
-    }
-
-    #[test]
-    fn core_commands_expose_version_help_and_git_views() {
-        assert!(
-            execute_core_command("version", None)
-                .unwrap()
-                .contains(env!("CARGO_PKG_VERSION"))
-        );
-        assert!(
-            execute_core_command("help", None)
-                .unwrap()
-                .contains("/compact")
-        );
-        assert!(execute_core_command("git", Some("status")).is_ok());
-        assert!(execute_core_command("git", Some("status_json")).is_ok());
-    }
-
-    #[test]
-    fn workspace_commands_reject_paths_outside_the_active_workspace() {
-        let error = execute_core_command("files", Some("../")).unwrap_err();
-        assert!(error.to_string().contains("inside the active workspace"));
-        assert!(execute_core_command("search", Some("  ")).is_err());
-    }
-
-    #[test]
-    fn core_file_finder_returns_ranked_workspace_relative_results() {
-        let output = execute_core_command("find_files", Some("desktop")).unwrap();
-        let results: serde_json::Value = serde_json::from_str(&output).unwrap();
-        let first = results.as_array().and_then(|items| items.first()).unwrap();
-        assert!(first["path"].as_str().unwrap().starts_with("desktop/"));
-        assert!(first["score"].as_i64().unwrap() > 0);
-        assert!(execute_core_command("find_files", Some(" ")).is_err());
-    }
-
-    #[test]
-    fn mutating_history_commands_require_the_session_dispatcher() {
-        assert!(execute_core_command("history_delete", Some("../history.json")).is_err());
-        assert!(execute_core_command("history_delete", Some(" ")).is_err());
-        assert!(execute_core_command("history_prune", None).is_err());
-        assert!(execute_core_command("history_prune", Some("yes")).is_err());
-        assert!(
-            execute_core_command("summary", Some("{}"))
-                .unwrap_err()
-                .to_string()
-                .contains("active session")
-        );
     }
 }
 
@@ -1766,4 +1721,73 @@ where
         },
     )
     .await
+}
+
+#[cfg(test)]
+mod core_command_tests {
+    use super::{execute_core_command, is_runtime_message};
+    use crate::protocol::ClientMessage;
+
+    #[test]
+    fn task_rename_and_delete_are_dispatched_to_runtime() {
+        let rename = ClientMessage::TaskRename {
+            request_id: "rename-1".into(),
+            id: "task-1".into(),
+            title: "Renamed task".into(),
+        };
+        let delete = ClientMessage::TaskDelete {
+            request_id: "delete-1".into(),
+            id: "task-1".into(),
+        };
+
+        assert!(is_runtime_message(&rename));
+        assert!(is_runtime_message(&delete));
+    }
+
+    #[test]
+    fn core_commands_expose_version_help_and_git_views() {
+        assert!(
+            execute_core_command("version", None)
+                .unwrap()
+                .contains(env!("CARGO_PKG_VERSION"))
+        );
+        assert!(
+            execute_core_command("help", None)
+                .unwrap()
+                .contains("/compact")
+        );
+        assert!(execute_core_command("git", Some("status")).is_ok());
+        assert!(execute_core_command("git", Some("status_json")).is_ok());
+    }
+
+    #[test]
+    fn workspace_commands_reject_paths_outside_the_active_workspace() {
+        let error = execute_core_command("files", Some("../")).unwrap_err();
+        assert!(error.to_string().contains("inside the active workspace"));
+        assert!(execute_core_command("search", Some("  ")).is_err());
+    }
+
+    #[test]
+    fn core_file_finder_returns_ranked_workspace_relative_results() {
+        let output = execute_core_command("find_files", Some("desktop")).unwrap();
+        let results: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let first = results.as_array().and_then(|items| items.first()).unwrap();
+        assert!(first["path"].as_str().unwrap().starts_with("desktop/"));
+        assert!(first["score"].as_i64().unwrap() > 0);
+        assert!(execute_core_command("find_files", Some(" ")).is_err());
+    }
+
+    #[test]
+    fn mutating_history_commands_require_the_session_dispatcher() {
+        assert!(execute_core_command("history_delete", Some("../history.json")).is_err());
+        assert!(execute_core_command("history_delete", Some(" ")).is_err());
+        assert!(execute_core_command("history_prune", None).is_err());
+        assert!(execute_core_command("history_prune", Some("yes")).is_err());
+        assert!(
+            execute_core_command("summary", Some("{}"))
+                .unwrap_err()
+                .to_string()
+                .contains("active session")
+        );
+    }
 }

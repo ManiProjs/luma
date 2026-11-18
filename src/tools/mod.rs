@@ -1,11 +1,13 @@
 use anyhow::Result;
 use std::collections::HashMap;
 
+pub mod browser;
 pub mod code_intelligence;
 pub mod delegation;
 pub mod developer;
 pub mod filesystem;
 pub mod git;
+pub mod github;
 pub mod memory;
 pub mod observability;
 pub mod shell;
@@ -43,7 +45,7 @@ pub fn default_registry() -> ToolRegistry {
         read_file::ReadFile, search_files::SearchFiles, write_file::WriteFile,
     };
     use git::{GitChanges, GitDiff, GitRevert, GitStage, GitStatus, GitUnstage};
-    use observability::ExecutionMetrics;
+    use observability::{AgentEvaluation, ExecutionMetrics};
     use shell::RunCommand;
     use skills::{ListSkills, LoadSkill, ProposeSkill};
     use titlebar::SetTitlebarStatus;
@@ -77,6 +79,7 @@ pub fn default_registry() -> ToolRegistry {
     tools.register(LoadSkill);
     tools.register(ProposeSkill);
     tools.register(ExecutionMetrics::default());
+    tools.register(AgentEvaluation::default());
     tools.register(SetTitlebarStatus);
     tools.register(AskQuestion);
     tools
@@ -89,6 +92,17 @@ pub fn teammate_registry() -> ToolRegistry {
     tools.register(web::WebSearch);
     tools.register(web::FetchUrl);
     tools.register(web::HttpRequest);
+    tools.register(browser::BrowserAutomate);
+    tools.register(github::GetRepository);
+    tools.register(github::ListIssues);
+    tools.register(github::ListPullRequests);
+    tools.register(github::GetPullRequest);
+    tools.register(github::GetPullRequestFiles);
+    tools.register(github::ListPullRequestReviews);
+    tools.register(github::ListWorkflowRuns);
+    tools.register(github::CreateIssue);
+    tools.register(github::CommentOnIssue);
+    tools.register(github::CreatePullRequest);
     tools
 }
 
@@ -246,9 +260,49 @@ mod tests {
                 .iter()
                 .any(|name| name == "set_titlebar_status")
         );
-        for name in ["web_search", "fetch_url", "http_request"] {
+        for name in [
+            "web_search",
+            "fetch_url",
+            "http_request",
+            "github_get_repository",
+            "github_list_issues",
+            "github_list_pull_requests",
+            "github_get_pull_request",
+            "github_get_pull_request_files",
+            "github_list_pull_request_reviews",
+            "github_list_workflow_runs",
+            "github_create_issue",
+            "github_comment_on_issue",
+            "github_create_pull_request",
+            "browser_automate",
+        ] {
             assert!(teammate_tools.iter().any(|tool| tool == name));
             assert!(!code_tools.iter().any(|tool| tool == name));
+        }
+        for name in [
+            "github_get_repository",
+            "github_list_issues",
+            "github_list_pull_requests",
+            "github_get_pull_request",
+            "github_get_pull_request_files",
+            "github_list_pull_request_reviews",
+            "github_list_workflow_runs",
+        ] {
+            assert!(teammates.is_read_only(name), "{name} should be read-only");
+            assert!(teammates.requires_network(name), "{name} needs network");
+        }
+        assert!(teammates.requires_network("browser_automate"));
+        assert!(!teammates.is_read_only("browser_automate"));
+        for name in [
+            "github_create_issue",
+            "github_comment_on_issue",
+            "github_create_pull_request",
+        ] {
+            assert!(
+                !teammates.is_read_only(name),
+                "{name} must require approval"
+            );
+            assert!(teammates.requires_network(name), "{name} needs network");
         }
     }
 
@@ -277,6 +331,7 @@ mod tests {
             "list_skills",
             "load_skill",
             "execution_metrics",
+            "evaluate_agent",
         ] {
             assert!(tools.is_read_only(name), "{name} should be read-only");
         }
@@ -284,6 +339,7 @@ mod tests {
             assert!(!tools.is_read_only(name), "{name} must remain mutating");
         }
         assert!(tools.names().iter().any(|name| name == "propose_skill"));
+        assert!(tools.names().iter().any(|name| name == "evaluate_agent"));
     }
 
     #[test]

@@ -10,7 +10,11 @@ work independently of the Desktop and Dashboard clients.
 Teammates can have a specialization such as Architect, Graphics Engineer,
 Reviewer, Tester, Researcher, or Security. The runtime adds that role to the
 Teammate's task context while preserving its configured system instructions
-and permission profile.
+and permission profile. Desktop offers role presets for common software,
+quality, research, operations, and writing responsibilities; each preset can
+be edited as free-form specialization text. Provider/model overrides, skills,
+workspace grants, network access, and the explicit tool allowlist remain
+independently configurable.
 
 Persistent Teams group Teammates around a shared purpose. A Teammate can use
 `create_team`, `add_team_member`, and `list_teams` to create a group, assign
@@ -135,14 +139,37 @@ supervisor, avoiding parent/child deadlocks.
 On restart, queued work remains queued and active or waiting tasks are marked
 `interrupted`. Luma expires their pending approvals and resumes a completed
 parent's continuation when all descendants have become terminal. It does not
-automatically replay an interrupted request: tool calls can have external side
-effects, and the runtime does not yet persist an idempotent action cursor. The
-legacy `recover_on_restart` and `recover_interrupted_tasks` fields are retained
-for stored/API compatibility but do not override this safety rule. Reconcile
-external state before manually retrying an interrupted task.
+automatically replay an interrupted request. Every Teammate tool invocation is
+recorded in the SQLite `task_actions` journal with its task attempt, sequence,
+tool, bounded input/output, status, and timestamps. A tool action still running
+when its worker exits is marked `uncertain`, because its external side effect
+may already have happened. Before retrying any task with recorded actions, the
+user must inspect the journal and explicitly acknowledge reconciliation. Luma
+then injects the action history and acknowledgement into the retry context;
+the agent is instructed to inspect current state and avoid repeating completed
+actions. This is guarded recovery with human reconciliation, not an automatic
+exactly-once guarantee. Tasks without recorded actions can be retried directly.
+
+Proposed plans are stored separately from the task's interactive question
+checkpoint. `task.plan_generated` and `task.plan_approved` events preserve the
+plan and its approval state across client restarts, and the Desktop and
+Dashboard conversation timelines display both.
 
 The read-only `execution_metrics` tool reports persisted token usage, estimated
 cost, tool durations/failures, and task lifecycle/execution durations. It reads
 up to the latest 1,000 events per Teammate and up to 100 task records per call.
 Cost is an estimate using Luma's default token rates, not authoritative billing
 data for a provider or custom endpoint.
+
+The read-only `evaluate_agent` tool builds an operational scorecard from
+persisted task outcomes and tool events. It reports completion and tool success
+rates, failed/interrupted tasks, token usage, sample size, and a reliability
+score, with per-agent provider/model comparisons when evaluating more than one
+Teammate. The score does not measure answer correctness or code quality; small
+samples are marked as developing or insufficient data. Desktop's Teammate
+Insights tab shows the same operational measures for the selected agent.
+
+The Desktop and Dashboard global Teammate Inboxes collect pending approvals,
+questions, failed and interrupted tasks, and recent completions across all
+Teammates. Interrupted tasks can be inspected there, reconciled against the
+action journal, and then retried.

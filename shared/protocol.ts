@@ -7,7 +7,7 @@
 
 // Runtime operations are additive to the v3 JSONL contract. New features are
 // discovered with runtime_capabilities rather than breaking existing clients.
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export type ProviderProtocol = "OpenAiCompatible" | "Anthropic" | "Gemini";
 export type ProviderCategory = "Local" | "Cloud" | "Custom";
@@ -173,6 +173,21 @@ export type TaskRecord = {
   updated_at: number;
 };
 
+export type TaskActionRecord = {
+  id: string;
+  task_id: string;
+  sequence: number;
+  attempt: number;
+  tool_name: string;
+  input: string;
+  output: string | null;
+  status: "started" | "finished" | "failed" | "uncertain" | "reconciled";
+  started_at: number;
+  updated_at: number;
+  finished_at: number | null;
+  reconciliation: string | null;
+};
+
 export type InstalledPlugin = { id: string; enabled: boolean; installed_at: number };
 export type PluginToolManifest = { name: string; description: string; model_guide?: string | null; read_only: boolean; requires_network: boolean; input_schema?: unknown };
 export type PluginManifest = { schema_version: number; id: string; name: string; version: string; description: string; command: string; args: string[]; tools: PluginToolManifest[] };
@@ -287,6 +302,8 @@ export type ClientMessage =
   | { type: "task_cancel"; data: { request_id: string; id: string } }
   | { type: "task_answer_question"; data: { request_id: string; id: string; question_id: string; answer: string } }
   | { type: "task_retry"; data: { request_id: string; id: string } }
+  | { type: "task_actions_list"; data: { request_id: string; id: string } }
+  | { type: "task_actions_reconcile"; data: { request_id: string; id: string; acknowledgement: string } }
   | { type: "task_rename"; data: { request_id: string; id: string; title: string } }
   | { type: "task_delete"; data: { request_id: string; id: string } }
   | { type: "plugins_list"; data: { request_id: string } }
@@ -358,6 +375,8 @@ export type ServerEvent =
   | { type: "agent_deleted"; data: { request_id: string; id: string; deleted: boolean } }
   | { type: "tasks"; data: { request_id: string; tasks: TaskRecord[] } }
   | { type: "task_saved"; data: { request_id: string; task: TaskRecord } }
+  | { type: "task_actions"; data: { request_id: string; id: string; actions: TaskActionRecord[] } }
+  | { type: "task_actions_reconciled"; data: { request_id: string; id: string; reconciled: number } }
   | { type: "task_deleted"; data: { request_id: string; id: string; deleted: boolean } }
   | { type: "plugins"; data: { request_id: string; plugins: PluginEntry[] } }
   | { type: "plugin_saved"; data: { request_id: string; plugin: InstalledPlugin } }
@@ -588,6 +607,16 @@ function isTaskRecord(value: unknown): value is TaskRecord {
     && isNumber(value.created_at) && isNumber(value.updated_at);
 }
 
+function isTaskActionRecord(value: unknown): value is TaskActionRecord {
+  return isRecord(value) && isString(value.id) && isString(value.task_id)
+    && isNumber(value.sequence) && isNumber(value.attempt) && isString(value.tool_name)
+    && isString(value.input) && isNullableString(value.output)
+    && ["started", "finished", "failed", "uncertain", "reconciled"].includes(String(value.status))
+    && isNumber(value.started_at) && isNumber(value.updated_at)
+    && (value.finished_at === null || isNumber(value.finished_at))
+    && isNullableString(value.reconciliation);
+}
+
 function isPermissionProfile(value: unknown): value is PermissionProfile {
   return isRecord(value) && Array.isArray(value.allowed_tools) && value.allowed_tools.every(isString)
     && Array.isArray(value.denied_tools) && value.denied_tools.every(isString)
@@ -674,6 +703,10 @@ export function parseServerEvent(line: string): ServerEvent {
     case "agent_deleted": valid = isString(data.request_id) && isString(data.id) && typeof data.deleted === "boolean"; break;
     case "tasks": valid = isString(data.request_id) && Array.isArray(data.tasks) && data.tasks.every(isTaskRecord); break;
     case "task_saved": valid = isString(data.request_id) && isTaskRecord(data.task); break;
+    case "task_actions": valid = isString(data.request_id) && isString(data.id)
+      && Array.isArray(data.actions) && data.actions.every(isTaskActionRecord); break;
+    case "task_actions_reconciled": valid = isString(data.request_id) && isString(data.id)
+      && isNumber(data.reconciled) && Number.isInteger(data.reconciled) && data.reconciled >= 0; break;
     case "task_deleted": valid = isString(data.request_id) && isString(data.id) && typeof data.deleted === "boolean"; break;
     case "plugins": valid = isString(data.request_id) && Array.isArray(data.plugins); break;
     case "plugin_saved": valid = isString(data.request_id) && isRecord(data.plugin); break;

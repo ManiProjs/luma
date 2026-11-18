@@ -28,6 +28,7 @@ import {
   type ScheduleRecord,
   type EventTriggerRecord,
   type TaskRecord,
+  type TaskActionRecord,
   type RuntimeEvent,
   type ModelConfig,
   type PluginEntry,
@@ -37,7 +38,7 @@ import type { ChatAttachment } from "../../shared/attachments";
 
 type PendingRequest = {
   expectedType: "setup_config" | "setup_saved" | "providers" | "models" | "provider_tested" | "model_changed"
-    | "agents" | "agent_saved" | "agent_deleted" | "tasks" | "task_saved" | "task_deleted" | "approvals" | "approval_resolved"
+    | "agents" | "agent_saved" | "agent_deleted" | "tasks" | "task_saved" | "task_deleted" | "task_actions" | "task_actions_reconciled" | "approvals" | "approval_resolved"
     | "memory" | "memory_saved" | "memory_deleted" | "schedules" | "schedule_saved" | "schedule_deleted" | "event_triggers" | "event_trigger_saved" | "event_trigger_deleted" | "runtime_events"
     | "plugins" | "plugin_saved" | "plugin_deleted" | "mcp_servers" | "mcp_saved" | "mcp_deleted"
     | "history_list" | "commands" | "command_output";
@@ -1074,6 +1075,18 @@ app.whenReady().then(async () => {
     const response = await requestLuma("tasks", (request_id) => ({ type: "tasks_list", data: { request_id, agent_id: agentId ?? null, limit: 500 } }));
     if (response.type !== "tasks") throw new Error("Unexpected response to tasks_list.");
     return response.data.tasks;
+  });
+
+  handleIpc("luma:get-task-actions", async (_event, id: string): Promise<TaskActionRecord[]> => {
+    const response = await requestLuma("task_actions", (request_id) => ({ type: "task_actions_list", data: { request_id, id } }));
+    if (response.type !== "task_actions") throw new Error("Unexpected response to task_actions_list.");
+    return response.data.actions;
+  });
+
+  handleIpc("luma:reconcile-task-actions", async (_event, id: string, acknowledgement: string): Promise<number> => {
+    const response = await requestLuma("task_actions_reconciled", (request_id) => ({ type: "task_actions_reconcile", data: { request_id, id, acknowledgement } }));
+    if (response.type !== "task_actions_reconciled") throw new Error("Unexpected response to task_actions_reconcile.");
+    return response.data.reconciled;
   });
 
   handleIpc("luma:get-runtime-events", async (_event, agentId: string): Promise<RuntimeEvent[]> => {

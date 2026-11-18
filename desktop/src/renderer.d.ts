@@ -4,7 +4,7 @@ import type {
   SetupProvider,
 } from "./stores/setupStore";
 import type { LumaAgentEvent } from "./preload";
-import type { AgentConfiguration, AgentKind, AgentRecord, ApprovalRecord, ChatSummary, CommandDescriptor, MemoryEntry, MemoryScope, ScheduleRecord, EventTriggerRecord, TaskRecord, RuntimeEvent, PluginEntry, InstalledPlugin, McpServerConfig } from "../../shared/protocol";
+import type { AgentConfiguration, AgentKind, AgentRecord, ApprovalRecord, ChatSummary, CommandDescriptor, MemoryEntry, MemoryScope, ScheduleRecord, EventTriggerRecord, TaskRecord, TaskActionRecord, RuntimeEvent, PluginEntry, InstalledPlugin, McpServerConfig } from "../../shared/protocol";
 import type { ChatAttachment } from "../../shared/attachments";
 
 declare global {
@@ -31,6 +31,8 @@ declare global {
       updateAgent(input: { id: string; name?: string | null; description?: string | null; configuration?: AgentConfiguration | null }): Promise<AgentRecord>;
       setAgentStatus(id: string, status: "idle" | "paused" | "stopped"): Promise<AgentRecord>;
       getTasks(agentId?: string): Promise<TaskRecord[]>;
+      getTaskActions(id: string): Promise<TaskActionRecord[]>;
+      reconcileTaskActions(id: string, acknowledgement: string): Promise<number>;
       getRuntimeEvents(agentId: string): Promise<RuntimeEvent[]>;
       createTask(input: { agentId: string; request: string; workspace?: string; conversationId?: string }): Promise<TaskRecord>;
       cancelTask(id: string): Promise<TaskRecord>;

@@ -27,6 +27,12 @@ start`, or start the browser dashboard with `cargo run -- dashboard`.
 - Desktop and terminal clients, plus a local dashboard.
 - Persistent Teammates with conversation history, memory, schedules, and
   delegated work.
+- Durable task-action journals, crash recovery, reconciled retries, and
+  persisted approval-aware plans.
+- A cross-agent Inbox, specialist role presets, and operational model/reliability
+  scorecards.
+- Teammate-only GitHub issue, pull request, review, and Actions tools, plus
+  approval-gated Playwright browser automation.
 - Agent Skills, native plugins, and Model Context Protocol (MCP) integrations.
 
 ## Documentation

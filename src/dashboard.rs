@@ -179,6 +179,11 @@ impl DashboardServer {
             .route("/api/tasks/{id}/cancel", post(api_cancel_task))
             .route("/api/tasks/{id}/answer", post(api_answer_task_question))
             .route("/api/tasks/{id}/retry", post(api_retry_task))
+            .route("/api/tasks/{id}/actions", get(api_task_actions))
+            .route(
+                "/api/tasks/{id}/reconcile",
+                post(api_reconcile_task_actions),
+            )
             .route("/api/approvals", get(api_approvals))
             .route("/api/approvals/{id}", post(api_resolve_approval))
             .route("/api/memory", get(api_memory).post(api_add_memory))
@@ -1188,6 +1193,47 @@ async fn api_retry_task(
             .into_response(),
         Err(error) => (
             StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+async fn api_task_actions(
+    State(state): State<Arc<DashboardServer>>,
+    AxumPath(id): AxumPath<String>,
+) -> impl IntoResponse {
+    match state.runtime.list_task_actions(&id) {
+        Ok(actions) => Json(actions).into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiError {
+                error: error.to_string(),
+            }),
+        )
+            .into_response(),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ReconcileTaskActionsRequest {
+    acknowledgement: String,
+}
+
+async fn api_reconcile_task_actions(
+    State(state): State<Arc<DashboardServer>>,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<ReconcileTaskActionsRequest>,
+) -> impl IntoResponse {
+    match state
+        .runtime
+        .reconcile_task_actions(&id, &request.acknowledgement)
+    {
+        Ok(reconciled) => Json(serde_json::json!({"reconciled":reconciled})).into_response(),
+        Err(error) => (
+            StatusCode::CONFLICT,
             Json(ApiError {
                 error: error.to_string(),
             }),
