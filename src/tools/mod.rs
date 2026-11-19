@@ -10,6 +10,7 @@ pub mod git;
 pub mod github;
 pub mod memory;
 pub mod observability;
+pub mod routines;
 pub mod shell;
 pub mod skills;
 pub mod titlebar;

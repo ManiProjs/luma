@@ -156,6 +156,31 @@ jobs:
       - name: Build Luma Core
         run: cargo build --locked --release --no-default-features --target ${{ matrix.target }}
 
+      - name: Install Desktop dependencies
+        run: npm ci --prefix desktop --no-audit --no-fund
+
+      - name: Package Electron Desktop
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          case "$TARGET" in
+            *apple-darwin) PLATFORM=darwin ;;
+            *unknown-linux-gnu) PLATFORM=linux ;;
+            *windows-msvc) PLATFORM=win32 ;;
+          esac
+          case "$TARGET" in
+            aarch64-*) ARCH=arm64 ;;
+            x86_64-*) ARCH=x64 ;;
+          esac
+          CORE="target/${TARGET}/release/luma-core"
+          if [[ "$TARGET" == *windows-msvc ]]; then CORE="${CORE}.exe"; fi
+          CORE_ABS="$(python -c 'from pathlib import Path; import sys; print(Path(sys.argv[1]).resolve())' "$CORE")"
+          LUMA_CORE_BINARY="$CORE_ABS" npm run package --prefix desktop -- --platform "$PLATFORM" --arch "$ARCH"
+          DESKTOP_APP="desktop/out/Luma-${PLATFORM}-${ARCH}"
+          test -d "$DESKTOP_APP"
+          echo "DESKTOP_APP=$DESKTOP_APP" >> "$GITHUB_ENV"
+
       - name: Validate Windows installer syntax
         if: runner.os == 'Windows'
         shell: pwsh
@@ -175,6 +200,7 @@ jobs:
             --target "$TARGET" \
             --core "$CORE" \
             --cli ui/dist/luma-cli.js \
+            --desktop "$DESKTOP_APP" \
             --version "$VERSION" \
             --output "dist/luma-${TARGET}.tar.gz"
           tar -tzf "dist/luma-${TARGET}.tar.gz" | sort
@@ -213,9 +239,13 @@ jobs:
           merge-multiple: true
 
       - name: Add installer entrypoints and aggregate checksums
+        env:
+          TAG: ${{ github.ref_name }}
         run: |
           cp scripts/install.sh release-assets/install.sh
           cp scripts/install.ps1 release-assets/install.ps1
+          awk -v heading="## [${TAG#v}]" '$0 == heading { found=1; next } /^## \[/ { if (found) exit } found { print }' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
           cd release-assets
           sha256sum luma-*.tar.gz install.sh install.ps1 > SHA256SUMS
 
@@ -227,9 +257,10 @@ jobs:
           if [[ "$TAG" == *-* ]]; then PRERELEASE=(--prerelease); else PRERELEASE=(); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-assets/* --clobber
+            gh release edit "$TAG" --notes-file release-notes.md
           else
             gh release create "$TAG" release-assets/* \
               --title "Luma $TAG" \
-              --generate-notes \
+              --notes-file release-notes.md \
               "${PRERELEASE[@]}"
           fi

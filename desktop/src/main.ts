@@ -345,7 +345,7 @@ function handleIpc(channel: string, handler: (event: Electron.IpcMainInvokeEvent
       try { trustedFrame = new URL(frameUrl).origin === "http://localhost:5173"; }
       catch { trustedFrame = false; }
     } else {
-      trustedFrame = frameUrl === pathToFileURL(path.join(__dirname, "../renderer/index.html")).href;
+      trustedFrame = frameUrl === pathToFileURL(path.join(__dirname, "../renderer/main_window/index.html")).href;
     }
     if (!mainWindow || event.sender !== mainWindow.webContents || !trustedFrame) {
       return { __lumaIpcError: true, message: "This action is only available to the Luma application window." };
@@ -638,7 +638,10 @@ function createWindow() {
     lastTitlebarStatus = "";
   });
 
-  const rendererFile = pathToFileURL(path.join(__dirname, "../renderer/index.html")).href;
+  // Electron Forge's Vite plugin places each named renderer under its own
+  // directory (here: .vite/renderer/main_window).
+  const rendererPath = path.join(__dirname, "../renderer/main_window/index.html");
+  const rendererFile = pathToFileURL(rendererPath).href;
   mainWindow.webContents.on("will-navigate", (event, targetUrl) => {
     let isTrustedDevelopmentUrl = false;
     if (process.env.NODE_ENV === "development") {
@@ -652,7 +655,7 @@ function createWindow() {
   if (process.env.NODE_ENV === "development") {
     void mainWindow.loadURL("http://localhost:5173");
   } else {
-    void mainWindow.loadFile(path.join(__dirname, "../renderer/index.html"));
+    void mainWindow.loadFile(rendererPath);
   }
 
   mainWindow.on("closed", () => {

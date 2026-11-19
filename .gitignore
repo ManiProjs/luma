@@ -4,3 +4,7 @@
 .omc/
 .serena/
 node_modules
+
+dist/
+.claude/
+.cursor/

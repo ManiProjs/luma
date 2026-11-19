@@ -9,9 +9,10 @@ workspace.
 
 ## Quick start
 
-The installer provisions the complete terminal runtime: Luma Core, the Ink
-client, embedded browser dashboard, pinned Bun and Node.js runtimes, Playwright
-with Chromium, ripgrep, and the built-in Agent Skills.
+The installer provisions Luma Core, the Ink client, embedded browser
+dashboard, Electron Desktop app, pinned Bun and Node.js runtimes, Playwright
+with Chromium, ripgrep, and the built-in Agent Skills. Launch Desktop with
+`luma-desktop`.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ManiProjs/luma/main/scripts/install.sh | bash
@@ -36,7 +37,7 @@ uses `winget` to install Git for Windows when needed.
 To install a specific prerelease:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/ManiProjs/luma/main/scripts/install.sh | LUMA_VERSION=v1.0.0-beta.1 bash
+curl -fsSL https://raw.githubusercontent.com/ManiProjs/luma/main/scripts/install.sh | LUMA_VERSION=v1.0.0-beta.2 bash
 ```
 
 To remove the program and its bundled runtimes without deleting user
@@ -48,8 +49,9 @@ curl -fsSL https://raw.githubusercontent.com/ManiProjs/luma/main/scripts/install
 
 On Windows, run the saved PowerShell installer with `-Uninstall`.
 
-The Electron desktop app remains a separate application build; this installer
-sets up the complete Core, terminal, dashboard, and browser-automation runtime.
+The platform release bundle includes the complete Electron Desktop app and
+its native dependencies alongside the Core, terminal, dashboard, and
+browser-automation runtime.
 
 ## What Luma includes
 

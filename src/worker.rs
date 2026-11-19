@@ -150,6 +150,12 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
             workspace_id.clone(),
             inherit_global,
         ));
+        registry.register(tools::routines::ListRoutines);
+        registry.register(tools::routines::LoadRoutine);
+        registry.register(tools::routines::LearnWorkflow::new(
+            store.clone(),
+            task.id.clone(),
+        ));
     }
     // Native Luma plugins and MCP servers are global connectors. A Teammate
     // receives them only when it opts into the Global teammate's context.
@@ -172,6 +178,9 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
                 "delegate_task",
                 "get_delegated_task",
                 "list_delegated_tasks",
+                "list_routines",
+                "load_routine",
+                "learn_workflow",
             ]
             .into_iter()
             .map(str::to_owned),
@@ -192,6 +201,9 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
                         | "delegate_task"
                         | "get_delegated_task"
                         | "list_delegated_tasks"
+                        | "list_routines"
+                        | "load_routine"
+                        | "learn_workflow"
                 )
             {
                 permissions.denied_tools.push(name);
@@ -250,6 +262,9 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
             "delegate_task".to_owned(),
             "get_delegated_task".to_owned(),
             "list_delegated_tasks".to_owned(),
+            "list_routines".to_owned(),
+            "load_routine".to_owned(),
+            "learn_workflow".to_owned(),
         ]);
         registry.retain(&retained);
     }
@@ -373,6 +388,18 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
                 .to_owned(),
         );
         agent.add_system_context(
+            "# Reusable routines and workflow learning\n\n\
+             Discover installed procedures with list_routines and load one with load_routine.\n\
+             When the user asks you to remember or teach a successful repeatable workflow, use\n\
+             learn_workflow to create a reviewable routine draft. Include clear, adaptable steps,\n\
+             prerequisites, expected results, and recovery guidance. Luma attaches a redacted\n\
+             summary of this task's recorded tool actions as reference. Never treat that trace as\n\
+             a script to replay blindly. Routine drafts are not installed or scheduled until a\n\
+             human reviews and promotes them. When asked to run a routine, load it first and follow\n\
+             its instructions under the current task's permissions and approval requirements."
+                .to_owned(),
+        );
+        agent.add_system_context(
             "# Teammate collaboration\n\n\
              Discover specialists with list_teammates. Create persistent groups with create_team,\n\
              add Teammates with add_team_member, and inspect teams with list_teams. Delegate\n\
@@ -396,6 +423,9 @@ pub async fn run_task_worker(task_id: &str) -> Result<()> {
              - chart: {\"type\":\"chart\",\"title\":\"...\",\"labels\":[\"A\",\"B\"],\"values\":[4,7],\"value_suffix\":\"%\"}\n\
              - callout: {\"type\":\"callout\",\"title\":\"...\",\"text\":\"...\",\"tone\":\"info|success|warning\"}\n\
              - link: {\"type\":\"link\",\"label\":\"...\",\"url\":\"https://...\",\"description\":\"...\"}\n\
+             - action: {\"type\":\"action\",\"label\":\"Continue\",\"prompt\":\"Ask me to...\"}\n\
+             - choices: {\"type\":\"choices\",\"title\":\"Choose\",\"options\":[{\"label\":\"Option A\",\"prompt\":\"Do A\"}]}\n\
+             - form: {\"type\":\"form\",\"title\":\"Details\",\"fields\":[{\"name\":\"topic\",\"label\":\"Topic\",\"type\":\"text\",\"required\":true}],\"prompt\":\"Help me with {topic}\"}\n\
              Example syntax: an opening triple-backtick fence tagged `luma`, one JSON object,\n\
              then a closing triple-backtick fence. Use only real,\n\
              verified image URLs and factual data; never invent sources, metrics, or links.\n\

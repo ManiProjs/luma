@@ -2,6 +2,38 @@
 
 All notable changes to Luma are documented here.
 
+## [1.0.0-beta.2] - 2026-11-19
+
+This beta adds the packaged Desktop application, interactive responses in
+Teammates conversations, and reusable routines learned from completed work.
+
+### Added
+
+- Electron Desktop is included in macOS, Linux, and Windows release bundles and
+  installed with the `luma-desktop` launcher.
+- Interactive Rich Responses now support action buttons, choice panels, and
+  forms that continue a Teammate conversation with the submitted input.
+- Teammates can discover and load workspace or user routines, and learn
+  workflows into reviewable Markdown drafts with a redacted task-action
+  reference. Drafts require review before installation or reuse.
+- Release packaging verifies the Electron renderer, native `node-pty` module,
+  and bundled Luma Core before producing platform archives.
+
+### Improved
+
+- Unified CI validates and packages the Desktop app for all supported release
+  targets, alongside the Core, Ink client, and dashboard.
+- Installers now verify and install the Desktop application, expose the
+  `luma-desktop` command, and remove its launcher during uninstall.
+- Installation and Teammates documentation now cover the expanded runtime and
+  routine workflow.
+
+### Release status
+
+- This remains a beta prerelease. Platform packaging and installation should
+  be exercised on each supported operating system before stable 1.0.
+- No exactly-once guarantee is made for actions against external services.
+
 ## [1.0.0-beta.1] - 2026-11-18
 
 First 1.0 beta release for hands-on evaluation of the unified Code and

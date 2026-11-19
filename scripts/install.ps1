@@ -57,6 +57,8 @@ try {
     Assert-Sha256 (Join-Path $Temp $Asset) $Expected
     & tar.exe -xzf (Join-Path $Temp $Asset) -C $Temp
     if ($LASTEXITCODE -ne 0) { throw "Could not extract the Luma bundle." }
+    $DesktopExecutable = Join-Path $Temp "luma\desktop\Luma.exe"
+    if (-not (Test-Path $DesktopExecutable -PathType Leaf)) { throw "Release bundle does not contain the Windows Luma Desktop app." }
 
     $NodePlatform = "win-x64"
     $NodeArchive = "node-v$NodeVersion-$NodePlatform.zip"
@@ -100,12 +102,13 @@ try {
     & $Node $PlaywrightCli install chromium
     if ($LASTEXITCODE -ne 0) { throw "Could not install Playwright Chromium." }
 
-    Write-Step "Installing Luma Core, Ink client, and embedded dashboard"
+    Write-Step "Installing Luma Core, Ink client, embedded dashboard, and Desktop app"
     New-Item -ItemType Directory -Force -Path $LumaHome, $BinDir, (Join-Path $LumaHome "lib") | Out-Null
-    Remove-Item -Recurse -Force $BinDir, (Join-Path $LumaHome "lib"), $Runtime -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force -Path $BinDir, (Join-Path $LumaHome "lib") | Out-Null
+    Remove-Item -Recurse -Force $BinDir, (Join-Path $LumaHome "lib"), (Join-Path $LumaHome "desktop"), $Runtime -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $BinDir, (Join-Path $LumaHome "lib"), (Join-Path $LumaHome "desktop") | Out-Null
     Copy-Item (Join-Path $Temp "luma\bin\*") $BinDir -Recurse -Force
     Copy-Item (Join-Path $Temp "luma\lib\*") (Join-Path $LumaHome "lib") -Recurse -Force
+    Copy-Item (Join-Path $Temp "luma\desktop\*") (Join-Path $LumaHome "desktop") -Recurse -Force
     Move-Item $RuntimeStage $Runtime
     Copy-Item (Join-Path $Temp "luma\bundle.json") (Join-Path $LumaHome "bundle.json") -Force
     Copy-Item (Join-Path $Temp "luma\LICENSE") (Join-Path $LumaHome "LICENSE") -Force
@@ -131,13 +134,18 @@ set "LUMA_VERSION=$BundleVersion"
 "%LUMA_HOME%\runtime\node_modules\bun\bin\bun.exe" "%LUMA_HOME%\lib\luma-cli.js" %*
 "@ | Set-Content -Encoding ASCII (Join-Path $BinDir "luma.cmd")
 
+@"
+@echo off
+"%LOCALAPPDATA%\Luma\desktop\Luma.exe" %*
+"@ | Set-Content -Encoding ASCII (Join-Path $BinDir "luma-desktop.cmd")
+
     [Environment]::SetEnvironmentVariable("LUMA_HOME", $LumaHome, "User")
     $UserPath = [Environment]::GetEnvironmentVariable("Path", "User") -split ';' | Where-Object { $_ }
     if ($UserPath -notcontains $BinDir) { $UserPath += $BinDir }
     [Environment]::SetEnvironmentVariable("Path", ($UserPath -join ';'), "User")
 
     Write-Step "Luma $Version installed"
-    Write-Host "Commands: luma, luma teammates, luma dashboard"
+    Write-Host "Commands: luma, luma teammates, luma dashboard, luma-desktop"
     Write-Host "Runtime: Bun $BunVersion, Node.js $NodeVersion, Playwright $PlaywrightVersion + Chromium, ripgrep $RipgrepVersion, Git"
     Write-Host "Open a new terminal, then run: luma setup"
 }

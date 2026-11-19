@@ -83,7 +83,7 @@ case "$LUMA_HOME" in */luma|*/Luma) ;; *) fail 'LUMA_HOME must be a dedicated di
 uninstall() {
   log "Removing Luma program files"
   rm -rf "$LUMA_HOME"
-  rm -f "$BIN_DIR/luma" "$BIN_DIR/luma-core"
+  rm -f "$BIN_DIR/luma" "$BIN_DIR/luma-core" "$BIN_DIR/luma-desktop"
   for profile in "${HOME}/.zprofile" "${HOME}/.profile" "${HOME}/.bash_profile"; do
     if [[ -f "$profile" ]]; then
       temporary="$(mktemp)"
@@ -137,6 +137,11 @@ log "Preparing the verified Luma bundle"
 tar -xzf "${TMP_DIR}/${asset}" -C "$TMP_DIR"
 [[ -x "${TMP_DIR}/luma/bin/luma-core" ]] || fail 'release bundle does not contain an executable luma-core.'
 [[ -s "${TMP_DIR}/luma/lib/luma-cli.js" ]] || fail 'release bundle does not contain the Ink client.'
+if [[ "$(uname -s)" == Darwin ]]; then
+  [[ -x "${TMP_DIR}/luma/desktop/Luma.app/Contents/MacOS/Luma" ]] || fail 'release bundle does not contain the macOS Luma Desktop app.'
+else
+  [[ -x "${TMP_DIR}/luma/desktop/Luma" ]] || fail 'release bundle does not contain the Linux Luma Desktop executable.'
+fi
 
 runtime="$TMP_DIR/runtime"
 mkdir -p "$runtime"
@@ -193,11 +198,12 @@ elif [[ "$(uname -s)" == "Linux" ]]; then
 fi
 "$runtime/node/bin/node" "$runtime/node_modules/playwright/cli.js" install chromium
 
-log "Installing Luma Core, Ink client, and embedded dashboard"
+log "Installing Luma Core, Ink client, embedded dashboard, and Desktop app"
 mkdir -p "$LUMA_HOME" "$BIN_DIR"
-rm -rf "${LUMA_HOME:?}/bin" "${LUMA_HOME:?}/lib" "${LUMA_HOME:?}/runtime"
+rm -rf "${LUMA_HOME:?}/bin" "${LUMA_HOME:?}/lib" "${LUMA_HOME:?}/runtime" "${LUMA_HOME:?}/desktop"
 cp -R "${TMP_DIR}/luma/bin" "$LUMA_HOME/bin"
 cp -R "${TMP_DIR}/luma/lib" "$LUMA_HOME/lib"
+cp -R "${TMP_DIR}/luma/desktop" "$LUMA_HOME/desktop"
 mv "$runtime" "$LUMA_HOME/runtime"
 cp "${TMP_DIR}/luma/bundle.json" "$LUMA_HOME/bundle.json"
 cp "${TMP_DIR}/luma/LICENSE" "$LUMA_HOME/LICENSE"
@@ -232,10 +238,21 @@ export LUMA_VERSION="$(sed -n 's/.*"version": "\([^"]*\)".*/\1/p' "${LUMA_HOME}/
 exec "${LUMA_HOME}/runtime/node_modules/.bin/bun" "${LUMA_HOME}/lib/luma-cli.js" "$@"
 WRAPPER
 chmod 755 "$BIN_DIR/luma" "$LUMA_HOME/bin/luma-core"
+cat > "$BIN_DIR/luma-desktop" <<'DESKTOP_WRAPPER'
+#!/bin/sh
+set -eu
+LUMA_HOME="${LUMA_HOME:-${HOME}/.local/share/luma}"
+case "$(uname -s)" in
+  Darwin) exec open "$LUMA_HOME/desktop/Luma.app" --args "$@" ;;
+  Linux) exec "$LUMA_HOME/desktop/Luma" "$@" ;;
+  *) echo "Luma Desktop: unsupported platform" >&2; exit 1 ;;
+esac
+DESKTOP_WRAPPER
+chmod 755 "$BIN_DIR/luma-desktop"
 ln -sfn "$LUMA_HOME/bin/luma-core" "$BIN_DIR/luma-core"
 install_path_hint
 
 log "Luma ${VERSION} installed"
-printf 'Commands: luma, luma teammates, luma dashboard\n'
+printf 'Commands: luma, luma teammates, luma dashboard, luma-desktop\n'
 printf 'Runtime: Bun %s, Node.js %s, Playwright %s + Chromium, ripgrep %s, Git\n' "$BUN_VERSION" "$NODE_VERSION" "$PLAYWRIGHT_VERSION" "$RIPGREP_VERSION"
 printf 'Open a new terminal, then run: luma setup\n'

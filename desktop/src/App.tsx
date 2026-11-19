@@ -4262,6 +4262,34 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
     await perform(() => window.luma.answerTaskQuestion(taskId, questionId, answer));
   }
 
+  async function runRichResponseAction(task: TaskRecord, prompt: string) {
+    const agent = agents.find((item) => item.id === task.agent_id);
+    if (!agent || agent.status === "paused" || agent.status === "stopped") {
+      setError("This Teammate is paused or stopped. Resume it before using this interactive action.");
+      return;
+    }
+    const request = prompt.trim();
+    if (!request || request.length > 8_000 || sendingMessage) return;
+    setSendingMessage(true);
+    setError(null);
+    try {
+      const created = await window.luma.createTask({
+        agentId: agent.id,
+        request,
+        workspace: task.workspace || agent.configuration.workspace || workspacePath || undefined,
+        conversationId: task.conversation_id,
+      });
+      setSelectedAgentId(agent.id);
+      setSelectedTaskId(created.conversation_id);
+      setSubmittingTaskId(created.id);
+      await refresh();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setSendingMessage(false);
+    }
+  }
+
   async function inspectTaskRecovery(taskId: string) {
     setInspectorTab("inbox");
     setRecoveryTaskId(taskId);
@@ -4324,7 +4352,7 @@ function TeammatesPanel({ onSidebarChange, onOpenFile, onHandoffToCode, sendWith
                             <summary>{toolActivitySummary(segment.tools)}</summary>
                             <div className="space-y-2"><EditedFilesList tools={segment.tools} />{segment.tools.map((tool) => <div key={tool.id} className="luma-tool-activity-row"><div className="luma-tool-activity-heading"><span className={`luma-tool-state ${tool.durationMs === undefined ? "is-running" : "is-finished"}`} />{tool.name}<span className="luma-tool-duration">{tool.durationMs === undefined ? "running" : `${tool.durationMs} ms${tool.failed ? " · failed" : ""}`}</span></div>{tool.input && <pre className="luma-tool-detail">{tool.input}</pre>}{tool.diff && <pre className="luma-tool-diff">{tool.diff}</pre>}</div>)}</div>
                           </details>
-                        ) : <div key={segment.id} className="text-[12px] leading-6"><RichResponse content={segment.content} /></div>)}
+                        ) : <div key={segment.id} className="text-[12px] leading-6"><RichResponse content={segment.content} onAction={(prompt) => void runRichResponseAction(task, prompt)} /></div>)}
                         <TaskQuestionCard task={task} busy={busy} onAnswer={answerTaskQuestion} />
                         {!hasAnswer && timeline.length === 0 && task.status !== "waiting_for_input" && <div className="text-[11px] text-[var(--luma-text-muted)]">{task.status === "completed" ? "No text response was recorded for this task." : task.error ?? (task.status === "failed" ? "Task failed." : task.status === "cancelled" ? "Cancelled." : "Thinking…")}</div>}
                         {task.status === "failed" || task.status === "interrupted" ? <button type="button" disabled={recoveryLoading} onClick={() => void inspectTaskRecovery(task.id)} className="mt-2 text-[10px] text-[var(--luma-accent)] hover:underline">Review recovery</button> : null}

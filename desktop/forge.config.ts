@@ -13,7 +13,9 @@ import { FuseV1Options, FuseVersion } from "@electron/fuses";
 
 const repositoryRoot = path.resolve(process.cwd(), "..");
 const coreBinaryName = process.platform === "win32" ? "luma-core.exe" : "luma-core";
-const coreBinaryPath = path.join(repositoryRoot, "target", "release", coreBinaryName);
+const coreBinaryPath = process.env.LUMA_CORE_BINARY
+  ? path.resolve(process.env.LUMA_CORE_BINARY)
+  : path.join(repositoryRoot, "target", "release", coreBinaryName);
 const assetsPath = path.join(__dirname, "assets");
 // Use the same complete Luma mark on every platform. Electron Packager
 // resolves this extensionless base to .icns (macOS) or .ico (Windows);
@@ -52,10 +54,16 @@ const config: ForgeConfig = {
           `package the desktop app for that same target or cross-compile the Rust core first.`,
         );
       }
-      execFileSync("cargo", ["build", "--release", "--no-default-features"], {
-        cwd: repositoryRoot,
-        stdio: "inherit",
-      });
+      if (process.env.LUMA_CORE_BINARY) {
+        if (!existsSync(coreBinaryPath)) {
+          throw new Error(`LUMA_CORE_BINARY does not exist: ${coreBinaryPath}`);
+        }
+      } else {
+        execFileSync("cargo", ["build", "--release", "--no-default-features"], {
+          cwd: repositoryRoot,
+          stdio: "inherit",
+        });
+      }
     },
     postPackage: async (_forgeConfig, { outputPaths, platform }) => {
       if (outputPaths.length === 0) {
@@ -78,6 +86,17 @@ const config: ForgeConfig = {
         const packagedPty = path.join(resourcesPath, "app.asar.unpacked", "node_modules", "node-pty");
         if (!existsSync(path.join(resourcesPath, "app.asar"))) {
           throw new Error(`Packaged application archive is missing from ${resourcesPath}.`);
+        }
+        const rendererOutput = path.join(process.cwd(), ".vite", "renderer", "main_window", "index.html");
+        if (!existsSync(rendererOutput)) {
+          throw new Error(`Vite renderer output is missing: ${rendererOutput}.`);
+        }
+        const asarCli = path.join(process.cwd(), "node_modules", "@electron", "asar", "bin", "asar.js");
+        const archiveEntries = execFileSync(process.execPath, [asarCli, "list", path.join(resourcesPath, "app.asar")], {
+          encoding: "utf8",
+        });
+        if (!archiveEntries.split(/\r?\n/).includes("/.vite/renderer/main_window/index.html")) {
+          throw new Error("Packaged application archive is missing the main_window renderer HTML.");
         }
         if (!existsSync(packagedPty)) {
           throw new Error(`Packaged node-pty native module is missing from ${packagedPty}.`);

@@ -41,11 +41,15 @@ Teammate can place one JSON object inside a fenced code block tagged `luma`:
 ```
 
 Supported block types are `image`, `gallery`, `table`, `stat`, `chart`,
-`callout`, and `link`. Image and link URLs must use HTTP or HTTPS; unsupported
-or malformed blocks fall back to a readable JSON code block. Galleries, table
-rows, and chart series are bounded to keep responses compact. Ordinary Markdown
-and existing conversation history continue to render as before. Rich blocks
-are presentation only: they cannot execute HTML, scripts, or arbitrary code.
+`callout`, `link`, `action`, `choices`, and `form`. Image and link URLs must use
+HTTP or HTTPS; unsupported or malformed blocks fall back to a readable JSON
+code block. Galleries, table rows, chart series, form fields, and choices are
+bounded to keep responses compact. Interactive actions submit a follow-up
+message to the same Teammate conversation; they do not execute tools directly
+or bypass normal permissions and approvals. Forms support text, textarea, and
+select fields, with `{field_name}` placeholders in their prompt template.
+Ordinary Markdown and existing conversation history continue to render as
+before. Rich blocks cannot execute HTML, scripts, or arbitrary code.
 
 ## Long-term memory
 
@@ -89,6 +93,25 @@ dependency, or security checks. These monitors run as ordinary Teammate tasks
 and inherit the Teammate's workspace grants, network policy, and approval
 requirements. Dependency updates and repository mutations are recommendations
 that still require the normal approval flow.
+
+## Routines and workflow learning
+
+Teammates can discover installed routines with `list_routines` and load their
+instructions with `load_routine`. A routine is a reusable Markdown procedure
+installed under `.luma/routines/<name>/ROUTINE.md` (workspace-local) or
+`~/.config/luma/routines/<name>/ROUTINE.md` (user-wide). When asked to preserve a
+successful workflow, a Teammate can call `learn_workflow` with a name, title,
+description, and clear step-by-step instructions. Luma adds a redacted summary
+of the current task's recorded tool actions as supporting reference and writes
+the result to `.luma/routine-drafts/<name>/ROUTINE.md`.
+
+Learned routines are drafts, not executable scripts. Review the procedure,
+remove any task-specific assumptions, and move the directory into
+`.luma/routines/` to install it. A Teammate can then load and follow it. Existing
+schedules and event triggers can automate routine-based work by using the
+routine name and its intended outcome in their prompt. Tool permissions,
+workspace grants, and approvals are re-evaluated on every run; a learned routine
+never stores or grants credentials or permissions.
 
 ## Delegation and handoffs
 

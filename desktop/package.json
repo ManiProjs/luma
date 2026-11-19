@@ -1,7 +1,7 @@
 {
   "name": "desktop",
   "productName": "Luma",
-  "version": "1.0.0-beta.1",
+  "version": "1.0.0-beta.2",
   "description": "Luma desktop workspace for Code and Teammates",
   "main": ".vite/build/main.js",
   "private": true,

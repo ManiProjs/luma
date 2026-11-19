@@ -23,12 +23,19 @@ cat > "$FIXTURES/luma-cli.js" <<'CLI'
 process.stdout.write("Luma installer fixture\n");
 CLI
 chmod +x "$FIXTURES/luma-core"
+mkdir -p "$FIXTURES/Luma.app/Contents/MacOS"
+cat > "$FIXTURES/Luma.app/Contents/MacOS/Luma" <<'APP'
+#!/bin/sh
+exit 0
+APP
+chmod +x "$FIXTURES/Luma.app/Contents/MacOS/Luma"
 
 python3 scripts/package-bundle.py \
   --target aarch64-apple-darwin \
   --core "$FIXTURES/luma-core" \
   --cli "$FIXTURES/luma-cli.js" \
-  --version 1.0.0-beta.1 \
+  --desktop "$FIXTURES" \
+  --version 1.0.0-beta.2 \
   --output "$FIXTURES/luma-aarch64-apple-darwin.tar.gz"
 sha256sum "$FIXTURES/luma-aarch64-apple-darwin.tar.gz" > "$FIXTURES/luma-aarch64-apple-darwin.tar.gz.sha256"
 
@@ -110,16 +117,18 @@ export HOME="$TEST_HOME"
 export SHELL=/bin/zsh
 export LUMA_HOME
 export LUMA_BIN_DIR="$BIN_DIR"
-export LUMA_VERSION=v1.0.0-beta.1
+export LUMA_VERSION=v1.0.0-beta.2
 export LUMA_TEST_FIXTURES="$FIXTURES"
 export PATH="$FAKE_BIN:$PATH"
 
 bash scripts/install.sh
 [[ -x "$LUMA_HOME/bin/luma-core" ]]
 [[ -s "$LUMA_HOME/lib/luma-cli.js" ]]
+[[ -x "$LUMA_HOME/desktop/Luma.app/Contents/MacOS/Luma" ]]
+[[ -x "$BIN_DIR/luma-desktop" ]]
 [[ -x "$LUMA_HOME/runtime/node_modules/.bin/bun" ]]
 [[ -f "$CONFIG_DIR/skills/ask-question/SKILL.md" ]]
-[[ "$("$BIN_DIR/luma" --version)" == "1.0.0-beta.1" ]]
+[[ "$("$BIN_DIR/luma" --version)" == "1.0.0-beta.2" ]]
 [[ -L "$BIN_DIR/luma-core" ]]
 [[ -f "$HOME/.zprofile" ]]
 
@@ -128,6 +137,8 @@ printf 'keep this user data\n' > "$HOME/.config/luma/config.toml"
 bash scripts/install.sh --uninstall
 [[ ! -e "$LUMA_HOME" ]]
 [[ ! -e "$BIN_DIR/luma" ]]
+[[ ! -e "$BIN_DIR/luma-desktop" ]]
+[[ ! -e "$LUMA_HOME/desktop" ]]
 [[ -f "$HOME/.config/luma/config.toml" ]]
 [[ -f "$CONFIG_DIR/skills/ask-question/SKILL.md" ]]
 if awk '/Luma PATH/ { found=1 } END { exit found ? 0 : 1 }' "$HOME/.zprofile"; then

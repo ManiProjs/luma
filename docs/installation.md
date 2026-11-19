@@ -1,8 +1,9 @@
 # Installation
 
 Luma's installer creates a self-contained user installation for the Rust Core,
-Ink terminal client, embedded dashboard, and browser automation runtime. It
-does not require Rust, Bun, Node.js, or a project checkout to be present first.
+Ink terminal client, embedded dashboard, Electron Desktop app, and browser
+automation runtime. It does not require Rust, Bun, Node.js, or a project
+checkout to be present first.
 
 ## macOS and Linux
 
@@ -16,7 +17,7 @@ bundle, verifies its SHA-256 checksum, and installs under
 `~/.local/share/luma`. The `luma` and `luma-core` commands are placed in
 `~/.local/bin`; the installer adds that directory to `~/.zprofile` for zsh,
 `~/.bash_profile` for macOS Bash, or `~/.profile` otherwise. Open a new terminal
-after installation.
+after installation. Launch the graphical application with `luma-desktop`.
 
 It also installs pinned Node.js, Bun, Playwright, Chromium, and a platform
 build of ripgrep. On Debian/Ubuntu, it installs Chromium's system libraries
@@ -41,7 +42,8 @@ irm https://raw.githubusercontent.com/ManiProjs/luma/main/scripts/install.ps1 | 
 luma setup
 ```
 
-Windows x64 is supported. The installer uses `winget` to install Git for
+Windows x64 is supported. The installer includes the Electron Desktop app;
+launch it with `luma-desktop`. The installer uses `winget` to install Git for
 Windows if it is not already available. Open a new terminal after setup so the
 user PATH update takes effect.
 
@@ -51,6 +53,7 @@ user PATH update takes effect.
 ~/.local/share/luma/
 ├── bin/luma-core
 ├── lib/luma-cli.js
+├── desktop/                # Luma.app on macOS; packaged Electron files elsewhere
 ├── runtime/
 │   ├── node/
 │   └── node_modules/       # Bun, Playwright, and platform ripgrep
@@ -77,5 +80,7 @@ curl -fsSL https://raw.githubusercontent.com/ManiProjs/luma/main/scripts/install
 On Windows, save `install.ps1` and run it with `-Uninstall`. Uninstall removes
 the program and its private runtimes but deliberately preserves user data.
 
-The Electron desktop application is distributed separately from this
-terminal/runtime installer.
+The platform bundle includes the complete Electron application and its native
+dependencies. Linux desktop environments must provide the system libraries
+required by Electron (commonly GTK, NSS, and audio libraries); the installer
+does not attempt to modify a non-Debian system package manager.

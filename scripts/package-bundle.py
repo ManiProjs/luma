@@ -16,15 +16,26 @@ def main() -> None:
     parser.add_argument("--target", required=True)
     parser.add_argument("--core", required=True, type=Path)
     parser.add_argument("--cli", required=True, type=Path)
+    parser.add_argument("--desktop", required=True, type=Path)
     parser.add_argument("--version", required=True)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args()
 
     core = args.core.resolve()
     cli = args.cli.resolve()
+    desktop = args.desktop.resolve()
     for path in (core, cli, Path("LICENSE").resolve()):
         if not path.is_file():
             raise SystemExit(f"required release input is missing: {path}")
+    if not desktop.is_dir():
+        raise SystemExit(f"required Desktop application directory is missing: {desktop}")
+    if args.target.endswith("apple-darwin"):
+        desktop_executable = desktop / "Luma.app" / "Contents" / "MacOS" / "Luma"
+    else:
+        executable_name = "Luma.exe" if args.target.endswith("windows-msvc") else "Luma"
+        desktop_executable = desktop / executable_name
+    if not desktop_executable.is_file():
+        raise SystemExit(f"packaged Desktop executable is missing: {desktop_executable}")
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="luma-bundle-") as temporary:
@@ -32,11 +43,17 @@ def main() -> None:
         (root / "bin").mkdir(parents=True)
         (root / "lib").mkdir(parents=True)
         (root / "skills").mkdir(parents=True)
+        (root / "desktop").mkdir(parents=True)
         binary_name = "luma-core.exe" if args.target.endswith("windows-msvc") else "luma-core"
         (root / "bin" / binary_name).write_bytes(core.read_bytes())
         (root / "lib" / "luma-cli.js").write_bytes(cli.read_bytes())
         (root / "LICENSE").write_bytes(Path("LICENSE").read_bytes())
         import shutil
+
+        if args.target.endswith("apple-darwin"):
+            shutil.copytree(desktop / "Luma.app", root / "desktop" / "Luma.app")
+        else:
+            shutil.copytree(desktop, root / "desktop", dirs_exist_ok=True)
 
         for skill in Path("skills").iterdir():
             if skill.is_dir():
@@ -47,7 +64,7 @@ def main() -> None:
                     "name": "Luma",
                     "version": args.version,
                     "target": args.target,
-                    "components": ["core", "ink-cli", "embedded-dashboard"],
+                    "components": ["core", "ink-cli", "embedded-dashboard", "electron-desktop"],
                 },
                 indent=2,
             )
