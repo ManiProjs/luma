@@ -18,7 +18,10 @@ const coreBinaryPath = process.env.LUMA_CORE_BINARY
   : path.join(repositoryRoot, "target", "release", coreBinaryName);
 const assetsPath = path.join(__dirname, "assets");
 // Use the same complete Luma mark on every platform. Electron Packager
-// resolves this extensionless base to .icns (macOS) or .ico (Windows);
+// resolves this extensionless base to .icns (macOS) or .ico (Windows).
+// Keep the macOS 26 `.icon` catalog in `assets/macos26`: Packager checks for
+// a sibling `.icon` before `.icns`, and compiling that catalog requires
+// macOS 26 / Xcode 26. Older release runners must use the compatible `.icns`.
 // Linux uses the PNG supplied to BrowserWindow in main.ts.
 const appIconPath = path.join(assetsPath, "icon");
 
